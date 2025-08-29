@@ -42,11 +42,11 @@ Existing vector databases and similarity search systems lack integrated spectral
 From an engineering perspective, there is increasing demand for vector database indices that can spot vector similarities beyond the current available methods (L2 distance, cosine distance, or more complex algorithms like HNSW that requires multiple graphs, or typical caching mechanism requiring hashing). New methods to search vector spaces can lead to more accurate and fine-tunable procedures to adapt the search to the specific needs of the domain the embeddings belong to.
 
 ## Foundation
-The starting score is Rayleigh as described in [@Chen:2020]. Chen emphasises that the Rayleigh quotient provides a variational characterization of eigenvalues, it offers a way to find eigenvalues through optimization rather than solving the characteristic polynomial. This perspective is fundamental in numerical linear algebra and spectral analysis.
-The treatment is particularly valuable for understanding how spectral properties of matrices emerge naturally from optimization problems, which connects to applications in data analysis, graph theory, and machine learning.
+The starting score is Rayleigh as described in [@Chen:2020]. Chen emphasises that the Rayleigh quotient provides a variational characterisation of eigenvalues, it offers a way to find eigenvalues through optimisation rather than solving the characteristic polynomial. This perspective is fundamental in numerical linear algebra and spectral analysis.
+The treatment is particularly valuable for understanding how spectral properties of matrices emerge naturally from optimisation problems, which connects to applications in data analysis, graph theory, and machine learning.
 
 Basic points:
-- Definition: for a feature row $x$ and item-Laplacian $L$, the smoothness is $E = \frac{x^\top L x}{x^\top x}$, which is non‑negative, scale‑invariant in $x$, near‑zero for constants on connected graphs, and larger for high‑frequency signals; the Rayleigh quotient is the normalized Dirichlet Energy, it is the discrete Dirichlet energy normalized by signal power.
+- Definition: for a feature row $x$ and item-Laplacian $L$, the smoothness is $E = \frac{x^\top L x}{x^\top x}$, which is non‑negative, scale‑invariant in $x$, near‑zero for constants on connected graphs, and larger for high‑frequency signals; the Rayleigh quotient is the normalised Dirichlet Energy, it is the discrete Dirichlet energy normalised by signal power.
 - Physical Interpretation: Dirichlet energy measure the "potential energy" or "stiffness" of a configuration while the Rayleigh quotient normalises this by the total "mass" or "signal power". the result is a scale-invariant measure of how much energy is required per unit mass (in our case the items-nodes).
 - The numerator equals the sum of weighted edge differences $\sum_{(i,j)} w_{ij}(x_i-x_j)^2$, directly capturing roughness over the graph, a classical link between Laplacians and Dirichlet energy used throughout spectral methods.
 
@@ -58,7 +58,7 @@ Some implementation starting points:
 ### Graph and data model
 Rayleigh energy score is complemented for spectral indexing by computing the graph Laplacian [@Spielman:2007] of the dataset:
 - Items and features: `ArrowSpace` stores a matrix with rows = feature signals and columns = items; the item graph nodes are the columns, and Rayleigh is evaluated per feature row against that item-Laplacian, aligning spectral scores with dataset geometry.
-- Item Laplacian: a Laplacian matrix is constructed over the graph of the items using a `λ`‑proximity policy (`ε` threshold on per‑item `λ`, union-symmetrized, k‑capped, kernel-weighted); diagonals store degrees and off‑diagonals are $−weights$, satisfying standard Laplacian invariants used by the Rayleigh quotient.
+- Item Laplacian: a Laplacian matrix is constructed over the graph of the items using a `λ`‑proximity policy (`ε` threshold on per‑item `λ`, union-symmetrised, k‑capped, kernel-weighted); diagonals store degrees and off‑diagonals are $−weights$, satisfying standard Laplacian invariants used by the Rayleigh quotient.
 
 Example:
 ```rust
@@ -92,7 +92,7 @@ What the graph Laplacian contributes to Rayleigh energy:
 ## taumode and bounded energy
 The main idea for this design is to *build a score that synthesises the energy features and geometric features of the dataset* and apply it to vector searching.
 
-Rayleigh and Laplacian as bounded energy transformation score become a bounded map: raw energy $E$ is compressed to $E'=\frac{E}{E+\tau}\in$ using a strictly positive scale $\tau$, stabilizing tails and making scores comparable across rows and datasets while preserving order within moderate ranges.
+Rayleigh and Laplacian as bounded energy transformation score become a bounded map: raw energy $E$ is compressed to $E'=\frac{E}{E+\tau}\in$ using a strictly positive scale $\tau$, stabilising tails and making scores comparable across rows and datasets while preserving order within moderate ranges.
 
 Additional τ selection: taumode supports `Fixed`, `Mean`, `Median`, and `Percentile`; non‑finite inputs are filtered and a small floor ensures positivity; the default `Median` policy provides robust scaling across heterogeneously distributed energies.
 
@@ -161,9 +161,9 @@ taumode::Percentile(0.75)  // Use 75th percentile
 **When to use:**
 
 - **Fine-tuned control** over the energy threshold
-- **Emphasizing different regimes:**
-    - Low percentiles (0.1-0.3): Emphasize discrimination among low-energy (smooth) features
-    - High percentiles (0.7-0.9): Emphasize discrimination among high-energy (rough) features
+- **Emphasising different regimes:**
+    - Low percentiles (0.1-0.3): Emphasise discrimination among low-energy (smooth) features
+    - High percentiles (0.7-0.9): Emphasise discrimination among high-energy (rough) features
 
 
 ## Practical Impact on Search
@@ -188,27 +188,20 @@ In the lambda-aware similarity score: **s = α·cosine + β·(1/(1+|λ_q-λ_i|))
 
 ### Implementation Robustness
 
-The code includes several safeguards:
+The code includes several safeguards.
 
+- About the `τ` scale, it is limited to a floor. This has proved usefull to find similarity in vectors at a range interval scale of `1e-7`
 ```rust
 pub const TAU_FLOOR: f64 = 1e-9;
-
-// Filters out NaN/Inf values and enforces minimum
-let filtered_energies: Vec<f64> = energies
-    .iter()
-    .copied()
-    .filter(|x| x.is_finite())
-    .collect();
-    
-if result <= 0.0 { TAU_FLOOR } else { result }
 ```
+- All the tests for finiteness and boundedness of taumode are present in the tests in the repository [@ArrowSpace:2025].
 
 
 #### Recommendation Strategy
 
 1. **Start with `taumode::Median`** (default) - works well generally
 2. **Use `taumode::Fixed`** when you need reproducibility across runs/datasets
-3. **Try `taumode::Percentile(0.25)`** if you want to emphasize smooth features
+3. **Try `taumode::Percentile(0.25)`** if you want to emphasise smooth features
 4. **Try `taumode::Percentile(0.75)`** if rough/high-frequency features are most important
 5. **Avoid `taumode::Mean`** unless you're confident about normal distribution
 
@@ -217,7 +210,7 @@ The choice fundamentally determines **how much the spectral component (λ) influ
 
 # Summary and Conclusion
 
-## Lambda-Tau (λτ) Indexing
+## taumode (λτ) Indexing
 
 The core innovation of `ArrowSpace` is the $λτ$ synthetic index, which combines:
 
@@ -226,6 +219,173 @@ The core innovation of `ArrowSpace` is the $λτ$ synthetic index, which combine
 - **Dispersion Term**: Captures edge-wise concentration of spectral energy using Gini-like statistics
 - **Synthetic Score**: Blends $E'$ and dispersion via $λ = α·E' + (1-α)·G$, producing bounded  scores
 
+Here the references to these concepts in the code:
+
+### 1. Rayleigh Energy Implementation
+
+The **Rayleigh energy computation** $E = (x^T L x)/(x^T x)$ is implemented in `src/operators.rs`:
+
+```rust
+/// Rayleigh quotient x^T L x / x^T x for Laplacian L (CSR).
+pub fn rayleigh_lambda(gl: &GraphLaplacian, x: &[f64]) -> f64 {
+    assert!(!x.is_empty(), "vector cannot be empty");
+    let den: f64 = x.iter().map(|&xi| xi * xi).sum();
+    if den <= 0.0 {
+        return 0.0;
+    }
+    let mut num = 0.0;
+    for i in 0..gl.nnodes {
+        let xi = x[i];
+        let start = gl.rows[i];
+        let end = gl.rows[i + 1];
+        let s: f64 = (start..end).map(|idx| gl.vals[idx] * x[gl.cols[idx]]).sum();
+        num += xi * s;
+    }
+    num / den
+}
+```
+
+And in the synthetic lambda computation in `src/taumode.rs` (lines 144-165):
+
+```rust
+// Rayleigh numerator
+let mut num = 0.0;
+for i in 0..n_items {
+    let xi = x[i];
+    let (s, e) = (gl.rows[i], gl.rows[i + 1]);
+    // (Lx)_i
+    let mut lx_i = 0.0;
+    for idx in s..e {
+        let j = gl.cols[idx];
+        let lij = gl.vals[idx];
+        lx_i += lij * x[j];
+    }
+    num += xi * lx_i;
+}
+let e_f = num / den;
+energies_f.push(e_f.max(0.0));
+```
+
+
+### 2. Bounded Transform Implementation
+
+The **bounded transform** $E' = E/(E+τ)$ is implemented in `src/taumode.rs` at lines 235-242:
+
+```rust
+// 3) Select tau over the per-item energies and map to bounded scores
+let tau = select_tau(&e_item_raw, tau_mode);
+let mut synthetic_items = Vec::with_capacity(n_items);
+for i in 0..n_items {
+    let e_bounded = {
+        let e = e_item_raw[i].max(0.0);
+        e / (e + tau)  // <-- Bounded transform here
+    };
+    let g_clamped = g_item_raw[i].clamp(0.0, 1.0);
+    let s = alpha * e_bounded + (1.0 - alpha) * g_clamped;
+    synthetic_items.push(s);
+}
+```
+
+The **τ selection policies** are implemented in `src/taumode.rs` at lines 37-71:
+
+```rust
+pub fn select_tau(energies: &[f64], mode: TauMode) -> f64 {
+    match mode {
+        TauMode::Fixed(t) => {
+            if t.is_finite() && t > 0.0 { t } else { TAU_FLOOR }
+        }
+        TauMode::Mean => {
+            let mut sum = 0.0;
+            let mut cnt = 0usize;
+            for &e in energies {
+                if e.is_finite() {
+                    sum += e;
+                    cnt += 1;
+                }
+            }
+            let m = if cnt > 0 { sum / (cnt as f64) } else { 0.0 };
+            m.max(TAU_FLOOR)
+        }
+        TauMode::Median | TauMode::Percentile(_) => {
+            // ... median and percentile computation
+        }
+    }
+}
+```
+
+
+### 3. Dispersion Term Implementation
+
+The **Gini-like dispersion statistic** is computed in `src/taumode.rs` at lines 166-188:
+
+```rust
+// G_f: sum of squared normalised edge shares
+let mut g_sq_sum = 0.0;
+if edge_energy_sum > 0.0 {
+    for i in 0..n_items {
+        let xi = x[i];
+        let (s, e) = (gl.rows[i], gl.rows[i + 1]);
+        for idx in s..e {
+            let j = gl.cols[idx];
+            if j == i {
+                continue;
+            }
+            let w = (-gl.vals[idx]).max(0.0);
+            if w > 0.0 {
+                let d = xi - x[j];
+                let contrib = w * d * d;
+                let share = contrib / edge_energy_sum;  // Edge energy share
+                g_sq_sum += share * share;  // Gini-like concentration
+            }
+        }
+    }
+}
+let g_f = g_sq_sum.clamp(0.0, 1.0);
+dispersions_f.push(g_f);
+```
+
+The **edge energy accumulation** for normalisation is at lines 148-162:
+
+```rust
+// accumulate off-diagonal edge energy
+for idx in s..e {
+    let j = gl.cols[idx];
+    if j == i {
+        continue;
+    }
+    let w = (-gl.vals[idx]).max(0.0);
+    if w > 0.0 {
+        let d = xi - x[j];
+        edge_energy_sum += w * d * d;  // Total edge energy for normalisation
+    }
+}
+```
+
+
+### 4. Synthetic Score Blending
+
+The **final synthetic score** $λ = α·E' + (1-α)·G$ is computed in `src/taumode.rs` at line 241:
+
+```rust
+let s = alpha * e_bounded + (1.0 - alpha) * g_clamped;
+synthetic_items.push(s);
+```
+
+
+### Integration in the Builder Pattern
+
+This entire pipeline is orchestrated through the builder in `src/builder.rs` at lines 114-119:
+
+```rust
+// 3) Compute synthetic indices on resulting graph
+let mut aspace = self.arrows;
+let gl = self.prebuilt_gl.unwrap();
+let synth = self.synthesis.unwrap();
+compute_synthetic_lambdas(&mut aspace, &gl, synth.0, synth.1);
+```
+
+Where `compute_synthetic_lambdas` is the main function in `src/taumode.rs` that orchestrates all four concepts together.
+
 
 ## Graph Construction
 
@@ -233,15 +393,15 @@ The core innovation of `ArrowSpace` is the $λτ$ synthetic index, which combine
 
 - **Item Graphs**: Connects items whose aggregated λ values differ by at most ε
 - **K-Capping**: Limits neighbors per node while maintaining graph connectivity
-- **Union Symmetrization**: Ensures undirected Laplacian properties
+- **Union Symmetrisation**: Ensures undirected Laplacian properties
 - **Kernel Weighting**: Uses monotone kernels $w = 1/(1 + (|Δλ|/σ)^p)$ for edge weights
 
 
 ## Memory-Efficient Design
 
-The library consider by-design several optimizations for performance:
+The library consider by-design several optimisations for performance:
 
-- **Column-Major Storage**: Dense arrays with features as rows, items as columns
+- **Column-Major Storage**: Dense arrays with features as rows, items as columns (for production-readiness [@smartcore:2021] will be used)
 - **Potentially Zero-Copy Operations**: Slice-based access without unnecessary allocations as already present in [@smartcore:2021]
 - **Single-Pass Computation**: $λτ$ indices computed once, graph can be discarded
 - **Cache-Friendly Layout**: Contiguous memory access patterns for potential SIMD optimization
@@ -428,7 +588,7 @@ The library includes extensive test coverage:
 
 ```toml
 [dependencies]
-`ArrowSpace` = "0.1.0"
+arrowspace = "0.1.0"
 ```
 
 The source code, documentation, and examples are available at the project repository, with comprehensive API documentation generated via rustdoc.
@@ -442,23 +602,12 @@ The source code, documentation, and examples are available at the project reposi
 ## Practical guidance
 
 - Defaults: a practical starting point is ε≈1e‑3, k in , p=2.0, σ=ε, and taumode::Median with $\alpha≈0.7$; this keeps the λ‑graph connected but sparse and yields bounded λτ values that mix energy and dispersion robustly for search [@Wikipedia:DirichletEnergy;@Chua:2025].
-- Usage patterns: build ArrowSpace from item rows (auto‑transposed internally), let the builder construct the λ‑graph and compute synthetic λτ, then use lambda‑aware similarity for ranking or ε‑band zsets for range‑by‑score retrieval; in‑place algebra over items supports superposition experiments while preserving spectral semantics through recompute.[@Chen:2020;@Mahadevan:2006;Grindrod:2020]
-
-
-###Relation to classical theory
-
-- Link to Dirichlet energy: the Rayleigh quotient over graph Laplacians is the discrete analogue of Dirichlet energy normalized by signal power, with eigenvalues/eigenvectors characterizing smoothness classes; λτ leverages this foundation but adds a bounded transform and dispersion term for practical search and indexing.[^8][^4][^1][^2]
-
-## Summary of contributions
-
-- A single‑scalar `λτ` per feature-row that is bounded, comparable, and spectrally meaningful, derived from Rayleigh energy and an edgewise dispersion statistic with robust taumode scaling.
-- A dense `ArrowSpace` that stores features over items, recomputes `λτ` after algebraic item operations, and exposes lambda‑aware search primitives and λ‑proximity graphs with strong Laplacian guarantees.
-- A builder that unifies λ‑graph construction and synthetic index computation, yielding reproducible, spectrally aware vector search behavior validated by extensive tests and examples.
+- Usage patterns: build ArrowSpace from item rows (auto‑transposed internally), let the builder construct the λ‑graph and compute synthetic λτ, then use lambda‑aware similarity for ranking or ε‑band ordered sets for range‑by‑score retrieval; in‑place algebra over items supports superposition experiments while preserving spectral semantics through recompute.[@Chen:2020;@Mahadevan:2006;Grindrod:2020]
 
 
 ## Conclusion
 
-`ArrowSpace` provides a novel approach to vector similarity search by integrating spectral graph properties with traditional semantic similarity measures. The $λτ$ indexing system offers a memory-efficient way to capture spectral characteristics of vector datasets while maintaining practical query performance. The library's design emphasizes both mathematical rigor and computational efficiency, making it suitable for scientific applications requiring spectral-aware similarity search.
+`ArrowSpace` provides a novel approach to vector similarity search by integrating spectral graph properties with traditional semantic similarity measures. The $λτ$ indexing system offers a memory-efficient way to capture spectral characteristics of vector datasets while maintaining practical query performance. The library's design emphasises both mathematical rigor and computational efficiency, making it suitable for scientific applications requiring spectral-aware similarity search.
 
 The combination of Rust's performance characteristics with innovative spectral indexing algorithms positions `ArrowSpace` as a valuable tool for researchers and practitioners working with high-dimensional vector data where both semantic content and structural properties matter.
 
