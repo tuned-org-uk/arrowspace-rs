@@ -20,11 +20,11 @@ bibliography: paper.bib
 
 # Summary
 
-`ArrowSpace` [@ArrowSpace:2025] is a Rust library that implements a novel spectral indexing approach for vector similarity search, combining traditional semantic similarity with graph-based spectral properties[@Mahadevan:2006;@Spielman:2007]. The library introduces taumode (`λτ`, lambda-tau) indexing, which blends Rayleigh quotient smoothness energy from graph Laplacians [@Bai:2007;@Bai:2010] with edge-wise dispersion statistics to create bounded, comparable spectral scores. This enables similarity search that considers both semantic content and spectral characteristics of high-dimensional vector datasets.
+`ArrowSpace` [@ArrowSpace:2025] is a Rust library that implements a novel spectral indexing approach for vector similarity search, combining traditional semantic similarity with graph-based spectral properties [@Mahadevan:2006;@Spielman:2007]. The library introduces taumode (`λτ`, lambda-tau) indexing, which blends Rayleigh quotient smoothness energy from graph Laplacians [@Bai:2007;@Bai:2010] with edge-wise dispersion statistics to create bounded, comparable spectral scores. This enables similarity search that considers both semantic content and spectral characteristics of high-dimensional vector datasets.
 
 # Statement of Need
 
-Traditional vector similarity search relies primarily on geometric measures like cosine similarity or Euclidean distance, which capture semantic relationships but ignore the spectral structure inherent in many datasets. In domains such as protein analysis, signal processing, and molecular dynamics, the "roughness" or "smoothness" of feature signals across data relationships can provide valuable discriminative information that complements semantic similarity.
+Traditional vector similarity search relies primarily on geometric measures, like cosine similarity or Euclidean distance which capture semantic relationships but ignore the spectral structure inherent in many datasets. For example in domains such as protein analysis, signal processing and molecular dynamics, the "roughness" or "smoothness" of feature signals across data relationships can provide valuable discriminative information that complements semantic similarity.
 
 Existing vector databases and similarity search systems lack integrated spectral-aware indexing capabilities. While spectral methods exist in graph theory and signal processing (for spectral clustering see [@VonLuxburg:2007]), they are typically computationally expensive and they are not considered for database applications. With the increasing demand for vector searching though (in particular, at current state, for the components called "retrievers" in RAG applications[@Lewis:2020]), the research on spectral indexing gains traction for database applications.
 `ArrowSpace` addresses this gap by providing:
@@ -36,28 +36,29 @@ Existing vector databases and similarity search systems lack integrated spectral
 
 # Data Model and Algorithm
 
-`ArrowSpace` provides an API to use taumode (`λτ`) that is a single, bounded synthetic score per signal that blends the Rayleigh smoothness energy on a graph with an edgewise dispersion summary; enabling spectra-aware search, range filters. Operationally, `ArrowSpace` stores dense features (inspired by CSR [@Kelly:2020] and `smartcore` [@smartcore:2021]) as rows over item nodes, computes a Laplacian on items, derives per-row Rayleigh energies, compresses them via a bounded map $E/(E+\tau)$, mixes in a dispersion term, and uses the resulting `λτ` both for similarity and to build a λ-proximity item graph used across the API. This way the `λτ` (taumode) score can rely on a synthesis of the characteristics proper of diffusion models and geometric representation of Laplacian graphs. 
+`ArrowSpace` provides an API to use taumode (`λτ`) that is a single, bounded, synthetic score per signal that blends the Rayleigh smoothness energy on a graph with an edgewise dispersion summary; enabling spectra-aware search and range filtering. Operationally, `ArrowSpace` stores dense features (inspired by CSR [@Kelly:2020] and `smartcore` [@smartcore:2021]) as rows over item nodes, computes a Laplacian on items, derives per-row Rayleigh energies, compresses them via a bounded map $E/(E+\tau)$, mixes in a dispersion term and uses the resulting `λτ` both for similarity and to build a λ-proximity item graph used across the API. This way the `λτ` (taumode) score can rely on a synthesis of the characteristics proper of diffusion models and geometric/topological representation of graphs. 
 
 ## Motivation
-From an engineering perspective, there is increasing demand for vector database indices that can spot vector similarities beyond the current available methods (L2 distance, cosine distance, etc.). New methods to search vector spaces can lead to more accurate and fine-tunable procedures to adapt the search to the specific needs of the domain the embeddings belong to.
+From an engineering perspective, there is increasing demand for vector database indices that can spot vector similarities beyond the current available methods (L2 distance, cosine distance, or more complex algorithms like HNSW that requires multiple graphs, or typical caching mechanism requiring hashing). New methods to search vector spaces can lead to more accurate and fine-tunable procedures to adapt the search to the specific needs of the domain the embeddings belong to.
 
 ## Foundation
 The starting score is Rayleigh as described in [@Chen:2020]. Chen emphasises that the Rayleigh quotient provides a variational characterization of eigenvalues, it offers a way to find eigenvalues through optimization rather than solving the characteristic polynomial. This perspective is fundamental in numerical linear algebra and spectral analysis.
 The treatment is particularly valuable for understanding how spectral properties of matrices emerge naturally from optimization problems, which connects to applications in data analysis, graph theory, and machine learning.
 
 Basic points:
-- Definition: for a feature row $x$ and item-Laplacian $L$, the smoothness is $E = \frac{x^\top L x}{x^\top x}$, which is non‑negative, scale‑invariant in $x$, near‑zero for constants on connected graphs, and larger for high‑frequency signals; this is the discrete Dirichlet energy normalized by signal power.
-- Interpretation: the numerator equals the sum of weighted edge differences $\sum_{(i,j)} w_{ij}(x_i-x_j)^2$, directly capturing roughness over the graph, a classical link between Laplacians and Dirichlet energy used throughout spectral methods.
+- Definition: for a feature row $x$ and item-Laplacian $L$, the smoothness is $E = \frac{x^\top L x}{x^\top x}$, which is non‑negative, scale‑invariant in $x$, near‑zero for constants on connected graphs, and larger for high‑frequency signals; the Rayleigh quotient is the normalized Dirichlet Energy, it is the discrete Dirichlet energy normalized by signal power.
+- Physical Interpretation: Dirichlet energy measure the "potential energy" or "stiffness" of a configuration while the Rayleigh quotient normalises this by the total "mass" or "signal power". the result is a scale-invariant measure of how much energy is required per unit mass (in our case the items-nodes).
+- The numerator equals the sum of weighted edge differences $\sum_{(i,j)} w_{ij}(x_i-x_j)^2$, directly capturing roughness over the graph, a classical link between Laplacians and Dirichlet energy used throughout spectral methods.
 
 Some implementation starting points:
-- Rayleigh energy $x^\top L x / x^\top x$ measures how “wiggly” a feature signal is over an item graph; constants yield near-zero on connected graphs, while alternating patterns are larger, making it a principled spectral smoothness score for search and structure discovery.
+- Rayleigh energy $x^\top L x / x^\top x$ measures how "wiggly" a feature signal is over an item graph; constants yield near-zero on connected graphs, while alternating patterns are larger, making it a principled spectral smoothness score for search and structure discovery.
 - Pure Rayleigh can collapse near zero or be hard to compare across datasets; mapping energy to a bounded score and blending with a dispersion statistic produces a stable, comparable score that preserves spectral meaning while improving robustness for ranking and filtering.
 
 
 ### Graph and data model
-Rayleigh energy score is complemented by computing the graph Laplacian [@Spielman:2007] of the dataset:
+Rayleigh energy score is complemented for spectral indexing by computing the graph Laplacian [@Spielman:2007] of the dataset:
 - Items and features: `ArrowSpace` stores a matrix with rows = feature signals and columns = items; the item graph nodes are the columns, and Rayleigh is evaluated per feature row against that item-Laplacian, aligning spectral scores with dataset geometry.
-- Item Laplacian: a Laplacian matrix is constructed over the graph of the items using a `λ`‑proximity policy (`ε` threshold on per‑item `λ`, union-symmetrized, k‑capped, kernel-weighted); diagonals store degrees and off‑diagonals are `−`weights, satisfying standard Laplacian invariants used by the Rayleigh quotient.
+- Item Laplacian: a Laplacian matrix is constructed over the graph of the items using a `λ`‑proximity policy (`ε` threshold on per‑item `λ`, union-symmetrized, k‑capped, kernel-weighted); diagonals store degrees and off‑diagonals are $−weights$, satisfying standard Laplacian invariants used by the Rayleigh quotient.
 
 Example:
 ```rust
@@ -81,7 +82,7 @@ let aspace = ArrowSpace::from_items(...)
 ```
 
 ### Role of Laplacian
-What the graph Laplacina contributes to Rayleigh energy:
+What the graph Laplacian contributes to Rayleigh energy:
 1. Spectral Smoothness: Captures how features vary across item relationships
 2. Graph Structure: Encodes similarity topology beyond simple pairwise distances
 3. Efficient Computation: Sparse matrix enables fast spectral calculations
@@ -89,7 +90,7 @@ What the graph Laplacina contributes to Rayleigh energy:
 
 
 ## taumode and bounded energy
-The main idea for this design is to *build a score that synthesises the energy features and geometric features of the dataset*.
+The main idea for this design is to *build a score that synthesises the energy features and geometric features of the dataset* and apply it to vector searching.
 
 Rayleigh and Laplacian as bounded energy transformation score become a bounded map: raw energy $E$ is compressed to $E'=\frac{E}{E+\tau}\in$ using a strictly positive scale $\tau$, stabilizing tails and making scores comparable across rows and datasets while preserving order within moderate ranges.
 
