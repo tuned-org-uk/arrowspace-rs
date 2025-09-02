@@ -1,5 +1,5 @@
 ---
-title: 'ArrowSpace: Spectral Indexing of Embeddings using taumode (λτ)'
+title: 'ArrowSpace: A primer on Spectral Indexing for vector search'
 tags:
   - embeddings
   - vector database
@@ -69,7 +69,7 @@ The τ parameter is crucial for the bounded energy transformation: **E' = E/(E+�
 
 ## Practical Impact on Search
 
-The choice of taumode affects how the bounded energies E' distribute in [0,1):
+The choice of taumode affects how the bounded energies $E'$ distribute in $[0,1)$:
 
 ```rust
 // Low-energy feature with different τ values
