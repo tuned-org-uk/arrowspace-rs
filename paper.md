@@ -12,7 +12,7 @@ authors:
     orcid: 0000-0002-8804-2963
     affiliation: "1"
 affiliations:
- - name: Independent Researcher - tuned.org.uk
+ - name: Independent Researcher (London, UK / Tokyo, Japan) - tuned.org.uk
    index: 1
 date: 28 August 2025
 bibliography: paper.bib
