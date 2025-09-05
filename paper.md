@@ -66,8 +66,32 @@ The Ï„ parameter is crucial for the bounded energy transformation: **E' = E/(E+Ï
 - **Numerically stable** by preventing division issues with very small energies
 - **Bounded** for consistent similarity computations
 
+## Usage Example
+	
+```rust
+use ArrowSpace::builder::ArrowSpaceBuilder;
+use ArrowSpace::core::ArrowItem;
 
-## Practical Impact on Search
+// Build ArrowSpace from item vectors
+let items = vec![
+vec![1.0, 2.0, 3.0],  // Item 1
+vec![2.0, 3.0, 1.0],  // Item 2
+vec![3.0, 1.0, 2.0],  // Item 3
+];
+
+let (aspace, _graph) = ArrowSpaceBuilder::new()
+.with_rows(items)
+.with_lambda_graph(1e-3, 6, 2.0, None)
+.build();
+
+// Query with lambda-aware similarity
+let query = ArrowItem::new(vec![1.5, 2.5, 2.0], 0.0);
+// with alpha=1.0 and beta=0.0, same results as cosine similarity
+let results = aspace.search_lambda_aware(&query, 5, 1.0, 0.0);
+``````
+	
+
+### Practical Impact on Search
 
 The choice of taumode affects how the bounded energies $E'$ distribute in $[0,1)$:
 
@@ -99,11 +123,6 @@ The library includes comprehensive benchmarks comparing `ArrowSpace` with baseli
 ## Results
 
 `ArrowSpace` has substantial potential for raw improvements plus all the advantages provided to downstream more complex operations like matching, comparison and search due to the $\lambda$ spectrum. Capabilities are demonstrated in the other tests present in the code. Please check the `proteins_lookup` example that demonstrates the functionality in a small dataset. The time complexity for a range-based lookup is the same as a sorted set $O(log(N)+M)$. As demonstrated in the `proteins_lookup` example, starting from a collection of $\lambda$s with a standard deviation of $0.06$, it is possible to sort out the single nearest neighbour with a range query on an query interval of $\lambda \pm 10^{-7}$.
-
-Present libraries provide the building blocks (graph Laplacians, Rayleigh quotient evaluators, HKS/heat-kernel descriptors) but not the exact, reusable container/API that mirrors this paper's `ArrowSpace` concept.
-The arrow space packages a general-purpose programming/data-structure pattern that keeps vector signals and their operator-derived scale/distribution together and available for algorithmic scheduling and result novel as a unified abstraction.
-
-This basic reference implementation can be improved in multiple dimensions to reach state-of-the-art capabilities for well-targeted applications like pattern matching for embeddings. Generally, any kind of embedding sensitive to spectral characteristics; every application designed for given target embeddings can be fine-tuned appropriately in different dimensions and potentially improve performances in these areas:
 
 ## Conclusion
 
