@@ -132,5 +132,8 @@ The combination of Rust's performance characteristics with innovative spectral i
 
 The definition of a core library to be used to develop a database solution based on spectral indexing is left to another paper that will include further improvements in terms of algorithms and idioms to make this approach to indexing feasible and efficient in modern cloud installations.
 
+# Disclaimer
+
+For this research LLMs have been used extensively in the ideation and development phase.
 
 # References
