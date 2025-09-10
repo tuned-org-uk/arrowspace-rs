@@ -1,5 +1,5 @@
 ---
-title: 'ArrowSpace: A primer on Spectral Indexing for vector search'
+title: 'ArrowSpace: An Example of Spectral Indexing for vector search'
 tags:
   - embeddings
   - vector database
