@@ -8,6 +8,33 @@ Run `cargo run --example proteins_lookup` for an example about how it compares w
 
 - Rust 1.78+ (edition 2024)
 
+## Installation
+
+### As a Library Dependency
+Add to your `Cargo.toml`:
+```toml
+[dependencies]
+arrowspace = "0.1.0"
+```
+
+### From Source
+```bash
+git clone https://github.com/Mec-iS/arrowspace-rs
+cd arrowspace-rs
+cargo build --release
+```
+
+### Running Examples
+```bash
+cargo run --example compare_cosine
+cargo run --example proteins_lookup
+```
+
+### Running Tests
+```bash
+cargo test
+```
+
 ### Run example
 ```
 $ cargo run --example hypergraph_showcase
