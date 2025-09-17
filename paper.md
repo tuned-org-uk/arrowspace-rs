@@ -69,8 +69,8 @@ The Ï„ parameter is crucial for the bounded energy transformation: **E' = E/(E+Ï
 ## Usage Example
 	
 ```rust
-use ArrowSpace::builder::ArrowSpaceBuilder;
-use ArrowSpace::core::ArrowItem;
+use arrowSpace::builder::ArrowSpaceBuilder;
+use arrowSpace::core::ArrowItem;
 
 // Build ArrowSpace from item vectors
 let items = vec![
