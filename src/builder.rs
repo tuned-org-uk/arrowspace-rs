@@ -81,9 +81,9 @@ impl ArrowSpaceBuilder {
     /// Optional: override the default tau policy or alpha for synthetic index.
     /// Note: when the fallback λτ-graph (priority #3) is chosen, synthesis is always ON.
     /// If this method is not called, the default is alpha=0.7, TauMode::Median.
-    pub fn with_synthesis(mut self, alpha: f64, tau_mode: TauMode) -> Self {
-        assert!((0.0..=1.0).contains(&alpha), "alpha must be in [0,1]");
-        self.synthesis = Some((alpha, tau_mode));
+    pub fn with_synthesis(mut self, tau: f64, tau_mode: TauMode) -> Self {
+        assert!((0.0..=1.0).contains(&tau), "alpha must be in [0,1]");
+        self.synthesis = Some((tau, tau_mode));
         self
     }
 
