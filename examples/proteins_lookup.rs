@@ -107,7 +107,7 @@ fn main() {
     let p = 2.0;
     let sigma_override = None;
 
-    let (aspace, gl) = ArrowSpaceBuilder::new()
+    let (aspace, _) = ArrowSpaceBuilder::new()
         .with_rows(items_nxf.clone())
         .with_lambda_graph(eps, k, p, sigma_override)
         .build();

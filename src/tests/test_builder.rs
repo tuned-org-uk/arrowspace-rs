@@ -100,7 +100,7 @@ fn build_with_prebuilt_laplacian_zero_lambda_then_recompute() {
         }
         csr_rows.push(csr_cols.len());
     }
-    let gl = GraphLaplacian {
+    let _ = GraphLaplacian {
         rows: csr_rows,
         cols: csr_cols,
         vals: csr_vals,
@@ -109,7 +109,7 @@ fn build_with_prebuilt_laplacian_zero_lambda_then_recompute() {
 
     // Build aspace with zero lambdas
     let rows = vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]];
-    let (aspace, gl_opt) = ArrowSpaceBuilder::new().with_rows(rows).build();
+    let (aspace, _) = ArrowSpaceBuilder::new().with_rows(rows).build();
 
     assert_eq!(aspace.shape(), (3, 2));
     assert!(aspace.lambdas() == vec![0.6166666666666667, 0.0]);

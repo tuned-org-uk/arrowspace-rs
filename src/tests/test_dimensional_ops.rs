@@ -1,4 +1,4 @@
-use crate::graph_factory::{GraphFactory, GraphLaplacian};
+use crate::graph_factory::{GraphFactory};
 use crate::dimensional::{DimensionalOps, ArrowDimensionalOps};
 use crate::operators::rayleigh_lambda;
 

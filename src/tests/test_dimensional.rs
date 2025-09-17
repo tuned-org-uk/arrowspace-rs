@@ -1,4 +1,4 @@
-use crate::graph_factory::{GraphFactory, GraphLaplacian};
+use crate::graph_factory::{GraphFactory};
 use crate::dimensional::{DimensionalOps, ArrowDimensionalOps};
 use crate::core::ArrowSpace;
 
@@ -40,7 +40,7 @@ fn two_emitters_superposition_lambda() {
 
     // Build λτ-graph directly from the data matrix (rows are features over items)
     // Reconstruct a matrix view in row-major (feature-major) shape F×N for the factory API
-    let (nfeatures, nitems) = aspace_sum.shape();
+    let (_, nitems) = aspace_sum.shape();
     let mut data_matrix: Vec<Vec<f64>> = Vec::with_capacity(nitems);
     for r in 0..nitems {
         // loop cols number as ArrowSpace is column-major

@@ -19,4 +19,5 @@ pub mod graph_factory;
 pub mod operators;
 pub mod taumode;
 
-pub mod tests;
+#[cfg(test)]
+mod tests;

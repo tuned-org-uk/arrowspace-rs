@@ -1,5 +1,4 @@
-use crate::graph_factory::{GraphFactory, GraphLaplacian};
-use crate::dimensional::{DimensionalOps, ArrowDimensionalOps};
+use crate::graph_factory::{GraphFactory};
 use crate::core::ArrowSpace;
 
 
@@ -203,8 +202,6 @@ fn arrowspace_addition_commutativity() {
 
     let item_a = vec![0.1, 0.5, 0.6, 0.2]; // Item A: 4 features  
     let item_b = vec![0.9, 0.1, 0.3, 0.6]; // Item B: 4 features
-    let item_c = [0.1, 0.3, 0.6, 0.1];
-    let item_d = [0.9, 0.1, 0.7, 0.6];
 
     // Create two ArrowSpaces with the SAME items but in different positions
     // aspace1: A at index 0, B at index 1
@@ -419,7 +416,7 @@ fn arrowspace_superposition_bounds() {
 #[test]
 #[should_panic]
 fn graph_one_node() {
-    let gl = GraphFactory::build_lambda_graph(&vec![vec![1.0, 1.0, 1.0]], 1.0, 2, 2.0, None);
+    let _ = GraphFactory::build_lambda_graph(&vec![vec![1.0, 1.0, 1.0]], 1.0, 2, 2.0, None);
 }
 
 #[test]
