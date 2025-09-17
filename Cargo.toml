@@ -32,7 +32,6 @@ name = "arrowspace"
 crate-type = ["rlib"]
 
 [examples]
-range-set-blaze = "^0.3.0"
 
 [workspace]
 
