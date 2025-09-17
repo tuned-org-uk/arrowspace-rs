@@ -46,6 +46,7 @@ The starting score is Rayleigh as described in @Chen:2020. Chen emphasises that 
 The treatment is particularly valuable for understanding how spectral properties of matrices emerge naturally from optimisation problems, which connects to applications in data analysis, graph theory, and machine learning.
 
 Basic points:
+
 - Definition: for a feature row $x$ and item-Laplacian $L$, the smoothness is $E = \frac{x^\top L x}{x^\top x}$, which is non‑negative, scale‑invariant in $x$, near‑zero for constants on connected graphs, and larger for high‑frequency signals; the Rayleigh quotient is the normalised Dirichlet Energy, it is the discrete Dirichlet energy normalised by signal power.
 - Physical Interpretation: Dirichlet energy measure the "potential energy" or "stiffness" of a configuration while the Rayleigh quotient normalises this by the total "mass" or "signal power". the result is a scale-invariant measure of how much energy is required per unit mass (in our case the items-nodes).
 
@@ -74,15 +75,15 @@ use arrowSpace::core::ArrowItem;
 
 // Build ArrowSpace from item vectors
 let items = vec![
-vec![1.0, 2.0, 3.0],  // Item 1
-vec![2.0, 3.0, 1.0],  // Item 2
-vec![3.0, 1.0, 2.0],  // Item 3
+    vec![1.0, 2.0, 3.0],  // Item 1
+    vec![2.0, 3.0, 1.0],  // Item 2
+    vec![3.0, 1.0, 2.0],  // Item 3
 ];
 
 let (aspace, _graph) = ArrowSpaceBuilder::new()
-.with_rows(items)
-.with_lambda_graph(1e-3, 6, 2.0, None)
-.build();
+    .with_rows(items)
+    .with_lambda_graph(1e-3, 6, 2.0, None)
+    .build();
 
 // Query with lambda-aware similarity
 let query = ArrowItem::new(vec![1.5, 2.5, 2.0], 0.0);
