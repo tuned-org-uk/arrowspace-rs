@@ -176,7 +176,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         );
     }
 
-    let mut group = c.benchmark_group("lookup_topk_k=3");
+    let mut group = c.benchmark_group("index_topk_k=3");
     group.warm_up_time(Duration::from_millis(300));
     group.measurement_time(Duration::from_secs(3));
     group.sample_size(40);

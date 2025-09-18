@@ -35,13 +35,6 @@ cargo run --example proteins_lookup
 cargo test
 ```
 
-### Run example
-```
-$ cargo run --example hypergraph_showcase
-// run a lookup on AlphaFold vectors
-$ cargo run --example proteins_lookup
-```
-
 ### Run Bench
 ```
 $ cargo bench

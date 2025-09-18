@@ -7,7 +7,7 @@ authors = ["Lorenzo <tunedconsulting@gmail.com>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Mec-iS/arrowspace-rs"
 homepage = "https://github.com/Mec-iS/arrowspace-rs"
-documentation = "https://docs.rs/arrowspace"
+documentation = "https://docs.rs/arrowspace-rs"
 readme = "README.md"
 keywords = ["vector-search", "spectral-analysis", "graph-signal", "similarity-search", "machine-learning"]
 categories = ["algorithms", "mathematics", "science"]
@@ -36,6 +36,6 @@ crate-type = ["rlib"]
 [workspace]
 
 [[bench]]
-name = "lookup_bench"
+name = "index_compute_bench"
 harness = false
 
