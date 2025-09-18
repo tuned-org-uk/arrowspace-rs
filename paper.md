@@ -114,11 +114,7 @@ let tau_large = 0.1;    // E' = 0.01/0.11 ≈ 0.09 (low sensitivity)
 
 ### Benchmarks
 
-The library includes comprehensive benchmarks comparing `ArrowSpace` with baseline cosine similarity:
-
-- **Single Query**: ~15% overhead for $λτ$-aware search vs pure cosine
-- **Batch Queries**: Scales linearly with batch size, maintains constant per-query overhead
-- **Memory Footprint**: 4-8 bytes per $λτ$ index vs graph storage
+The library includes benchmarks comparing `ArrowSpace` with baseline cosine similarity, the benchmark baseline shows 25-45% overhead for $λτ$-aware index building (`lambda_similarity` method) compared to a pure cosine index. This is a computational cost to pay for allowing the extension in search capabilities that the additional indexing layer enables. Considering the novelty of the implementation this measurements are not very meaningful and have to be taken only as starting reference. The library and the paper aim to find usable differences in results returned by the novel search harness and this is achieved, as demonstrated in `proteins_lookup` example where the index returned by the query are comparable but not the same as cosine similarity (index 30 being the outlier not spotted by cosine similarity).
 
 ## Results
 
@@ -132,7 +128,7 @@ The combination of Rust's performance characteristics with innovative spectral i
 
 The definition of a core library to be used to develop a database solution based on spectral indexing is left to another paper that will include further improvements in terms of algorithms and idioms to make this approach to indexing feasible and efficient in modern cloud installations.
 
-# Disclaimer
+# Acknowledgements
 
 For this research LLMs have been used extensively in the ideation and development phase.
 
