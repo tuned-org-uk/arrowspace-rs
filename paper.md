@@ -115,7 +115,29 @@ let tau_large = 0.1;    // E' = 0.01/0.11 ≈ 0.09 (low sensitivity)
 
 ### Benchmarks
 
-The library includes benchmarks comparing `ArrowSpace` with baseline cosine similarity, the benchmark baseline shows 25-45% overhead for $λτ$-aware index building (`lambda_similarity` method) compared to a pure cosine index. This is a computational cost to pay for allowing the extension in search capabilities that the additional indexing layer enables. Considering the novelty of the implementation this measurements are not very meaningful and have to be taken only as starting reference. The library and the paper aim to find usable differences in results returned by the novel search harness and this is achieved, as demonstrated in `proteins_lookup` example where the index returned by the query are comparable but not the same as cosine similarity (index 30 being the outlier not spotted by cosine similarity).
+The library includes benchmarks comparing `ArrowSpace` with baseline cosine similarity, the benchmark baseline shows 25-45% overhead for $λτ$-aware index building (`lambda_similarity` method) compared to a pure cosine index. This is a computational cost to pay for allowing the extension in search capabilities that the additional indexing layer enables. Considering the novelty of the implementation this measurements are not very meaningful and have to be taken only as starting reference. The library and the paper aim to find usable differences in results returned by the novel search harness and this is achieved, as demonstrated in `compare_cosine` example where the index returned by the query are comparable but not the same as cosine similarity (index 30 being the outlier not spotted by cosine similarity). Result of the simple test:
+
+```text
+Baseline cosine top-3:
+  1. idx=3 (P0004) score=1.000000
+  2. idx=6 (P0007) score=0.999573
+  3. idx=0 (P0001) score=0.999325
+ArrowSpace shape after transpose: (24, 64)
+
+ArrowSpace (alpha=1, beta=0) top-3 (equivalent ArrowSpace):
+  1. idx=3 (P0004) score=1.000000
+  2. idx=6 (P0007) score=0.999573
+  3. idx=0 (P0001) score=0.999325
+
+ArrowSpace (alpha=0.9, beta=0.1) top-3 (spectral-adjusted ArrowSpace):
+  1. idx=6 (P0007) score=0.970372
+  2. idx=30 (P0031) score=0.970268
+  3. idx=3 (P0004) score=0.967810
+  4. idx=0 (P0001) score=0.967502
+
+Match (baseline vs Arrow cosine): OK
+Jaccard(baseline vs λτ-aware): 0.750
+```
 
 ## Results
 
