@@ -23,7 +23,7 @@ bibliography: paper.bib
 `arrowspace` [@ArrowSpace:2025] is a Rust [@rust2015] library (and relative data structure `ArrowSpace`) for vector similarity search that goes beyond traditional distance metrics by incorporating spectral graph properties to find structural patterns in high-dimensional data. `ArrowSpace` adds a spectral dimension that captures structural patterns, enabling more nuanced similarity matching for scientific and structured data applications.
 The library introduces λτ (lambda-tau) indexing, which combines Rayleigh quotient energy with dispersion statistics to create bounded similarity scores. This approach is particularly valuable for domains where geometric similarity alone is insufficient, such as protein analysis, signal processing, and molecular dynamics.
 
-`arrowspace` combines traditional semantic similarity with graph-based spectral properties [@Mahadevan:2006;@Spielman:2007]. The library introduces taumode (in mathematical expressions `λτ`, lambda-tau) indexing, which blends Rayleigh quotient smoothness energy from graph Laplacians [@Bai:2007;@Bai:2010] with edge-wise dispersion statistics to create bounded, comparable spectral scores. This enables similarity search that considers both semantic content and spectral characteristics of high-dimensional vector datasets. It builds on the SmartCore [@smartcore2021] machine learning ecosystem.
+`arrowspace` combines traditional semantic similarity with graph-based spectral properties [@Mahadevan:2006;@Spielman:2007]. The library introduces taumode (in mathematical expressions `λτ`, lambda-tau) indexing, which blends Rayleigh quotient smoothness energy from graph Laplacians [@Bai:2007;@Bai:2010] with edge-wise dispersion statistics to create bounded, comparable spectral scores. This enables similarity search that considers both semantic content and spectral characteristics of high-dimensional vector datasets.
 
 # Statement of Need
 
@@ -44,10 +44,10 @@ Existing vector databases and similarity search systems lack integrated spectral
 `ArrowSpace` provides an API to use taumode that is a single, bounded, synthetic score per signal that blends the Rayleigh smoothness energy on a graph with an edgewise dispersion summary; enabling spectra-aware search and range filtering. Operationally, `ArrowSpace` stores dense features (inspired by CSR [@Kelly:2020] and `smartcore` [@smartcore:2021]) as rows over item nodes, computes a Laplacian on items, derives per-row Rayleigh energies, compresses them via a bounded map $E/(E+\tau)$, mixes in a dispersion term and uses the resulting taumode both for similarity and to build a λ-proximity item graph used across the API. This way the taumode score can rely on a synthesis of the characteristics proper of diffusion models and geometric/topological representation of graphs. 
 
 ## Motivation
-From an engineering perspective, there is increasing demand for vector database indices that can spot vector similarities beyond the current available methods (L2 distance, cosine distance, or more complex algorithms like HNSW [@malkov:2018] that requires multiple graphs, or typical caching mechanism requiring hashing). New methods to search vector spaces can lead to more accurate and fine-tunable procedures to adapt the search to the specific needs of the domain the embeddings belong to. Furthermore, at the moment the most popular embeddigs search algorithms focus on single-vector search that has been prooved having theoretical limits [@Weller:2025]. Spectral algorithms like `ArrowSpace` can provide a base for multi-vector search by allowing to index sub-vectors of embeddings.
+From an engineering perspective, there is increasing demand for vector database indices that can spot vector similarities beyond the current available methods (L2 distance, cosine distance, or more complex algorithms like HNSW [@malkov:2018] that requires multiple graphs, or typical caching mechanism requiring hashing). New methods to search vector spaces can lead to more accurate and fine-tunable procedures to adapt the search to the specific needs of the domain the embeddings belong to. Furthermore, at the moment the most popular embeddigs search algorithms focus on single-vector search that has been prooved having theoretical limits [@Weller:2025]; spectral algorithms like `ArrowSpace` can provide a base for multi-vector search by allowing to index sub-vectors of embeddings.
 
 ## Foundation
-The starting score is Rayleigh as described in @Chen:2020. Chen emphasises that the Rayleigh quotient provides a variational characterisation of eigenvalues, it offers a way to find eigenvalues through optimisation rather than solving the characteristic polynomial. This perspective is fundamental in numerical linear algebra and spectral analysis.
+The starting score is Rayleigh as described in @Chen:2020. Chen emphasises that the Rayleigh quotient provides a variational characterisation of eigenvalues, it offers a way to find eigenvalues through optimisation rather than solving the characteristic polynomial. This perspective is fundamental in numerical linear algebra and spectral analysis. On this base the synthetic taumode index is built and used to index vector spaces.
 The treatment is particularly valuable for understanding how spectral properties of matrices emerge naturally from optimisation problems, which connects to applications in data analysis, graph theory, and machine learning.
 
 Basic points:
@@ -115,8 +115,8 @@ let tau_large = 0.1;    // E′ = 0.01/0.11 ≈ 0.09 (low sensitivity)
 ### Computational Complexity
 
 - **Index Construction**: $O(N²)$ for similarity graph (already identified a solution to make this into $O(N log N)$); $O(F·nnz(L))$ for taumode computation.
-- **Query Time**: O(N) for linear scan, O(1) for taumode lookup
-- **Memory Usage**: O(F·N) for dense storage, O(N) for taumode indices
+- **Query Time**: $O(N)$ for linear scan, O(1) for taumode lookup, $O(log(N)+M)$ for range-based lookup.
+- **Memory Usage**: $O(F·N)$ for dense storage, $O(N)$ for taumode indices.
 
 ### Benchmarks
 
