@@ -1,8 +1,30 @@
 # ArrowSpace
 
+**Fast spectral vector search that finds similarity beyond traditional distance metrics**
+
+ArrowSpace is a high-performance Rust library for vector similarity search that goes beyond 
+geometric distance (cosine, L2) by incorporating spectral graph properties, enabling more 
+nuanced similarity matching for scientific and structured data.
+
 `ArrowSpace` is a data structure library that encapsulates the use of `λτ` indexing; a novel scoring method that mixes Rayleigh and Laplacian scoring (see [`RESEARCH.md`](./RESEARCH.md)) for building vector-search-friendly lookup tables with built-in spectral-awareness. This allows better managing of datasets where spectral characteristics are most relevant. It pairs dense, row‑major arrays with per‑row spectral scores (`λτ`) derived from a Rayleigh-Laplacian score built over items, enabling lambda‑aware similarity, range queries, and composable operations like superposition and element‑wise multiplication over rows. It has been designed to work on datasets where spectral characteristics can be leveraged to find matches that are usually ranked lower by commonly used distance metrics.
 
 Run `cargo run --example proteins_lookup` for an example about how it compares with cosine similarity.
+
+## Usage
+```rust
+use arrowspace::builder::ArrowSpaceBuilder;
+
+// Simple example that works immediately
+let vectors = vec![
+    vec![1.0, 2.0, 3.0],
+    vec![2.0, 3.0, 1.0], 
+    vec![3.0, 1.0, 2.0],
+];
+
+let (aspace, _) = ArrowSpaceBuilder::new()
+    .with_rows(vectors)
+    .build();
+```
 
 ### Requirements
 
