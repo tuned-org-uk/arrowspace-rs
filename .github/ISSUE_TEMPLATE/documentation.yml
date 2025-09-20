@@ -1,0 +1,143 @@
+name: Documentation Improvement
+description: Suggest improvements to documentation, guides, or examples
+title: "[Docs]: "
+labels: ["documentation", "good-first-issue"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve our documentation! Clear documentation is essential for project success.
+
+  - type: input
+    id: contact
+    attributes:
+      label: Contact Details
+      description: How can we get in touch with you if we need more info?
+      placeholder: ex. email@example.com
+    validations:
+      required: false
+
+  - type: dropdown
+    id: doc-type
+    attributes:
+      label: Documentation Type
+      description: What type of documentation needs improvement?
+      options:
+        - README
+        - API Documentation
+        - Getting Started Guide
+        - Tutorial/Examples
+        - Code Comments
+        - Architecture/Design Docs
+        - Contributing Guidelines
+        - Installation Instructions
+        - Configuration Guide
+        - FAQ
+      default: 0
+    validations:
+      required: true
+
+  - type: input
+    id: doc-location
+    attributes:
+      label: Documentation Location
+      description: Where is the documentation that needs improvement?
+      placeholder: "File path, URL, or section name"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Issue Type
+      description: What kind of documentation issue is this?
+      options:
+        - Missing information
+        - Incorrect/outdated information
+        - Unclear explanation
+        - Broken links or references
+        - Poor organization/structure
+        - Missing examples
+        - Typos/grammar issues
+        - Accessibility improvements
+      default: 0
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-state
+    attributes:
+      label: Current State
+      description: Describe what the documentation currently says or what's missing
+      placeholder: What does the current documentation say, or what's currently missing?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-improvement
+    attributes:
+      label: Proposed Improvement
+      description: Describe how the documentation should be improved
+      placeholder: What should the documentation say instead? How should it be improved?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Target Audience
+      description: Who would benefit most from this documentation improvement?
+      multiple: true
+      options:
+        - New users/beginners
+        - Experienced developers
+        - Contributors
+        - API users
+        - System administrators
+        - End users
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this documentation improvement?
+      options:
+        - Low - Minor improvement
+        - Medium - Helpful for users
+        - High - Important for user experience
+        - Critical - Blocking user adoption
+      default: 1
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any additional context, screenshots, or references
+      placeholder: Links to related issues, screenshots, or additional context...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Are you willing to help with this documentation improvement?
+      options:
+        - label: I can help write the improved documentation
+        - label: I can help review documentation changes
+        - label: I can provide additional examples or use cases
+        - label: I can test the documentation with new users
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our Code of Conduct
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
+        - label: I have searched existing issues to avoid duplicates
+          required: true
