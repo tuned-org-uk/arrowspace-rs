@@ -20,11 +20,16 @@ bibliography: paper.bib
 
 # Summary
 
-`ArrowSpace` [@ArrowSpace:2025] is a library that implements a novel spectral indexing approach for vector similarity search, combining traditional semantic similarity with graph-based spectral properties [@Mahadevan:2006;@Spielman:2007]. The library introduces taumode (`λτ`, lambda-tau) indexing, which blends Rayleigh quotient smoothness energy from graph Laplacians [@Bai:2007;@Bai:2010] with edge-wise dispersion statistics to create bounded, comparable spectral scores. This enables similarity search that considers both semantic content and spectral characteristics of high-dimensional vector datasets.
+`arrowspace` [@ArrowSpace:2025] is a Rust library (and relative data structure `ArrowSpace`) for vector similarity search that goes beyond traditional distance metrics by incorporating spectral graph properties to find structural patterns in high-dimensional data. `ArrowSpace` adds a spectral dimension that captures structural patterns, enabling more nuanced similarity matching for scientific and structured data applications.
+The library introduces λτ (lambda-tau) indexing, which combines Rayleigh quotient energy with dispersion statistics to create bounded similarity scores. This approach is particularly valuable for domains where geometric similarity alone is insufficient, such as protein analysis, signal processing, and molecular dynamics.
+
+`arrowspace` combines traditional semantic similarity with graph-based spectral properties [@Mahadevan:2006;@Spielman:2007]. The library introduces taumode (in mathematical expressions `λτ`, lambda-tau) indexing, which blends Rayleigh quotient smoothness energy from graph Laplacians [@Bai:2007;@Bai:2010] with edge-wise dispersion statistics to create bounded, comparable spectral scores. This enables similarity search that considers both semantic content and spectral characteristics of high-dimensional vector datasets.
 
 # Statement of Need
 
-Traditional vector similarity search relies primarily on geometric measures, like cosine similarity or Euclidean distance which capture semantic relationships but ignore the spectral structure inherent in many datasets. For example in domains such as protein analysis, signal processing and molecular dynamics, the "roughness" or "smoothness" of feature signals across data relationships can provide valuable discriminative information that complements semantic similarity.
+Traditional vector similarity search relies on geometric measures like cosine similarity or Euclidean distance. These methods capture semantic relationships but ignore spectral structure, the patterns in how data points relate to each other across the entire dataset.
+For scientific applications like protein analysis or signal processing, this limitation means that structurally similar samples may be ranked limited to traditional distance metrics, while geometrically close but spectrally different samples rank highly.
+`ArrowSpace` addresses this gap by providing the first integrated spectral-aware indexing for vector databases, enabling similarity search that considers both content and spectral context.
 
 Existing vector databases and similarity search systems lack integrated spectral-aware indexing capabilities. While spectral methods exist in graph theory and signal processing (for spectral clustering see @VonLuxburg:2007), they are typically computationally expensive and they are not considered for database applications. With the increasing demand for vector searching though (in particular, at current state, for the components called "retrievers" in RAG applications [@Lewis:2020]), the research on spectral indexing gains traction for database applications.
 `ArrowSpace` addresses this gap by providing:
@@ -36,7 +41,7 @@ Existing vector databases and similarity search systems lack integrated spectral
 
 # Data Model and Algorithm
 
-`ArrowSpace` provides an API to use taumode (`λτ`) that is a single, bounded, synthetic score per signal that blends the Rayleigh smoothness energy on a graph with an edgewise dispersion summary; enabling spectra-aware search and range filtering. Operationally, `ArrowSpace` stores dense features (inspired by CSR [@Kelly:2020] and `smartcore` [@smartcore:2021]) as rows over item nodes, computes a Laplacian on items, derives per-row Rayleigh energies, compresses them via a bounded map $E/(E+\tau)$, mixes in a dispersion term and uses the resulting `λτ` both for similarity and to build a λ-proximity item graph used across the API. This way the `λτ` (taumode) score can rely on a synthesis of the characteristics proper of diffusion models and geometric/topological representation of graphs. 
+`ArrowSpace` provides an API to use taumode that is a single, bounded, synthetic score per signal that blends the Rayleigh smoothness energy on a graph with an edgewise dispersion summary; enabling spectra-aware search and range filtering. Operationally, `ArrowSpace` stores dense features (inspired by CSR [@Kelly:2020] and `smartcore` [@smartcore:2021]) as rows over item nodes, computes a Laplacian on items, derives per-row Rayleigh energies, compresses them via a bounded map $E/(E+\tau)$, mixes in a dispersion term and uses the resulting taumode both for similarity and to build a λ-proximity item graph used across the API. This way the taumode score can rely on a synthesis of the characteristics proper of diffusion models and geometric/topological representation of graphs. 
 
 ## Motivation
 From an engineering perspective, there is increasing demand for vector database indices that can spot vector similarities beyond the current available methods (L2 distance, cosine distance, or more complex algorithms like HNSW that requires multiple graphs, or typical caching mechanism requiring hashing). New methods to search vector spaces can lead to more accurate and fine-tunable procedures to adapt the search to the specific needs of the domain the embeddings belong to. Furthermore, at the moment the most popular embeddigs search algorithms focus on single-vector search that has been prooved having theoretical limits [@Weller:2025]. Spectral algorithms like `ArrowSpace` can provide a base for multi-vector search by allowing to index sub-vectors of embeddings.
@@ -53,7 +58,7 @@ Basic points:
 ## taumode and bounded energy
 The main idea for this design is to *build a score that synthesises the energy features and geometric features of the dataset* and apply it to vector searching.
 
-Rayleigh and Laplacian as bounded energy transformation score become a bounded map: raw energy $E$ is compressed to $E'=\frac{E}{E+\tau}\in$ using a strictly positive scale $\tau$, stabilising tails and making scores comparable across rows and datasets while preserving order within moderate ranges.
+Rayleigh and Laplacian as bounded energy transformation score become a bounded map: raw energy $E$ is compressed to $E′=\frac{E}{E+\tau}\in$ using a strictly positive scale $\tau$, stabilising tails and making scores comparable across rows and datasets while preserving order within moderate ranges.
 
 Additional τ selection: taumode supports `Fixed`, `Mean`, `Median`, and `Percentile`; non‑finite inputs are filtered and a small floor ensures positivity; the default `Median` policy provides robust scaling across heterogeneously distributed energies.
 
@@ -61,7 +66,7 @@ Rayleigh, Laplacian and τ selection enable the taumode score, so to use this sc
 
 ### Purpose of τ in the Bounded Transform
 
-The τ parameter is crucial for the bounded energy transformation: **E' = E/(E+τ)**. This maps raw Rayleigh energies from [0,∞) to [0,1), making scores:
+The τ parameter is crucial for the bounded energy transformation: **E′ = E/(E+τ)**. This maps raw Rayleigh energies from [0,∞) to [0,1), making scores:
 
 - **Comparable across datasets** with different energy scales
 - **Numerically stable** by preventing division issues with very small energies
@@ -94,13 +99,13 @@ let results = aspace.search_lambda_aware(&query, 5, 1.0, 0.0);
 
 ### Practical Impact on Search
 
-The choice of taumode affects how the bounded energies $E'$ distribute in $[0,1)$:
+The choice of taumode affects how the bounded energies $E′$ distribute in $[0,1)$:
 
 ```rust
 // Low-energy feature with different τ values
 let energy = 0.01;
-let tau_small = 0.001;  // E' = 0.01/0.011 ≈ 0.91 (high sensitivity)
-let tau_large = 0.1;    // E' = 0.01/0.11 ≈ 0.09 (low sensitivity)
+let tau_small = 0.001;  // E′ = 0.01/0.011 ≈ 0.91 (high sensitivity)
+let tau_large = 0.1;    // E′ = 0.01/0.11 ≈ 0.09 (low sensitivity)
 ```
 
 # Summary and Conclusion
@@ -109,13 +114,13 @@ let tau_large = 0.1;    // E' = 0.01/0.11 ≈ 0.09 (low sensitivity)
 
 ### Computational Complexity
 
-- **Index Construction**: $O(N²)$ for similarity graph (already identified a solution to make this into $O(N log N)$); $O(F·nnz(L))$ for $λτ$ computation.
-- **Query Time**: O(N) for linear scan, O(1) for $λτ$ lookup
-- **Memory Usage**: O(F·N) for dense storage, O(N) for $λτ$ indices
+- **Index Construction**: $O(N²)$ for similarity graph (already identified a solution to make this into $O(N log N)$); $O(F·nnz(L))$ for taumode computation.
+- **Query Time**: O(N) for linear scan, O(1) for taumode lookup
+- **Memory Usage**: O(F·N) for dense storage, O(N) for taumode indices
 
 ### Benchmarks
 
-The library includes benchmarks comparing `ArrowSpace` with baseline cosine similarity, the benchmark baseline shows 25-45% overhead for $λτ$-aware index building (`lambda_similarity` method) compared to a pure cosine index. This is a computational cost to pay for allowing the extension in search capabilities that the additional indexing layer enables. Considering the novelty of the implementation this measurements are not very meaningful and have to be taken only as starting reference. The library and the paper aim to find usable differences in results returned by the novel search harness and this is achieved, as demonstrated in `compare_cosine` example where the index returned by the query are comparable but not the same as cosine similarity (index 30 being the outlier not spotted by cosine similarity). Result of the simple test:
+The library includes benchmarks comparing `ArrowSpace` with baseline cosine similarity, the benchmark baseline shows 25-45% overhead for taumode-aware index building (`lambda_similarity` method) compared to a pure cosine index. This is a computational cost to pay for allowing the extension in search capabilities that the additional indexing layer enables. Considering the novelty of the implementation this measurements are not very meaningful and have to be taken only as starting reference. The library and the paper aim to find usable differences in results returned by the novel search harness and this is achieved, as demonstrated in `compare_cosine` example where the index returned by the query are comparable but not the same as cosine similarity (index 30 being the outlier not spotted by cosine similarity). Result of the simple test:
 
 ```text
 Baseline cosine top-3:
@@ -136,7 +141,7 @@ ArrowSpace (alpha=0.9, beta=0.1) top-3 (spectral-adjusted ArrowSpace):
   4. idx=0 (P0001) score=0.967502
 
 Match (baseline vs Arrow cosine): OK
-Jaccard(baseline vs λτ-aware): 0.750
+Jaccard(baseline vs taumode-aware): 0.750
 ```
 
 ## Results
@@ -145,7 +150,7 @@ Jaccard(baseline vs λτ-aware): 0.750
 
 ## Conclusion
 
-`ArrowSpace` provides a novel approach to vector similarity search by integrating spectral graph properties with traditional semantic similarity measures. The $λτ$ indexing system offers a memory-efficient way to capture spectral characteristics of vector datasets while maintaining practical query performance. The library's design emphasises both mathematical rigor and computational efficiency, making it suitable for scientific applications requiring spectral-aware similarity search.
+`ArrowSpace` provides a novel approach to vector similarity search by integrating spectral graph properties with traditional semantic similarity measures. The taumode indexing system offers a memory-efficient way to capture spectral characteristics of vector datasets while maintaining practical query performance. The library's design emphasises both mathematical rigor and computational efficiency, making it suitable for scientific applications requiring spectral-aware similarity search.
 
 The combination of Rust's performance characteristics with innovative spectral indexing algorithms positions `ArrowSpace` as a valuable tool for researchers and practitioners working with high-dimensional vector data where both semantic content and structural properties matter.
 
