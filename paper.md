@@ -21,8 +21,6 @@ bibliography: paper.bib
 # Summary
 
 `arrowspace` [@ArrowSpace:2025] is a Rust [@rust2015] library (and relative data structure `ArrowSpace`) for vector similarity search that goes beyond traditional distance metrics by incorporating spectral graph properties to find structural patterns in high-dimensional data. `ArrowSpace` adds a spectral dimension that captures structural patterns, enabling more nuanced similarity matching for scientific and structured data applications.
-The library introduces λτ (lambda-tau) indexing, which combines Rayleigh quotient energy with dispersion statistics to create bounded similarity scores. This approach is particularly valuable for domains where geometric similarity alone is insufficient, such as protein analysis, signal processing, and molecular dynamics.
-
 `arrowspace` combines traditional semantic similarity with graph-based spectral properties [@Mahadevan:2006;@Spielman:2007]. The library introduces taumode (in mathematical expressions `λτ`, lambda-tau) indexing, which blends Rayleigh quotient smoothness energy from graph Laplacians [@Bai:2007;@Bai:2010] with edge-wise dispersion statistics to create bounded, comparable spectral scores. This enables similarity search that considers both semantic content and spectral characteristics of high-dimensional vector datasets.
 
 # Statement of Need
