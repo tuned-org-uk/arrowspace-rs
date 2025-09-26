@@ -25,7 +25,7 @@ bibliography: paper.bib
 
 # Statement of Need
 
-Traditional vector similarity search relies on geometric measures like cosine similarity [@YouKisung:2025] or Euclidean distance. These methods capture semantic relationships but ignore spectral structure, the patterns in how data points relate to each other across the entire dataset.
+Traditional vector similarity search relies on geometric measures like cosine similarity or Euclidean distance. These methods capture semantic relationships but ignore spectral structure [@YouKisung:2025], the patterns in how data points relate to each other across the entire dataset.
 For scientific applications like protein analysis or signal processing, this limitation means that structurally similar samples may be ranked limited to traditional distance metrics, while geometrically close but spectrally different samples rank highly.
 `ArrowSpace` addresses this gap by providing the first integrated spectral-aware indexing for vector databases, enabling similarity search that considers both content and spectral context.
 
