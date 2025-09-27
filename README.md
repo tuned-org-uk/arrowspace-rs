@@ -1,5 +1,7 @@
 # ArrowSpace
 
+[![DOI](https://joss.theoj.org/papers/10.21105/joss.09002/status.svg)](https://doi.org/10.21105/joss.09002)
+
 **Fast spectral vector search that finds similarity beyond traditional distance metrics**
 
 ArrowSpace is a high-performance Rust library for vector similarity search that goes beyond 
