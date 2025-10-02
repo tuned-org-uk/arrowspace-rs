@@ -1,3 +1,132 @@
+//! Graph Laplacian Construction and Analysis for ArrowSpace
+//!
+//! This module provides the core infrastructure for building and manipulating graph Laplacian
+//! matrices used in the ArrowSpace framework. It implements λ-proximity graphs that capture
+//! both geometric relationships between data items and spectral relationships between features.
+//!
+//! # Overview
+//!
+//! The module centers around two main concepts:
+//!
+//! 1. **Item-to-Item Graphs**: A standard graph Laplacian (N×N) where nodes represent data items
+//!    and edges capture similarity relationships based on rectified cosine distance.
+//!
+//! 2. **Feature-to-Feature Graphs**: A spectral Laplacian (F×F) derived from the item graph,
+//!    where nodes represent features and edges capture co-occurrence patterns across the data manifold.
+//!
+//! # Core Components
+//!
+//! ## GraphParams
+//!
+//! Configuration for graph construction with numerical stability guarantees:
+//! - `eps`: Maximum rectified cosine distance threshold for edge inclusion
+//! - `k`: Maximum degree (number of neighbors) per node
+//! - `topk`: Number of candidates considered during nearest neighbor search
+//! - `p`: Kernel parameter for weight computation (typically 2.0 for Gaussian-like kernels)
+//! - `sigma`: Kernel bandwidth tolerance (defaults to `eps * 0.5`)
+//! - `normalise`: Whether to normalize input vectors (disable to preserve magnitude information)
+//!
+//! ## GraphLaplacian
+//!
+//! A sparse symmetric positive semi-definite matrix L = D - W where:
+//! - D is the degree matrix (diagonal)
+//! - W is the weighted adjacency matrix
+//! - Row sums equal zero (within numerical tolerance of 1e-10)
+//!
+//! The Laplacian encodes the graph structure and enables spectral analysis via the Rayleigh quotient:
+//! ```ignore
+//! R(L, x) = (x^T L x) / (x^T x)
+//! ```
+//! which measures how much signal x varies across connected nodes.
+//!
+//! ## GraphFactory
+//!
+//! Factory methods for constructing Laplacian matrices with proper validation:
+//! - `build_laplacian_matrix`: Constructs item-to-item (N×N) graph from data matrix
+//! - `build_spectral_laplacian`: Derives feature-to-feature (F×F) graph from item graph
+//!
+//! # Mathematical Properties
+//!
+//! All constructed Laplacians satisfy:
+//! 1. **Symmetry**: L(i,j) = L(j,i) for all i,j
+//! 2. **Zero row sums**: Σⱼ L(i,j) = 0 for all i (within tolerance)
+//! 3. **Positive semi-definite**: x^T L x ≥ 0 for all x
+//! 4. **Sparsity**: Typically < 5% dense (enforced via assertion)
+//!
+//! # Numerical Stability
+//!
+//! The module maintains precision at the 1e-10 level through:
+//! - Sparse matrix representations (via `sprs::CsMat`)
+//! - Validation of Laplacian properties via `verify_properties`
+//! - Sparsity enforcement to prevent degenerate dense graphs
+//! - Complementary value storage to avoid accumulated subtraction errors
+//!
+//! # Usage Example
+//!
+//! ```ignore
+//! use arrowspace::graph::{GraphFactory, GraphParams};
+//!
+//! // Define graph construction parameters
+//! let params = GraphParams {
+//!     eps: 1.0,
+//!     k: 10,
+//!     topk: 20,
+//!     p: 2.0,
+//!     sigma: Some(0.5),
+//!     normalise: false,
+//! };
+//!
+//! // Build item-to-item Laplacian (N×N)
+//! let items = vec![
+//!     vec![1.0, 2.0, 3.0],  // Item 1
+//!     vec![2.0, 3.0, 4.0],  // Item 2
+//!     vec![3.0, 4.0, 5.0],  // Item 3
+//! ];
+//! let laplacian = GraphFactory::build_laplacian_matrix(
+//!     items, 1.0, 10, 20, 2.0, Some(0.5), false
+//! );
+//!
+//! // Verify Laplacian properties
+//! let validation = laplacian.verify_properties(1e-10);
+//! assert!(validation.is_valid);
+//!
+//! // Compute Rayleigh quotient for a signal
+//! let signal = vec![1.0, 0.5, 0.2];
+//! let smoothness = laplacian.rayleigh_quotient(&signal);
+//!
+//! // Build feature-to-feature spectral Laplacian (F×F)
+//! let aspace_with_signals = GraphFactory::build_spectral_laplacian(
+//!     aspace,
+//!     &laplacian
+//! );
+//! ```
+//!
+//! # Integration with ArrowSpace
+//!
+//! This module is typically accessed through `ArrowSpaceBuilder`:
+//! ```ignore
+//! use arrowspace::builder::ArrowSpaceBuilder;
+//!
+//! let builder = ArrowSpaceBuilder::new()
+//!     .with_lambda_graph(1.0, 10, 20, 2.0, Some(0.5));
+//!
+//! let (aspace, graph_laplacian) = builder.build(items);
+//! ```
+//!
+//! # Performance Characteristics
+//!
+//! - **Construction**: O(N² log N) for brute-force nearest neighbors, O(N log N) with approximate methods
+//! - **Storage**: O(k·N) due to sparsity (typically k << N)
+//! - **Matrix-vector multiplication**: O(k·N) for sparse operations
+//! - **Rayleigh quotient**: O(k·N) via sparse matrix-vector product
+//!
+//! # Logging
+//!
+//! The module uses the `log` crate with the following levels:
+//! - `trace`: Detailed matrix operations and inner loop diagnostics
+//! - `debug`: Matrix dimensions, statistics, and validation results
+//! - `info`: High-level construction steps and summary information
+//! - `warn`: Numerical issues or validation failures
 use std::fmt;
 
 use crate::core::ArrowSpace;

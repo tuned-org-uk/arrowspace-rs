@@ -1,3 +1,235 @@
+//! ArrowSpace Builder with Graph-Based Synthetic Index Generation
+//!
+//! This module provides the `ArrowSpaceBuilder`, a fluent API for constructing `ArrowSpace` instances
+//! with configurable graph Laplacians and synthetic lambda indices. It orchestrates the complex process
+//! of building item-to-item proximity graphs, computing spectral representations, and deriving
+//! τ-mode synthetic indices that capture both local geometry and global manifold structure.
+//!
+//! # Overview
+//!
+//! The builder implements a flexible construction pipeline that:
+//!
+//! 1. **Builds a λ-proximity graph** from data items using rectified cosine distance
+//! 2. **Computes graph Laplacian** (N×N) encoding item-to-item relationships
+//! 3. **Optionally derives spectral Laplacian** (F×F) encoding feature-to-feature relationships
+//! 4. **Generates synthetic λ indices** via Rayleigh quotient analysis with τ-mode selection
+//!
+//! # Construction Philosophy
+//!
+//! ## Graph-First Approach
+//!
+//! All ArrowSpace instances are fundamentally graph-based. The builder always constructs a
+//! λ-proximity graph as the canonical representation of item relationships. This graph serves
+//! dual purposes:
+//! - **Geometric**: Captures local neighborhood structure via k-nearest neighbors
+//! - **Spectral**: Enables global manifold analysis via Laplacian eigenfunctions
+//!
+//! ## Synthetic Index Generation
+//!
+//! The λ (lambda) values assigned to each item are "synthetic indices" computed from the graph
+//! structure, not from raw feature statistics. These indices quantify how much each item's
+//! feature vector varies across its graph neighborhood, measured via the Rayleigh quotient:
+//!
+//! ```ignore
+//! λᵢ = R(L, xᵢ) = (xᵢᵀ L xᵢ) / (xᵢᵀ xᵢ)
+//! ```
+//!
+//! where L is the graph Laplacian and xᵢ is the item's feature vector.
+//!
+//! ## τ-Mode Selection
+//!
+//! The builder supports multiple strategies for computing synthetic indices via `TauMode`:
+//! - **Median**: Uses median of all Rayleigh quotients (robust, default)
+//! - **Mean**: Uses mean of Rayleigh quotients (sensitive to outliers)
+//! - **Fixed(τ)**: Uses a user-specified τ value for all items
+//! - **Adaptive**: Per-item τ based on local graph density
+//!
+//! # Configuration Parameters
+//!
+//! ## Lambda-Graph Parameters
+//!
+//! These control the λ-proximity graph construction:
+//!
+//! - **`eps` (epsilon)**: Maximum rectified cosine distance threshold. Items within this distance
+//!   are considered neighbors. Typical range: [1e-4, 1e-2]. Smaller values create sparser graphs.
+//!
+//! - **`k`**: Maximum degree per node (neighbor cap). Limits graph density and computational cost.
+//!   Recommended: 3-10 for sparse graphs, 10-50 for denser analysis.
+//!
+//! - **`topk`**: Number of candidates returned during k-NN search. Should be ≤ k. Automatically
+//!   adjusted by heuristics if not set explicitly.
+//!
+//! - **`p`**: Kernel exponent for edge weight computation: w(i,j) = exp(-||xᵢ - xⱼ||ᵖ / σ).
+//!   Typical value: 2.0 (Gaussian-like kernel).
+//!
+//! - **`sigma`**: Kernel bandwidth. Controls decay rate of edge weights. Default: `eps * 0.5`.
+//!   Smaller σ creates sharper locality.
+//!
+//! - **`normalise`**: Whether to normalize feature vectors before graph construction. Set to
+//!   `false` (default) to preserve magnitude information.
+//!
+//! ## Recommended Starting Parameters
+//!
+//! For most datasets, begin with:
+//! ```ignore
+//! builder.with_lambda_graph(
+//!     1e-3,       // eps: moderate sparsity
+//!     6,          // k: small neighborhood
+//!     3,          // topk: conservative results
+//!     2.0,        // p: Gaussian kernel
+//!     None        // sigma: auto (eps/2)
+//! )
+//! ```
+//!
+//! Adjust based on:
+//! - **Dataset size**: Smaller k for N > 10,000
+//! - **Intrinsic dimension**: Larger k for high-dimensional manifolds
+//! - **Desired sparsity**: Target < 5% density (enforced by assertions)
+//!
+//! # Usage Patterns
+//!
+//! ## Basic Construction
+//!
+//! ```ignore
+//! use arrowspace::builder::ArrowSpaceBuilder;
+//!
+//! let items = vec![
+//!     vec![1.0, 2.0, 3.0],
+//!     vec![2.0, 3.0, 4.0],
+//!     vec![3.0, 4.0, 5.0],
+//! ];
+//!
+//! let (aspace, graph) = ArrowSpaceBuilder::new()
+//!     .build(items);
+//! ```
+//!
+//! ## Custom Graph Configuration
+//!
+//! ```
+//! let (aspace, graph) = ArrowSpaceBuilder::new()
+//!     .with_lambda_graph(1e-3, 10, 5, 2.0, Some(0.5))
+//!     .build(items);
+//! ```
+//!
+//! ## Custom Synthesis Strategy
+//!
+//! ```ignore
+//! use arrowspace::taumode::TauMode;
+//!
+//! let (aspace, graph) = ArrowSpaceBuilder::new()
+//!     .with_synthesis(TauMode::Fixed(0.5))
+//!     .build(items);
+//! ```
+//!
+//! ## Spectral Analysis (Expensive)
+//!
+//! Enable F×F feature-to-feature Laplacian for deeper analysis:
+//! ```ignore
+//! let (aspace, graph) = ArrowSpaceBuilder::new()
+//!     .with_spectral(true)  // Doubles computation time
+//!     .build(items);
+//!
+//! // Access feature signals matrix
+//! let signals = &aspace.signals;  // F×F sparse matrix
+//! ```
+//!
+//! # Build Process Details
+//!
+//! The `build()` method executes the following pipeline:
+//!
+//! 1. **Validation**: Checks input dimensions and parameter consistency
+//! 2. **ArrowSpace initialization**: Creates basic item storage structure
+//! 3. **Graph construction**: Builds N×N sparse Laplacian via `GraphFactory`
+//! 4. **Spectral computation** (optional): Derives F×F feature Laplacian
+//! 5. **Synthetic index generation**: Computes λ values via τ-mode analysis
+//! 6. **Validation**: Ensures graph properties (symmetry, sparsity, positivity)
+//!
+//! # Parameter Tuning Guidelines
+//!
+//! ## Graph Connectivity
+//!
+//! - **Too sparse** (k < 3): Risk of disconnected components, unreliable λ values
+//! - **Too dense** (k > 50): Excessive computation, loss of local structure
+//! - **Sweet spot**: k ∈ [5, 15] for most datasets
+//!
+//! ## Epsilon Selection
+//!
+//! - Start with `eps = 1e-3`
+//! - Increase if graph is disconnected (check `graph.statistics()`)
+//! - Decrease if sparsity < 90% (target 95-98% sparse)
+//!
+//! ## Sigma vs Epsilon
+//!
+//! - `sigma = eps/2` (default): Conservative, sharp locality
+//! - `sigma = eps`: Moderate decay
+//! - `sigma = 2*eps`: Smooth, broad influence
+//!
+//! # Integration with Search
+//!
+//! The built ArrowSpace uses λ values for similarity search:
+//! ```ignore
+//! let query = vec![2.5, 3.5, 4.5];
+//! let results = aspace.search(
+//!     &query,
+//!     &graph,
+//!     None,        // tau: use default
+//!     Some(5),     // k: top 5 results
+//!     Some(0.7),   // alpha: 70% feature weight
+//!     Some(0.3)    // beta: 30% lambda weight
+//! );
+//! ```
+//!
+//! # Logging and Diagnostics
+//!
+//! Enable logging to monitor the build process:
+//! ```ignore
+//! env_logger::Builder::from_default_env()
+//!     .filter_level(log::LevelFilter::Debug)
+//!     .init();
+//! ```
+//!
+//! Log levels:
+//! - **trace**: Detailed matrix operations, inner computations
+//! - **debug**: Dimension tracking, parameter values, statistics
+//! - **info**: Major pipeline steps, completion messages
+//! - **warn**: Numerical issues, validation failures
+//!
+//! # Numerical Stability
+//!
+//! The builder maintains precision at the 1e-10 level through:
+//! - Sparse matrix representations (avoid dense storage)
+//! - Graph sparsity enforcement (< 5% density)
+//! - Lambda normalization and clamping to [0, 1]
+//! - Validation of Laplacian properties (symmetry, zero row sums)
+//!
+//! # Common Patterns
+//!
+//! ## Production Configuration
+//!
+//! ```ignore
+//! let builder = ArrowSpaceBuilder::new()
+//!     .with_lambda_graph(1e-3, 8, 4, 2.0, None)
+//!     .with_synthesis(TauMode::Median)
+//!     .with_normalisation(false);
+//! ```
+//!
+//! ## Exploratory Analysis
+//!
+//! ```ignore
+//! let builder = ArrowSpaceBuilder::new()
+//!     .with_lambda_graph(1e-2, 15, 8, 2.0, Some(5e-3))
+//!     .with_spectral(true)
+//!     .with_synthesis(TauMode::Adaptive);
+//! ```
+//!
+//! ## High-Dimensional Data
+//!
+//! ```ignore
+//! let builder = ArrowSpaceBuilder::new()
+//!     .with_lambda_graph(1e-2, 20, 10, 2.0, Some(1e-2))
+//!     .with_normalisation(true);  // Mitigate curse of dimensionality
+//! ```
+
 use crate::core::{ArrowSpace, TAUDEFAULT};
 use crate::graph::{GraphFactory, GraphLaplacian};
 use crate::taumode::TauMode;
