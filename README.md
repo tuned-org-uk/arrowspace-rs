@@ -88,15 +88,14 @@ let items = vec![
     vec![3.0, 1.0, 2.0],  // Item 3
 ];
 
-let (aspace, _graph) = ArrowSpaceBuilder::new()
-    .with_rows(items)
+let (aspace, graph) = ArrowSpaceBuilder::new()
     .with_lambda_graph(0.5, 3, 2.0, sigma: 0.25)
-    .build();
+    .build(items);
 
 // prepare query vector
-let query = ArrowItem::new(vec![1.5, 2.5, 2.0], 0.0);
+let query = aspace.prepare_query_item(vec![1.5, 2.5, 2.0], &graph);
 // search the space
-let results = aspace.search_lambda_aware(&query, 5, alpha, beta);
+let results = aspace.search_lambda_aware(&query, 1, alpha);
 println!("{:?}", results);
 
 ```

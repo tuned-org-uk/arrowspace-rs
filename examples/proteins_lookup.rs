@@ -106,11 +106,12 @@ fn main() {
     //   sigma_override: None => σ defaults to eps
     let eps = 0.05;        // Larger epsilon for more connected graph
     let k = 12usize;       // More neighbors for stability (trade-off with items)
+    let topk = 4usize;
     let p = 2.0;           // Linear kernel less sensitive to outliers  
     let sigma_override = Some(eps * 0.5);  // Explicit sigma control
 
     let (aspace, _) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(eps, k, p, sigma_override)
+        .with_lambda_graph(eps, k, topk, p, sigma_override)
         .build(items_nxf.clone());
 
     // 2) Prepare a query vector near P0004

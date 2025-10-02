@@ -119,11 +119,15 @@ fn main() {
     // ArrowSpace: build λ-graph from N×24 data
     // ArrowSpace auto-transposes to F×F (24×24) internally
     // ---------------------------------------------------
-    // let eps = 1e-3;
-    // let cap_k = 3;
-    // let p = 2.0;
+    let eps = 1e-3;
+    let k = 20;
+    let topk = 3;
+    let p = 2.0;
+    let sigma_override = Some(1e-3 * 0.75);
     let (aspace, _gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(1e-3, 5, 2.0, Some(1e-3 * 0.5))
+        .with_normalisation(false)
+        .with_lambda_graph(eps, k, topk, p, sigma_override)
+        // .with_spectral(true)
         .build(db); // N×24 -> auto-transposed to 24×N
         
 
@@ -148,7 +152,7 @@ fn main() {
             let lambda = aspace.lambdas()[i];
             let item_row = ArrowItem::new(item.item.clone(), lambda);
 
-            let score = query_row.lambda_similarity(&item_row, alpha, beta);
+            let score = query_row.lambda_similarity(&item_row, alpha);
             (i, score)
         })
         .collect();
@@ -173,13 +177,13 @@ fn main() {
             let lambda = aspace.lambdas()[i];
             let item_row = ArrowItem::new(item.item.clone(), lambda);
 
-            let score = query_row.lambda_similarity(&item_row, alpha, beta);
+            let score = query_row.lambda_similarity(&item_row, alpha);
             (i, score)
         })
         .collect();
 
     arrow_scores_lambda.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    arrow_scores_lambda.truncate(k+1);
+    arrow_scores_lambda.truncate(topk+5);
 
     println!("\nArrowSpace (alpha={alpha}, beta={beta}) top-{k}+1:");
     for (rank, (i, s)) in arrow_scores_lambda.iter().enumerate() {
@@ -217,13 +221,13 @@ fn main() {
                 let lambda = aspace.lambdas()[i];
                 let item_row = ArrowItem::new(item.item.clone(), lambda);
 
-                let score = query_row.lambda_similarity(&item_row, alpha, beta);
+                let score = query_row.lambda_similarity(&item_row, alpha);
                 (i, score)
             })
             .collect();
 
         arrow_scores_lambda.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        arrow_scores_lambda.truncate(k+1);
+        arrow_scores_lambda.truncate(topk);
 
         println!("\nArrowSpace (alpha={alpha}, beta={beta}) top-{k}+1:");
         for (rank, (i, s)) in arrow_scores_lambda.iter().enumerate() {

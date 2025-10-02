@@ -109,9 +109,10 @@ fn parse_vectors_block() -> (Vec<String>, Vec<Vec<f64>>) {
 fn build_arrowspace(db: &[Vec<f64>]) -> (ArrowSpace, usize) {
     let eps = 1e-3;
     let cap_k = 3;
+    let topk = 3;
     let p = 2.0;
     let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(eps, cap_k, p, None)
+        .with_lambda_graph(eps, cap_k, topk, p, None)
         .build(db.to_vec());
     assert_eq!(gl.nnodes, aspace.data.shape().1);
     (aspace, gl.nnodes)
@@ -163,7 +164,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         let mut arr_scores: Vec<(usize, f64)> = (0..db.len())
             .map(|i| {
                 let item_i = aspace.get_item(i);
-                (i, qrow.lambda_similarity(&item_i, 1.0, 0.0))
+                (i, qrow.lambda_similarity(&item_i, 1.0))
             })
             .collect();
         arr_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
@@ -207,7 +208,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 let mut scores: Vec<(usize, f64)> = (0..db.len())
                     .map(|i| {
                         let item_i = aspace.get_item(i);
-                        (i, qrow.lambda_similarity(&item_i, 1.0, 0.0))
+                        (i, qrow.lambda_similarity(&item_i, 1.0))
                     })
                     .collect();
                 scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
@@ -226,7 +227,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 let mut scores: Vec<(usize, f64)> = (0..db.len())
                     .map(|i| {
                         let item_i = aspace.get_item(i);
-                        (i, qrow.lambda_similarity(&item_i, 0.9, 0.1))
+                        (i, qrow.lambda_similarity(&item_i, 0.9))
                     })
                     .collect();
                 scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
@@ -275,7 +276,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                             let mut scores: Vec<(usize, f64)> = (0..db.len())
                                 .map(|i| {
                                     let item_i = aspace.get_item(i);
-                                    (i, qrow.lambda_similarity(&item_i, 1.0, 0.0))
+                                    (i, qrow.lambda_similarity(&item_i, 1.0))
                                 })
                                 .collect();
                             scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
@@ -301,7 +302,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                             let mut scores: Vec<(usize, f64)> = (0..db.len())
                                 .map(|i| {
                                     let item_i = aspace.get_item(i);
-                                    (i, qrow.lambda_similarity(&item_i, 0.9, 0.1))
+                                    (i, qrow.lambda_similarity(&item_i, 0.9))
                                 })
                                 .collect();
                             scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());

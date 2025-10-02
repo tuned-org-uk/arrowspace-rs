@@ -1,8 +1,9 @@
 use crate::builder::ArrowSpaceBuilder;
 use crate::core::ArrowSpace;
-use crate::graph::{GraphFactory, GraphParams};
+use crate::graph::{dense_to_sparse, GraphFactory, GraphParams};
 use crate::taumode::{TauMode, TAU_FLOOR};
 use crate::tests::GRAPH_PARAMS;
+use crate::tests::test_data::make_moons_hd;
 
 use approx::relative_eq;
 use smartcore::linalg::basic::arrays::{Array, Array2};
@@ -143,15 +144,16 @@ fn test_compute_synthetic_lambdas_basic() {
         items,
         GRAPH_PARAMS.eps,
         GRAPH_PARAMS.k,
+        GRAPH_PARAMS.topk,
         GRAPH_PARAMS.p,
         GRAPH_PARAMS.sigma,
         GRAPH_PARAMS.normalise,
     );
-    let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl.graph_params);
+    let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
 
     // Apply synthetic lambda computation
     let tau_mode = TauMode::Fixed(0.9);
-    TauMode::compute_taumode_lambdas(&mut aspace, Some(tau_mode));
+    TauMode::compute_taumode_lambdas(&mut aspace, &gl, tau_mode);
 
     let lambdas = aspace.lambdas();
     assert_eq!(lambdas.len(), 2);
@@ -184,6 +186,7 @@ fn test_compute_synthetic_lambdas_different_alpha() {
         items.clone(),
         GRAPH_PARAMS.eps,
         GRAPH_PARAMS.k,
+        GRAPH_PARAMS.topk,
         GRAPH_PARAMS.p,
         GRAPH_PARAMS.sigma,
         GRAPH_PARAMS.normalise,
@@ -191,20 +194,20 @@ fn test_compute_synthetic_lambdas_different_alpha() {
 
     // Test with alpha = 1.0 (pure energy term)
     let aspace1 = ArrowSpace::from_items_default(items.clone());
-    let mut aspace1 = GraphFactory::build_spectral_laplacian(aspace1, &gl.graph_params);
-    TauMode::compute_taumode_lambdas(&mut aspace1, Some(TauMode::Fixed(0.9)));
+    let mut aspace1 = GraphFactory::build_spectral_laplacian(aspace1, &gl);
+    TauMode::compute_taumode_lambdas(&mut aspace1, &gl,TauMode::Fixed(0.9));
     let lambdas1 = aspace1.lambdas().to_vec();
 
     // Test with alpha = 0.0 (pure dispersion term)
     let aspace2 = ArrowSpace::from_items_default(items.clone());
-    let mut aspace2 = GraphFactory::build_spectral_laplacian(aspace2, &gl.graph_params);
-    TauMode::compute_taumode_lambdas(&mut aspace2, Some(TauMode::Fixed(0.9)));
+    let mut aspace2 = GraphFactory::build_spectral_laplacian(aspace2, &gl);
+    TauMode::compute_taumode_lambdas(&mut aspace2, &gl,TauMode::Fixed(0.9));
     let lambdas2 = aspace2.lambdas().to_vec();
 
     // Test with alpha = 0.5 (balanced)
     let aspace3 = ArrowSpace::from_items_default(items);
-    let mut aspace3 = GraphFactory::build_spectral_laplacian(aspace3, &gl.graph_params);
-    TauMode::compute_taumode_lambdas(&mut aspace3, Some(TauMode::Fixed(0.9)));
+    let mut aspace3 = GraphFactory::build_spectral_laplacian(aspace3, &gl);
+    TauMode::compute_taumode_lambdas(&mut aspace3, &gl,TauMode::Fixed(0.9));
     let lambdas3 = aspace3.lambdas().to_vec();
 
     // All should be different (unless edge case)
@@ -224,35 +227,21 @@ fn test_compute_synthetic_lambdas_zero_vectors() {
     let items = vec![vec![0.0, 0.0, 0.0], vec![0.0, 0.0, 0.0]];
 
     let aspace = ArrowSpace::from_items_default(items.clone());
-    let gl = GraphFactory::build_laplacian_matrix(items, 1e-3, 2, 2.0, None, true);
-    let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl.graph_params);
+    let gl = GraphFactory::build_laplacian_matrix(items, 1e-3, 2, 2, 2.0, None, true);
+    let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
 
-    TauMode::compute_taumode_lambdas(&mut aspace, Some(TauMode::Median));
+    TauMode::compute_taumode_lambdas(&mut aspace, &gl,TauMode::Median);
 }
 
 #[test]
 fn test_compute_synthetic_lambdas_different_tau_modes() {
-    let items = vec![
-        vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
-        ],
-        vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
-        ],
-        vec![
-            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38,
-            0.60,
-        ],
-    ];
+    let dims = 10;
+    
+    let items: Vec<Vec<f64>> = make_moons_hd(300, 0.12, 0.01, dims,42);
 
     let gl = GraphFactory::build_laplacian_matrix(
         items.clone(),
-        GRAPH_PARAMS.eps,
-        GRAPH_PARAMS.k,
-        GRAPH_PARAMS.p,
-        GRAPH_PARAMS.sigma,
+    1e-3, 5, GRAPH_PARAMS.topk, GRAPH_PARAMS.p, Some(1e-3 * 0.50),
         GRAPH_PARAMS.normalise,
     );
 
@@ -269,14 +258,14 @@ fn test_compute_synthetic_lambdas_different_tau_modes() {
     for tau_mode in tau_modes {
         let aspace = ArrowSpace::from_items_default(items.clone());
         let mut aspace =
-            GraphFactory::build_spectral_laplacian(aspace, &gl.graph_params);
-        TauMode::compute_taumode_lambdas(&mut aspace, Some(tau_mode));
+            GraphFactory::build_spectral_laplacian(aspace, &gl);
+        TauMode::compute_taumode_lambdas(&mut aspace, &gl,tau_mode);
 
         let lambdas = aspace.lambdas().to_vec();
 
         // All modes should produce valid results
         assert!(lambdas.iter().all(|&l| l.is_finite() && (0.0..=1.0).contains(&l)));
-        assert_eq!(lambdas.len(), 3); // One lambda per item
+        assert_eq!(lambdas.len(), 300); // One lambda per item
 
         all_lambdas.push(lambdas);
 
@@ -357,12 +346,12 @@ fn test_compute_synthetic_lambdas_graph_mismatch_panics() {
     // Create a graph with wrong number of features
     let wrong_items = vec![vec![1.0], vec![2.0], vec![3.0]]; // 3 items instead of 2
     let wrong_gl =
-        GraphFactory::build_laplacian_matrix(wrong_items, 1e-3, 2, 2.0, None, true);
+        GraphFactory::build_laplacian_matrix(wrong_items, 1e-3, 2, 2, 2.0, None, true);
 
-    let aspace = GraphFactory::build_spectral_laplacian(aspace, &wrong_gl.graph_params);
+    let aspace = GraphFactory::build_spectral_laplacian(aspace, &wrong_gl);
 
     // This should panic due to node count mismatch
-    TauMode::compute_taumode_lambdas(&mut aspace.clone(), Some(TauMode::Median));
+    TauMode::compute_taumode_lambdas(&mut aspace.clone(), &wrong_gl,TauMode::Median);
 }
 
 #[test]
@@ -395,6 +384,7 @@ fn test_synthetic_lambda_properties() {
         .with_lambda_graph(
             GRAPH_PARAMS.eps,
             GRAPH_PARAMS.k,
+            GRAPH_PARAMS.topk,
             GRAPH_PARAMS.p,
             GRAPH_PARAMS.sigma,
         )
@@ -411,10 +401,11 @@ fn test_synthetic_lambda_properties() {
     // 2. Lambdas are deterministic (same input -> same output)
     let (aspace2, _) = ArrowSpaceBuilder::new()
         .with_lambda_graph(
-            GRAPH_PARAMS.eps,
-            GRAPH_PARAMS.k,
-            GRAPH_PARAMS.p,
-            GRAPH_PARAMS.sigma,
+        GRAPH_PARAMS.eps,
+        GRAPH_PARAMS.k,
+        GRAPH_PARAMS.topk,
+        GRAPH_PARAMS.p,
+        GRAPH_PARAMS.sigma,
         )
         .build(items.clone());
 
@@ -462,6 +453,7 @@ fn test_synthetic_lambda_properties() {
         .with_lambda_graph(
             GRAPH_PARAMS.eps,
             GRAPH_PARAMS.k,
+            GRAPH_PARAMS.topk,
             GRAPH_PARAMS.p,
             GRAPH_PARAMS.sigma,
         )
@@ -491,7 +483,7 @@ fn test_rayleigh_quotient_basic() {
     // Test with constant vector
     let constant_vector = vec![1.0, 1.0, 1.0];
     let quotient =
-        TauMode::compute_rayleigh_quotient_from_matrix(&matrix, &constant_vector);
+        TauMode::compute_rayleigh_quotient_from_matrix(&dense_to_sparse(&matrix), &constant_vector);
 
     assert!(
         (quotient - 2.0 / 3.0).abs() < 1e-10,
@@ -502,7 +494,7 @@ fn test_rayleigh_quotient_basic() {
     // Test with alternating vector (should give larger eigenvalue)
     let alternating_vector = vec![1.0, -1.0, 1.0];
     let alt_quotient =
-        TauMode::compute_rayleigh_quotient_from_matrix(&matrix, &alternating_vector);
+        TauMode::compute_rayleigh_quotient_from_matrix(&dense_to_sparse(&matrix), &alternating_vector);
 
     assert!(alt_quotient > quotient, "Alternating vector should have higher energy");
     assert!(alt_quotient > 0.0, "Should be positive for this matrix");
@@ -525,9 +517,9 @@ fn test_scale_invariance() {
     let vector = vec![1.0, 2.0];
     let scaled_vector = vec![2.0, 4.0]; // 2x scaled
 
-    let quotient1 = TauMode::compute_rayleigh_quotient_from_matrix(&matrix, &vector);
+    let quotient1 = TauMode::compute_rayleigh_quotient_from_matrix(&dense_to_sparse(&matrix), &vector);
     let quotient2 =
-        TauMode::compute_rayleigh_quotient_from_matrix(&matrix, &scaled_vector);
+        TauMode::compute_rayleigh_quotient_from_matrix(&dense_to_sparse(&matrix), &scaled_vector);
 
     assert!(
         relative_eq!(quotient1, quotient2, epsilon = 1e-10),
@@ -544,7 +536,7 @@ fn test_zero_vector() {
 
     let zero_vector = vec![0.0, 0.0];
     let quotient =
-        TauMode::compute_rayleigh_quotient_from_matrix(&matrix, &zero_vector);
+        TauMode::compute_rayleigh_quotient_from_matrix(&dense_to_sparse(&matrix), &zero_vector);
 
     assert_eq!(quotient, 0.0, "Zero vector should give zero quotient");
 }
@@ -556,7 +548,7 @@ fn test_batch_computation() {
 
     let vectors = vec![vec![1.0, 0.0], vec![0.0, 1.0], vec![1.0, 1.0], vec![1.0, -1.0]];
 
-    let quotients = TauMode::compute_rayleigh_quotients_batch(&matrix, &vectors);
+    let quotients = TauMode::compute_rayleigh_quotients_batch(&dense_to_sparse(&matrix), &vectors);
 
     assert_eq!(quotients.len(), 4);
     for (i, &q) in quotients.iter().enumerate() {
@@ -568,27 +560,15 @@ fn test_batch_computation() {
 /// Test on an embeddings dataset, see `test_data.rs`
 #[test]
 fn test_lambda_verification_quora_embeddings() {
-    use crate::tests::test_data::QUORA_EMBEDDS;
-    // Test vector with 384 dimensions from embedding space
-    let test_vector = QUORA_EMBEDDS[QUORA_EMBEDDS.len() - 1];
+    let dims = 10;
+    
+    let items: Vec<Vec<f64>> = make_moons_hd(300, 0.12, 0.01, dims,42);
 
-    // Create an ArrowSpace for testing lambda computation
-    let items: Vec<Vec<f64>> = QUORA_EMBEDDS[0..QUORA_EMBEDDS.len()]
-        .iter()
-        .map(|inner_slice| inner_slice.to_vec())
-        .collect();
     let aspace = ArrowSpace::from_items_default(items.clone());
-
-    // Verify vector dimensions
-    assert_eq!(test_vector.len(), 384, "Test vector should have 384 dimensions");
-    assert_eq!(aspace.data.shape(), (15, 384), "ArrowSpace should have shape (1, 384)");
 
     // Graph parameters as specified
     let graph_params = GraphParams {
-        eps: 1e-12,
-        k: 4,
-        p: 2.0,
-        sigma: Some(1e-12 * 0.5),
+        eps: 1e-3, k: 5, topk: GRAPH_PARAMS.topk, p: GRAPH_PARAMS.p, sigma: Some(1e-3 * 0.50),
         normalise: true,
     };
 
@@ -603,13 +583,14 @@ fn test_lambda_verification_quora_embeddings() {
         items.clone(),
         graph_params.eps,
         graph_params.k,
+        graph_params.topk,
         graph_params.p,
         graph_params.sigma,
         graph_params.normalise,
     );
 
     // Build spectral ArrowSpace
-    let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl.graph_params);
+    let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
 
     debug!("\n=== INITIAL STATE ===");
     debug!("Graph nodes: {}", gl.nnodes);
@@ -617,7 +598,7 @@ fn test_lambda_verification_quora_embeddings() {
     debug!("Signals shape: {:?}", aspace.signals.shape());
 
     // Compute initial lambdas
-    aspace.recompute_lambdas();
+    aspace.recompute_lambdas(&gl);
     let lambdas = aspace.lambdas();
 
     debug!("\n=== LAMBDA COMPUTATION RESULTS ===");
@@ -625,7 +606,7 @@ fn test_lambda_verification_quora_embeddings() {
     debug!("Lambda values (first 10): {:?}", &lambdas[..10.min(lambdas.len())]);
 
     // Basic validation
-    assert_eq!(lambdas.len(), 15, "Should have one lambda per item dimension");
+    assert_eq!(lambdas.len(), 300, "Should have one lambda per item dimension");
     assert!(lambdas.iter().all(|&l| l.is_finite()), "All lambdas should be finite");
     assert!(lambdas.iter().all(|&l| l >= 0.0), "All lambdas should be non-negative");
 
@@ -658,10 +639,10 @@ fn test_lambda_verification_quora_embeddings() {
     for tau_mode in tau_modes {
         let mut test_aspace = GraphFactory::build_spectral_laplacian(
             ArrowSpace::from_items_default(items.clone()),
-            &gl.graph_params,
+            &gl,
         );
 
-        TauMode::compute_taumode_lambdas(&mut test_aspace, Some(tau_mode));
+        TauMode::compute_taumode_lambdas(&mut test_aspace, &gl, tau_mode);
         let tau_lambdas = test_aspace.lambdas();
 
         let tau_mean = tau_lambdas.iter().sum::<f64>() / tau_lambdas.len() as f64;

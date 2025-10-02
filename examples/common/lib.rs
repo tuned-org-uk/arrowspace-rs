@@ -4,7 +4,7 @@ use arrowspace::graph::GraphLaplacian;
 use smartcore::linalg::basic::arrays::{Array, Array2};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
-use approx::relative_eq;
+use sprs::CsMat;
 
 const VECTORS_DATA: &str = include_str!("datasets/vectors_data_3000.txt");
 
@@ -179,27 +179,24 @@ pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
 /// Compute the ratio of connected components to total possible connections
 /// Returns a value between 0 and 1, where values > 0.95 indicate good connectivity
 #[allow(dead_code)]
-pub fn graph_connectivity_ratio(matrix: &DenseMatrix<f64>) -> f64 {
+pub fn graph_connectivity_ratio(matrix: &CsMat<f64>) -> f64 {
     let (nrows, ncols) = matrix.shape();
 
     if nrows != ncols || nrows <= 1 {
         return if nrows <= 1 { 1.0 } else { 0.0 };
     }
 
-    // Count off-diagonal negative entries using smartcore's iterator pattern
-    let total_edges: usize = (0..nrows)
-        .map(|i| {
-            // Extract row using smartcore's canonical pattern
-            let row_values: Vec<f64> = matrix.get_row(i).iterator(0).copied().collect();
-            
+    // Count off-diagonal negative entries using sprs sparse matrix iterator
+    let total_edges: usize = matrix
+        .outer_iterator()
+        .enumerate()
+        .map(|(i, row)| {
             // Count negative off-diagonal entries in this row
-            row_values
-                .iter()
-                .enumerate()
+            row.iter()
                 .filter(|(j, value)| {
-                    i != *j
-                        && **value < 0.0
-                        && !relative_eq!(**value, 0.0, epsilon = f64::EPSILON)
+                    i != *j 
+                        && **value < 0.0 
+                        && !approx::relative_eq!(**value, 0.0, epsilon = f64::EPSILON)
                 })
                 .count()
         })
@@ -263,28 +260,24 @@ pub fn lambda_distribution_quality(lambdas: &[f64]) -> f64 {
 /// Evaluate edge count efficiency (sparse but connected)
 /// Returns a value between 0 and 1, where higher values indicate better efficiency
 #[allow(dead_code)]
-pub fn edge_count_efficiency(adjacency_matrix: &DenseMatrix<f64>) -> f64 {
+pub fn edge_count_efficiency(adjacency_matrix: &CsMat<f64>) -> f64 {
     let (nrows, ncols) = adjacency_matrix.shape();
 
     if nrows != ncols || nrows <= 1 {
         return if nrows <= 1 { 1.0 } else { 0.0 };
     }
 
-    // Count off-diagonal negative entries using smartcore's iterator pattern
-    let total_edges: usize = (0..nrows)
-        .map(|i| {
-            // Extract row using smartcore's canonical pattern
-            let row_values: Vec<f64> = 
-                adjacency_matrix.get_row(i).iterator(0).copied().collect();
-            
+    // Count off-diagonal negative entries using sprs sparse matrix iterator
+    let total_edges: usize = adjacency_matrix
+        .outer_iterator()
+        .enumerate()
+        .map(|(i, row)| {
             // Count negative off-diagonal entries in this row
-            row_values
-                .iter()
-                .enumerate()
+            row.iter()
                 .filter(|(j, value)| {
-                    i != *j
-                        && **value < 0.0
-                        && !relative_eq!(**value, 0.0, epsilon = f64::EPSILON)
+                    i != *j 
+                        && **value < 0.0 
+                        && !approx::relative_eq!(**value, 0.0, epsilon = f64::EPSILON)
                 })
                 .count()
         })
@@ -344,7 +337,7 @@ pub fn search_effectiveness_score(
         let query_item = ArrowItem::new(query.clone(), 0.0);
 
         // Test lambda-aware search vs regular cosine
-        let lambda_results = aspace.search_lambda_aware(&query_item, k, alpha, beta);
+        let lambda_results = aspace.search_lambda_aware(&query_item, k, alpha);
 
         if lambda_results.is_empty() {
             continue;
@@ -379,7 +372,7 @@ pub fn search_effectiveness_score(
 
         // Reward if lambda-aware search provides different results than pure cosine
         // This indicates the spectral component is contributing meaningfully
-        if beta > 0.0 {
+        if (1.0 - alpha) > 0.0 {
             result_quality += 0.2;
         }
 

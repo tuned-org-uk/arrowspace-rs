@@ -61,9 +61,9 @@
 // 6. **Statistical properties**: Basic variance analysis to understand feature discrimination
 //
 use crate::core::ArrowSpace;
+use crate::graph::GraphLaplacian;
 
-use smartcore::linalg::basic::arrays::Array;
-use smartcore::linalg::basic::matrix::DenseMatrix;
+use sprs::CsMat;
 
 use rayon::prelude::*;
 
@@ -124,7 +124,7 @@ impl TauMode {
         }
     }
 
-    /// Compute synthetic lambdas using Laplacian for the *entire space*
+    /// Compute synthetic lambdas using Laplacian as passed by the `GraphLaplacian`
     /// Use this to compute the Rayleigh quotient space-wide.
     ///
     /// This function implements the synthetic index computation described in the design:
@@ -148,9 +148,9 @@ impl TauMode {
     /// * `tau_mode` - Tau selection policy for bounded transformation
     pub fn compute_taumode_lambdas(
         aspace: &mut ArrowSpace,
-        taumode_params: Option<TauMode>, // used if different taumode from ArrowSpace is needed
+        gl: &GraphLaplacian,
+        taumode: TauMode, // used if different taumode from ArrowSpace is needed
     ) {
-        use crate::core::TAUDEFAULT;
         let n_items = aspace.nitems;
 
         // Parallel processing of all features
@@ -158,15 +158,18 @@ impl TauMode {
             .into_par_iter()
             .map(|f| {
                 let item = aspace.get_item(f);
-                let tau = match taumode_params {
-                    None => Self::select_tau(&item.item, TAUDEFAULT.unwrap()),
-                    Some(t) => Self::select_tau(&item.item, t),
-                };
+                let tau = Self::select_tau(&item.item, taumode);
 
+                // compute synthetic index from:
+                // * signals if computed in `ArrowSpace`
+                // * standard L(FxN) in `GraphLaplacian`
                 Self::compute_item_vector_synthetic_lambda(
                     &item.item,
-                    aspace,
-                    Some(tau),
+                    match aspace.signals.shape() {
+                        (0, 0) => &gl.matrix,
+                        _ => &aspace.signals
+                    },
+                    tau,
                 )
             })
             .collect();
@@ -175,21 +178,24 @@ impl TauMode {
     }
 
     /// Compute synthetic lambda for a single external query vector
-    /// This follows the same algorithm as compute_taumode_lambdas but for one vector
+    /// This follows the same algorithm as compute_taumode_lambdas but for one vector.
+    /// compute synthetic index from:
+    /// * aspace.signals: if computed in `ArrowSpace`
+    /// * graph.matrix: standard L(FxN) in `GraphLaplacian`
     pub fn compute_item_vector_synthetic_lambda(
         item_vector: &[f64], // F-dimensional external query vector
-        aspace: &ArrowSpace, // Existing ArrowSpace with computed spectrum
-        tau: Option<f64>,
+        graph: &CsMat<f64>, // Existing ArrowSpace with computed spectrum
+        tau: f64,
     ) -> f64 {
         assert_eq!(
             item_vector.len(),
-            aspace.nfeatures,
+            graph.shape().0,
             "Item vector length {} must match ArrowSpace features {}",
             item_vector.len(),
-            aspace.nfeatures
+            graph.shape().0,
         );
 
-        if item_vector.iter().all(|&v| approx::relative_eq!(v, 0.0, epsilon = 1e-12)) {
+        if item_vector.iter().all(|&v| approx::relative_eq!(v, 0.0, epsilon = 1e-9)) {
             panic!(r#"This vector {:?} is a constant zero vector"#, item_vector)
         }
 
@@ -201,23 +207,22 @@ impl TauMode {
 
         // Step 1: Compute Rayleigh energy E_q = query^T * spectrum * query / (query^T * query)
         let e_raw =
-            Self::compute_rayleigh_quotient_from_matrix(&aspace.signals, item_vector);
+            Self::compute_rayleigh_quotient_from_matrix(graph, item_vector);
 
         // Step 2: Compute dispersion G_q using edge-wise energy distribution
-        let g_raw = Self::compute_item_dispersion(item_vector, &aspace.signals);
+        let g_raw = Self::compute_item_dispersion(item_vector, graph);
 
         // Step 3: Apply bounded transformation
-        let e_bounded = e_raw / (e_raw + tau.unwrap());
+        let e_bounded = e_raw / (e_raw + tau);
         let g_clamped = g_raw.clamp(0.0, 1.0);
-        let use_tau = tau.unwrap();
 
         // Step 4: Compute synthetic index S_q = α * E_bounded + (1-α) * G_clamped
-        let synthetic_lambda = use_tau * e_bounded + (1.0 - use_tau) * g_clamped;
+        let synthetic_lambda = tau * e_bounded + (1.0 - tau) * g_clamped;
 
         #[cfg(debug_assertions)]
         debug!(
             "Query synthetic lambda: E_raw={:.8}, G_raw={:.8}, tau={:.8}, final={:.8}",
-            e_raw, g_raw, use_tau, synthetic_lambda
+            e_raw, g_raw, tau, synthetic_lambda
         );
 
         synthetic_lambda
@@ -226,7 +231,7 @@ impl TauMode {
     /// Compute dispersion G_q for the query vector using edge-wise energy distribution
     fn compute_item_dispersion(
         item_vector: &[f64],
-        spectrum: &DenseMatrix<f64>,
+        spectrum: &CsMat<f64>,
     ) -> f64 {
         let n_features = item_vector.len();
 
@@ -236,7 +241,10 @@ impl TauMode {
             let xi = item_vector[i];
             for (j, item) in item_vector.iter().enumerate() {
                 if i != j {
-                    let lij = spectrum.get((i, j));
+                    let lij = match spectrum.get(i, j) {
+                        Some(v) => *v,
+                        _ => 0.0
+                    };
                     // For Laplacian, off-diagonal entries are -w_ij, so w_ij = -lij
                     let w = (-lij).max(0.0);
                     if w > 0.0 {
@@ -254,7 +262,10 @@ impl TauMode {
                 let xi = item_vector[i];
                 for (j, item) in item_vector.iter().enumerate() {
                     if i != j {
-                        let lij = spectrum.get((i, j));
+                        let lij = match spectrum.get(i, j) {
+                            Some(v) => *v,
+                            _ => 0.0
+                        };
                         let w = (-lij).max(0.0);
                         if w > 0.0 {
                             let d = xi - item;
@@ -291,7 +302,7 @@ impl TauMode {
     /// # Panics
     /// Panics if vector length doesn't match matrix dimensions
     pub fn compute_rayleigh_quotient_from_matrix(
-        matrix: &DenseMatrix<f64>,
+        matrix: &CsMat<f64>,
         vector: &[f64],
     ) -> f64 {
         let n = matrix.shape().0;
@@ -312,7 +323,10 @@ impl TauMode {
         let mut numerator = 0.0;
         for i in 0..n {
             for j in 0..n {
-                numerator += vector[i] * matrix.get((i, j)) * vector[j];
+                match matrix.get(i, j) {
+                    Some(value) => numerator += vector[i] * value * vector[j],
+                    _ => numerator += 0.0,
+                };
             }
         }
 
@@ -329,7 +343,7 @@ impl TauMode {
 
     /// Batch computation for multiple vectors (efficient for multiple queries)
     pub fn compute_rayleigh_quotients_batch(
-        matrix: &DenseMatrix<f64>,
+        matrix: &CsMat<f64>,
         vectors: &[Vec<f64>],
     ) -> Vec<f64> {
         vectors

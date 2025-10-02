@@ -14,20 +14,6 @@
 //! - Iterator-first APIs for cache-friendly, allocation-free operations.
 //! - Spectral-aware scoring via Rayleigh quotient against a Graph Laplacian.
 //!
-//! # Examples
-//!
-//! Create a small ArrowSpace and compute cosine similarity between rows:
-//!
-//! ```
-//! use arrowspace::core::{ArrowItem, ArrowSpace};
-//!
-//! let aspace = ArrowSpace::from_items_default(
-//!     vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]]
-//! );
-//!
-//! let a = aspace.get_feature(0);
-//! let b = aspace.get_feature(1);
-//! ```
 //!
 //! Zero-copy mutate a row using a mutable view and update its lambda from a graph:
 //!
@@ -58,6 +44,7 @@ use std::fmt::Debug;
 
 use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
+use sprs::CsMat;
 
 use crate::graph::GraphLaplacian;
 use crate::taumode::TauMode;
@@ -236,11 +223,11 @@ impl ArrowItem {
     /// use arrowspace::core::ArrowItem;
     /// let a = ArrowItem::new(vec![1.0, 0.0], 0.5);
     /// let b = ArrowItem::new(vec![1.0, 0.0], 0.6);
-    /// let s = a.lambda_similarity(&b, 0.7, 0.3);
+    /// let s = a.lambda_similarity(&b, 0.7);
     /// assert!(s <= 1.0 && s >= 0.0);
     /// ```
     #[inline]
-    pub fn lambda_similarity(&self, other: &ArrowItem, alpha: f64, beta: f64) -> f64 {
+    pub fn lambda_similarity(&self, other: &ArrowItem, alpha: f64) -> f64 {
         assert_eq!(
             self.item.len(),
             other.item.len(),
@@ -248,7 +235,7 @@ impl ArrowItem {
         );
         let semantic_sim = self.cosine_similarity(other);
         let lambda_sim = 1.0 / (1.0 + (self.lambda - other.lambda).abs());
-        let result = alpha * semantic_sim + beta * lambda_sim;
+        let result = alpha * semantic_sim + (1.0 - alpha) * lambda_sim;
         trace!(
             "Lambda similarity: semantic={:.6}, lambda={:.6}, combined={:.6}",
             semantic_sim,
@@ -324,13 +311,13 @@ impl ArrowItem {
 pub struct ArrowSpace {
     pub nfeatures: usize,
     pub nitems: usize,
-    pub data: DenseMatrix<f64>,    // NxF raw data
-    pub signals: DenseMatrix<f64>, // FxF laplacian
-    pub lambdas: Vec<f64>, // N lambdas (every lambda is a lambda for an item-row)
-    pub taumode: Option<TauMode>, // tau_mode as in select_tau_mode
+    pub data: DenseMatrix<f64>,   // NxF raw data
+    pub signals: CsMat<f64>,      // Laplacian(Transpose(NxF))
+    pub lambdas: Vec<f64>,        // N lambdas (every lambda is a lambda for an item-row)
+    pub taumode: TauMode,         // tau_mode as in select_tau_mode
 }
 
-pub const TAUDEFAULT: Option<TauMode> = Some(TauMode::Median);
+pub const TAUDEFAULT: TauMode = TauMode::Median;
 
 impl Default for ArrowSpace {
     fn default() -> Self {
@@ -339,7 +326,7 @@ impl Default for ArrowSpace {
             nfeatures: 0,
             nitems: 0,
             data: DenseMatrix::new(0, 0, Vec::new(), true).unwrap(),
-            signals: DenseMatrix::new(0, 0, Vec::new(), true).unwrap(),
+            signals: sprs::CsMat::zero((0, 0)),
             lambdas: Vec::new(),
             // enable synthetic λ with Median τ by default
             taumode: TAUDEFAULT,
@@ -348,8 +335,26 @@ impl Default for ArrowSpace {
 }
 
 impl ArrowSpace {
+    /// Returns an empty space.
+    /// Only to be used in tests. `ArrowSpaceBuilder`
+    pub fn new(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
+        assert!(!items.is_empty(), "items cannot be empty");
+        assert!(items.len() > 1, "cannot create a arrowspace of one arrow only");
+        let n_items = items.len(); // Number of items (columns in final layout)
+        let n_features = items[0].len(); // Number of features (rows in final layout)
+        Self {
+            nfeatures: n_features,
+            nitems: n_items,
+            data: DenseMatrix::from_2d_vec(&items).unwrap(),
+            signals: sprs::CsMat::zero((0, 0)), // will be computed later
+            lambdas: vec![0.0; n_items], // will be computed later
+            taumode: taumode,
+        }
+    }
     /// Builds from a vector of equally-sized rows and per-row lambdas.
+    /// Only to be used in tests. Use `ArrowSpaceBuilder`
     #[inline]
+    #[cfg(test)]
     pub fn from_items(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
         info!(
             "Creating ArrowSpace from {} items with custom tau mode: {:?}",
@@ -357,12 +362,14 @@ impl ArrowSpace {
             taumode
         );
         let mut aspace = Self::from_items_default(items);
-        aspace.taumode = Some(taumode);
+        aspace.taumode = taumode;
         aspace
     }
 
     /// Builds from a vector of equally-sized rows and per-row lambdas.
+    /// Only to be used in tests. `ArrowSpaceBuilder`
     #[inline]
+    #[cfg(test)]
     pub fn from_items_default(items: Vec<Vec<f64>>) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
         assert!(items.len() > 1, "cannot create a arrowspace of one arrow only");
@@ -388,10 +395,36 @@ impl ArrowSpace {
             nfeatures: n_features,
             nitems: n_items,
             data: data_matrix,
-            signals: DenseMatrix::new(0, 0, Vec::new(), true).unwrap(), // will be computed later
+            signals: sprs::CsMat::zero((0, 0)), // will be computed later
             lambdas: vec![0.0; n_items], // will be computed later
             taumode: TAUDEFAULT,
+
         }
+    }
+
+    /// Returns a Vec<Vec<...>> from data for external usage
+    #[inline]
+    pub fn data_to_vec(&self) -> Vec<Vec<f64>> {
+        let vv = (0..self.data.shape().0)
+            .map(|row_idx| {
+                self.data.get_row(row_idx)
+                    .iterator(0)
+                    .copied()
+                    .collect()
+            })
+            .collect();
+        vv
+    }
+
+    /// Before searching a lambda-tau value has to be computed for the query
+    ///  vector. Pass the query item and the `GraphLaplacian` to this method.
+    pub fn prepare_query_item(&self, item: &[f64], gl: &GraphLaplacian) -> f64 {
+        assert!(
+            item.iter().all(|&x| x.is_finite()),
+            "Query item contains invalid values (NaN or infinity). All values must be finite."
+        );
+        let tau = TauMode::select_tau(&item, self.taumode);
+        TauMode::compute_item_vector_synthetic_lambda(&item, &gl.matrix, tau)
     }
 
     /// Returns a shared reference to all lambdas.
@@ -479,7 +512,7 @@ impl ArrowSpace {
 
         // Recompute lambdas for all features since item values changed
         debug!("Recomputing lambdas after item addition");
-        self.recompute_lambdas();
+        self.recompute_lambdas(gl);
     }
 
     /// Multiplies item `a` element-wise by item `b` and recomputes feature lambdas.
@@ -510,7 +543,7 @@ impl ArrowSpace {
 
         // Recompute lambdas for all features since item values changed
         debug!("Recomputing lambdas after item multiplication");
-        self.recompute_lambdas();
+        self.recompute_lambdas(gl);
     }
 
     /// Scales item `a` by a scalar value and recomputes feature lambdas.
@@ -539,17 +572,17 @@ impl ArrowSpace {
 
         // Recompute lambdas for all features since item values changed
         debug!("Recomputing lambdas after item scaling");
-        self.recompute_lambdas();
+        self.recompute_lambdas(gl);
     }
 
     /// Recomputes all feature lambdas using the provided Graph Laplacian.
     ///
     /// The Laplacian must have nodes equal to the number of items.
     #[inline]
-    pub fn recompute_lambdas(&mut self) {
+    pub fn recompute_lambdas(&mut self, gl: &GraphLaplacian) {
         debug!("Recomputing lambdas with tau mode: {:?}", self.taumode);
         // Use the existing synthetic lambda computation
-        TauMode::compute_taumode_lambdas(self, self.taumode);
+        TauMode::compute_taumode_lambdas(self, gl,self.taumode);
 
         let lambda_stats = {
             let min = self.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
@@ -586,16 +619,15 @@ impl ArrowSpace {
         &self,
         query: &ArrowItem,
         k: usize,
-        alpha: f64,
-        beta: f64,
+        alpha : f64,
     ) -> Vec<(usize, f64)> {
-        info!("Lambda-aware search: k={}, alpha={:.3}, beta={:.3}", k, alpha, beta);
+        info!("Lambda-aware search: k={}", k);
         debug!("Query vector dimension: {}, lambda: {:.6}", query.len(), query.lambda);
 
         let mut results: Vec<_> = (0..self.nitems)
             .map(|i| {
                 let item = self.get_item(i);
-                let similarity = query.lambda_similarity(&item, alpha, beta);
+                let similarity = query.lambda_similarity(&item, alpha);
                 (i, similarity)
             })
             .collect();
@@ -617,25 +649,22 @@ impl ArrowSpace {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// use arrowspace::core::{ArrowItem, ArrowSpace};
     ///
-    /// let aspace = ArrowSpace::from_items_default(
-    ///     vec![vec![0.0, 0.0], vec![1.0, 0.0], vec![2.0, 0.0]]
-    /// );
     /// let q = ArrowItem::new(vec![0.5, 0.0], 0.0);
     /// let hits = aspace.range_search(&q, 0.6);
     /// ```
     #[inline]
-    pub fn range_search(&self, query: &ArrowItem, radius: f64) -> Vec<(usize, f64)> {
-        info!("Range search with radius: {:.6}", radius);
+    pub fn range_search(&self, query: &ArrowItem, eps: f64) -> Vec<(usize, f64)> {
+        info!("Range search with radius: {:.6}", eps);
         debug!("Query vector dimension: {}", query.len());
 
         let results: Vec<(usize, f64)> = (0..self.nitems)
             .filter_map(|i| {
                 let item = self.get_item(i);
                 let distance = query.euclidean_distance(&item);
-                if distance <= radius {
+                if distance <= eps {
                     Some((i, distance))
                 } else {
                     None
@@ -644,45 +673,6 @@ impl ArrowSpace {
             .collect();
 
         debug!("Range search completed, found {} items within radius", results.len());
-        results
-    }
-
-    /// Computes a pairwise cosine similarity submatrix for selected indices.
-    ///
-    /// This allocates an output matrix of size `indices.len() x indices.len()`.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use arrowspace::core::ArrowSpace;
-    ///
-    /// let aspace = ArrowSpace::from_items_default(
-    ///     vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0], vec![1.0, 1.0, 0.0]]
-    /// );
-    /// let sims = aspace.pairwise_similarities(&);[1]
-    /// assert_eq!(sims.len(), 3);
-    /// assert_eq!(sims.len(), 3);
-    /// ```
-    #[inline]
-    pub fn pairwise_similarities(&self, indices: &[usize]) -> Vec<Vec<f64>> {
-        info!("Computing pairwise similarities for {} indices", indices.len());
-        debug!("Selected indices: {:?}", indices);
-
-        let results = indices
-            .iter()
-            .map(|&i| {
-                let item_i = self.get_item(i);
-                indices
-                    .iter()
-                    .map(|&j| {
-                        let item_j = self.get_item(j);
-                        item_i.cosine_similarity(&item_j)
-                    })
-                    .collect()
-            })
-            .collect();
-
-        debug!("Pairwise similarity computation completed");
         results
     }
 
@@ -713,22 +703,6 @@ impl ArrowSpace {
             "Lambda update: old range [{:.6}, {:.6}] -> new range [{:.6}, {:.6}]",
             old_stats.0, old_stats.1, new_stats.0, new_stats.1
         );
-    }
-
-    /// Compute synthetic lambda for an external query vector
-    /// Uses the same normalization and parameters as the stored data
-    pub fn compute_query_synthetic_lambda(&self, query_vector: &[f64]) -> f64 {
-        debug!(
-            "Computing synthetic lambda for query vector (dimension: {})",
-            query_vector.len()
-        );
-        let result = TauMode::compute_item_vector_synthetic_lambda(
-            query_vector,
-            self,
-            Some(TauMode::select_tau(query_vector, self.taumode.unwrap())),
-        );
-        debug!("Query synthetic lambda computed: {:.6}", result);
-        result
     }
 }
 

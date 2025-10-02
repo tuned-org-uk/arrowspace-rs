@@ -15,11 +15,12 @@ fn simple_build() {
 
     let eps = 1.0;
     let k = 3usize;
+    let topk = 3usize;
     let p = 2.0;
     let sigma_override = None;
 
     let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(eps, k, p, sigma_override)
+        .with_lambda_graph(eps, k, topk, p, sigma_override)
         .build(rows);
 
     assert_eq!(aspace.data.shape(), (2, 3));
@@ -42,7 +43,7 @@ fn build_from_rows_with_lambda_graph() {
     // Build a lambda-proximity Laplacian over items from the data matrix
     // Parameters mirror the old intent: small eps, k=2 cap, p=2.0 kernel, default sigma
     let (aspace, gl) =
-        ArrowSpaceBuilder::new().with_lambda_graph(1e-3, 2, 2.0, None).build(rows);
+        ArrowSpaceBuilder::new().with_lambda_graph(1e-3, 2, 2, 2.0, None).build(rows);
 
     assert_eq!(aspace.data.shape(), (2, 13));
     assert_eq!(gl.nnodes, 2);
@@ -65,7 +66,7 @@ fn build_with_lambda_graph_over_product_like_rows() {
     ];
 
     let (aspace, gl) =
-        ArrowSpaceBuilder::new().with_lambda_graph(1e-3, 3, 2.0, None).build(rows);
+        ArrowSpaceBuilder::new().with_lambda_graph(1e-3, 3, 3,2.0, None).build(rows);
 
     assert_eq!(aspace.data.shape(), (2, 13));
     assert_eq!(gl.nnodes, 2);
@@ -93,7 +94,7 @@ fn lambda_graph_shape_matches_rows() {
     let len_items = items.len();
 
     let (aspace, gl) =
-        ArrowSpaceBuilder::new().with_lambda_graph(1e-3, 3, 2.0, None).build(items);
+        ArrowSpaceBuilder::new().with_lambda_graph(1e-3, 3, 3, 2.0, None).build(items);
 
     assert_eq!(aspace.data.shape(), (len_items, 13));
     assert_eq!(gl.nnodes, len_items);

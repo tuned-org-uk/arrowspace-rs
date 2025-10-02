@@ -1,5 +1,6 @@
 //! A set of normalised vectors that have taumode value equals 0.0 if computed against their reference dataset
 //! `ds = load_dataset("sentence-transformers/quora-duplicates", "pair-class", split="train")`
+
 #[allow(dead_code)]
 
 pub const QUORA_EMBEDDS: &[&[f64]] = &[
@@ -6299,3 +6300,49 @@ pub const PROTEINS_EMBEDS: &[&[f64]] = &[
         0.823624, 0.384611, 0.459124, 0.303286, 0.932555, 0.118644, 0.933749, 0.683866,
     ],
 ];
+
+/// generate a make moon-like dataset
+/// NOTE: use with `.with_normalisation(true)`
+pub fn make_moons_hd(n: usize, noise_xy: f64, noise_hd: f64, dims: usize, seed: u64) -> Vec<Vec<f64>> {
+    use rand::{Rng, SeedableRng};
+    use rand_pcg::Pcg64;
+    use std::f64::consts::PI;
+
+    let mut rng = Pcg64::seed_from_u64(seed);
+    let n0 = n / 2;
+    let n1 = n - n0;
+    let mut out = Vec::with_capacity(n);
+
+
+    // Upper moon: (cos t, sin t) in first two dims
+    for _ in 0..n0 {
+        let t = rng.random::<f64>() * PI;
+        let x0: f64 = t.cos() + noise_xy * rng.random::<f64>();
+        let x1 = t.sin() + noise_xy * rng.random::<f64>();
+
+        let mut v = vec![0.0_f64; dims];
+        v[0] = x0;
+        v[1] = x1;
+        for d in 2..dims {
+            v[d] = noise_hd * rng.random::<f64>();
+        }
+        out.push(v);
+    }
+
+    // Lower moon: (1 - cos t, -sin t - 0.5) in first two dims
+    for _ in 0..n1 {
+        let t = rng.random::<f64>() * PI;
+        let x0 = 1.0 - t.cos() + noise_xy * rng.random::<f64>();
+        let x1 = -t.sin() - 0.5 + noise_xy * rng.random::<f64>();
+
+        let mut v = vec![0.0_f64; dims];
+        v[0] = x0;
+        v[1] = x1;
+        for d in 2..dims {
+            v[d] = noise_hd * rng.random::<f64>();
+        }
+        out.push(v);
+    }
+
+    out
+}

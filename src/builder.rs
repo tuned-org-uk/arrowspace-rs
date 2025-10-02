@@ -1,6 +1,6 @@
-use smartcore::linalg::basic::arrays::{Array, Array2};
+use smartcore::linalg::basic::arrays::Array;
 
-use crate::core::{ArrowSpace, TAUDEFAULT};
+use crate::core::{ArrowItem, ArrowSpace, TAUDEFAULT};
 use crate::graph::{GraphFactory, GraphLaplacian};
 use crate::taumode::TauMode;
 
@@ -17,7 +17,7 @@ pub enum PairingStrategy {
 pub struct ArrowSpaceBuilder {
     // Data
     arrows: ArrowSpace,
-    pub prebuilt_gl: Option<GraphLaplacian>, // use as-is if already built
+    pub prebuilt_spectral: bool, // true if spectral laplacian has been computed
 
     // Lambda-graph parameters (the canonical path)
     // A good starting point is to choose parameters that keep the λ-graph broadly connected but sparse,
@@ -26,12 +26,13 @@ pub struct ArrowSpaceBuilder {
     // lambda_sigma = None (which defaults σ to eps)
     lambda_eps: f64,
     lambda_k: usize,
+    lambda_topk: usize,
     lambda_p: f64,
     lambda_sigma: Option<f64>,
     normalise: bool,
 
     // Synthetic index configuration (used `with_synthesis`)
-    synthesis: Option<TauMode>, // (tau_mode)
+    synthesis: TauMode, // (tau_mode)
 }
 
 impl Default for ArrowSpaceBuilder {
@@ -39,7 +40,7 @@ impl Default for ArrowSpaceBuilder {
         debug!("Creating ArrowSpaceBuilder with default parameters");
         Self {
             arrows: ArrowSpace::default(),
-            prebuilt_gl: None,
+            prebuilt_spectral: false,
 
             // enable synthetic λ with α=0.7 and Median τ by default
             synthesis: TAUDEFAULT,
@@ -47,6 +48,7 @@ impl Default for ArrowSpaceBuilder {
             // λ-graph parameters
             lambda_eps: 1e-3,
             lambda_k: 6,
+            lambda_topk: 3,
             lambda_p: 2.0,
             lambda_sigma: None, // means σ := eps inside the builder
             normalise: false,
@@ -72,6 +74,7 @@ impl ArrowSpaceBuilder {
         mut self,
         eps: f64,
         k: usize,
+        topk: usize,
         p: f64,
         sigma_override: Option<f64>,
     ) -> Self {
@@ -86,6 +89,7 @@ impl ArrowSpaceBuilder {
 
         self.lambda_eps = eps;
         self.lambda_k = k;
+        self.lambda_topk = topk;
         self.lambda_p = p;
         self.lambda_sigma = sigma_override;
         self.normalise = false;
@@ -97,7 +101,7 @@ impl ArrowSpaceBuilder {
     /// Optional: override the default tau policy or tau for synthetic index.
     pub fn with_synthesis(mut self, tau_mode: TauMode) -> Self {
         info!("Configuring synthesis with tau mode: {:?}", tau_mode);
-        self.synthesis = Some(tau_mode);
+        self.synthesis = tau_mode;
         self
     }
 
@@ -105,6 +109,29 @@ impl ArrowSpaceBuilder {
         info!("Setting normalization: {}", normalise);
         self.normalise = normalise;
         self
+    }
+
+    /// Optional define if building spectral matrix at building time
+    /// This is expensive as requires twice laplacian computation
+    /// use only on limited dataset for analysis, exploration and data QA
+    pub fn with_spectral(mut self, compute_spectral: bool) -> Self {
+        info!("Setting compute spectral: {}", compute_spectral);
+        self.prebuilt_spectral = compute_spectral;
+        self
+    }
+
+    /// Define the results number of k-neighbours from the
+    ///  max number of neighbours connections (`GraphParams::k` -> result_k)
+    /// Check if the passed cap_k is reasonable and define an euristics to
+    ///  select a proper value.
+    fn define_result_k(&mut self) {
+        // normalise values for small values,
+        // leave to the user for higher values
+        if self.lambda_k <= 5 {
+            self.lambda_topk = 3;
+        } else if self.lambda_k < 10 {
+            self.lambda_topk =  4;
+        };
     }
 
     // -------------------- Build --------------------
@@ -125,6 +152,9 @@ impl ArrowSpaceBuilder {
         let n_items = rows.len();
         let n_features = rows.first().map(|r| r.len()).unwrap_or(0);
 
+        // set baseline for topk
+        self.define_result_k();
+
         info!(
             "Building ArrowSpace from {} items with {} features",
             n_items, n_features
@@ -134,62 +164,44 @@ impl ArrowSpaceBuilder {
                self.normalise, self.synthesis);
 
         // 1) Base graph selection
-        assert!(
-            self.prebuilt_gl.is_none(),
-            "GraphLaplacian already built, should be None at this point"
-        );
-
         trace!("Creating ArrowSpace from items");
-        self.arrows = ArrowSpace::from_items(rows, self.synthesis.unwrap());
+        self.arrows = ArrowSpace::new(rows.clone(), self.synthesis);
         debug!(
             "ArrowSpace created with {} items and {} features",
             self.arrows.nitems, self.arrows.nfeatures
         );
 
-        // Rough way of converting a DenseMatrix to a Vec<Vec<...>>
-        // does its job for now but should be changed (DenseMatrix should be used everywhere)
-        trace!("Converting DenseMatrix to Vec<Vec<f64>> for graph construction");
-        let tmp = {
-            let mut tmp = Vec::with_capacity(self.arrows.nitems);
-            // Extract each column directly from the original matrix
-            for row_idx in 0..self.arrows.nitems {
-                let row_vec: Vec<f64> =
-                    self.arrows.data.get_row(row_idx).iterator(0).copied().collect();
-
-                tmp.push(row_vec);
-            }
-
-            tmp
-        };
-
         // Resolve λτ-graph params with conservative defaults
         info!("Building Laplacian matrix with configured parameters");
-        self.prebuilt_gl = Some(GraphFactory::build_laplacian_matrix(
-            tmp,
-            self.lambda_eps,
-            self.lambda_k,
-            self.lambda_p,
-            self.lambda_sigma,
-            self.normalise,
-        ));
-
-        debug!("Laplacian matrix built successfully");
 
         // 3) Compute synthetic indices on resulting graph
         let mut aspace = self.arrows;
-        let gl = self.prebuilt_gl.unwrap();
-
-        // Compute signals FxF laplacian
-        trace!("Building spectral Laplacian for ArrowSpace");
-        aspace = GraphFactory::build_spectral_laplacian(aspace, &gl.graph_params);
-        debug!(
-            "Spectral Laplacian built with signals shape: {:?}",
-            aspace.signals.shape()
+        let gl = GraphFactory::build_laplacian_matrix(
+            rows,
+            self.lambda_eps,
+            self.lambda_k,
+            self.lambda_topk,
+            self.lambda_p,
+            self.lambda_sigma,
+            self.normalise,
         );
+        debug!("Laplacian matrix built successfully");
+
+        // Branch: if spectral L_2 laplacian is required, compute
+        // if aspace.signals is not set, gl.matrix will be used
+        if self.prebuilt_spectral == true {
+            // Compute signals FxF laplacian
+            trace!("Building spectral Laplacian for ArrowSpace");
+            aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
+            debug!(
+                "Spectral Laplacian built with signals shape: {:?}",
+                aspace.signals.shape()
+            );
+        }
 
         // Compute taumode lambdas
         info!("Computing taumode lambdas with synthesis: {:?}", self.synthesis);
-        TauMode::compute_taumode_lambdas(&mut aspace, self.synthesis);
+        TauMode::compute_taumode_lambdas(&mut aspace, &gl,self.synthesis);
 
         let lambda_stats = {
             let lambdas = aspace.lambdas();

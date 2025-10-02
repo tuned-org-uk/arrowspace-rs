@@ -1,20 +1,23 @@
 use std::fmt;
 
 use crate::core::ArrowSpace;
+use crate::laplacian::build_laplacian_matrix;
 
-use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
+use smartcore::linalg::basic::arrays::{Array, Array2};
 use smartcore::linalg::basic::matrix::DenseMatrix;
+use sprs::{CsMat, TriMat};
 
 // Add logging
 use log::{debug, info, trace, warn};
 
 #[derive(Debug, Clone)]
 pub struct GraphParams {
-    pub eps: f64,
-    pub k: usize,
-    pub p: f64,
-    pub sigma: Option<f64>,
-    pub normalise: bool, // avoid normalisation as may hinder magnitude information
+    pub eps: f64,               // maximum rectified cosine distance (see `docs/`)
+    pub k: usize,               // max number of neighbours for node
+    pub topk: usize,            // number of results to be considered for closest neighbors
+    pub p: f64,                 // kernel parameter
+    pub sigma: Option<f64>,     // tolerance for eps
+    pub normalise: bool,        // avoid normalisation as may hinder magnitude information
 }
 
 // Custom PartialEq implementation using approximate equality for floats
@@ -42,7 +45,7 @@ impl Eq for GraphParams {}
 #[derive(Debug, Clone)]
 pub struct GraphLaplacian {
     // store the fully computed graph laplacian
-    pub matrix: DenseMatrix<f64>,
+    pub matrix: CsMat<f64>,
     pub nnodes: usize,
     pub graph_params: GraphParams,
 }
@@ -61,12 +64,13 @@ impl GraphFactory {
     ///  be used to analyse signal features
     ///
     pub fn build_laplacian_matrix(
-        items: Vec<Vec<f64>>, // N×F: N items, each with F features
-        eps: f64,
-        k: usize,
-        p: f64,
-        sigma_override: Option<f64>,
-        normalise: bool,
+        items: Vec<Vec<f64>>,         // N×F: N items, each with F features
+        eps: f64,                     // maximum rectified cosine distance (see `docs/`)
+        k: usize,                     // max number of neighbours for node
+        topk: usize,                  // number of results to be considered for closest neighbors
+        p: f64,                       // kernel parameter
+        sigma_override: Option<f64>,  // tolerance for eps
+        normalise: bool,              // pre-normalisation before laplacian computation
     ) -> GraphLaplacian {
         info!("Building Laplacian matrix for {} items", items.len());
         debug!(
@@ -75,15 +79,24 @@ impl GraphFactory {
         );
 
         let result = crate::laplacian::build_laplacian_matrix(
-            items,
-            &GraphParams { eps, k, p, sigma: sigma_override, normalise },
+            // items are transposed here
+            DenseMatrix::from_2d_vec(&items).unwrap().transpose(),
+            &GraphParams { eps, k, topk, p, sigma: sigma_override, normalise },
+            Some(items.len())
         );
 
+        let sparsity_input = GraphLaplacian::sparsity(&result.matrix);
+        if sparsity_input > 0.95 {
+            panic!("Resulting laplacian matrix is too sparse {:?}", sparsity_input)
+        }
+        assert!(result.nnodes == items.len());
+
         info!(
-            "Laplacian matrix built: {}×{} with {} nodes",
+            "Laplacian matrix built: {}×{} with {} nodes, {} non-zeros",
             result.matrix.shape().0,
             result.matrix.shape().1,
-            result.nnodes
+            result.nnodes,
+            result.matrix.nnz()
         );
         result
     }
@@ -92,55 +105,41 @@ impl GraphFactory {
     /// This creates a graph where nodes are features and edges represent feature similarities
     /// # Arguments
     ///
-    /// * `matrix` - The data from the ArrowSpace data  
-    /// * `graph_params` - A graph where nodes correspond to the vector dimensions
+    /// * `aspace` - The data from the ArrowSpace data  
+    /// * `graph_laplacian` - A graph laplacian generated with the `ArrowSpace`
     pub fn build_spectral_laplacian(
         mut aspace: ArrowSpace,
-        graph_params: &GraphParams,
+        graph_laplacian: &GraphLaplacian,
     ) -> ArrowSpace {
         info!("Building F×F spectral feature matrix");
         debug!(
             "ArrowSpace dimensions: {} features, {} items",
             aspace.nfeatures, aspace.nitems
         );
-        debug!("Graph parameters: {:?}", graph_params);
+        debug!("Graph parameters: {:?}", graph_laplacian.graph_params);
 
-        trace!("Extracting feature columns for transpose");
-        let vec_transpose = {
-            let mut vec_transpose = Vec::with_capacity(aspace.nfeatures);
-            // Extract each column directly from the original matrix
-            for col_idx in 0..aspace.nfeatures {
-                let column_vec: Vec<f64> =
-                    aspace.data.get_col(col_idx).iterator(0).copied().collect();
-
-                vec_transpose.push(column_vec);
-            }
-
-            vec_transpose
-        };
-
-        debug!(
-            "Transposed {} features into {} column vectors",
-            aspace.nfeatures,
-            vec_transpose.len()
-        );
-
-        // Build Laplacian matrix directly for features (F×F) using existing pipeline
+        // Convert sparse matrix to dense for signals storage
         trace!("Building feature-to-feature Laplacian matrix");
-        let tmp = crate::laplacian::build_laplacian_matrix(vec_transpose, graph_params);
+
+        aspace.signals = build_laplacian_matrix(
+            sparse_to_dense(&graph_laplacian.matrix).transpose(), &graph_laplacian.graph_params, Some(aspace.nitems)
+        ).matrix;
+
+        let sparsity_output = GraphLaplacian::sparsity(&aspace.signals);
+        println!("sparsity {:?}", sparsity_output);
+        if sparsity_output > 0.95 {
+            panic!("Resulting spectral matrix is too sparse {:?}", sparsity_output)
+        }
 
         assert!(
-            tmp.matrix.shape().0 == aspace.nfeatures
-                && aspace.nfeatures == tmp.matrix.shape().1,
+            aspace.signals.shape().0 == aspace.nfeatures
+                && aspace.nfeatures == aspace.signals.shape().1,
             "result should be a FxF matrix"
         );
 
-        // Store the F×F matrix
-        aspace.signals = tmp.matrix;
-
         info!("Built F×F feature matrix: {}×{}", aspace.nfeatures, aspace.nfeatures);
         let stats = {
-            let nnz = aspace.signals.iter().filter(|&&x| x.abs() > 1e-15).count();
+            let nnz = graph_laplacian.matrix.nnz();
             let total = aspace.nfeatures * aspace.nfeatures;
             let sparsity = (total - nnz) as f64 / total as f64;
             (nnz, sparsity)
@@ -155,19 +154,32 @@ impl GraphFactory {
     }
 }
 
+fn sparse_to_dense(sparse: &CsMat<f64>) -> DenseMatrix<f64> {
+    let (rows, cols) = sparse.shape();
+    let mut data = vec![0.0; rows * cols];
+    
+    for (row_idx, row) in sparse.outer_iterator().enumerate() {
+        for (col_idx, &value) in row.iter() {
+            data[row_idx * cols + col_idx] = value;
+        }
+    }
+    
+    DenseMatrix::new(rows, cols, data, false).unwrap()
+}
+
 impl GraphLaplacian {
-    /// Create a new GraphLaplacian from an items matrix
+    /// Create a new GraphLaplacian from an items matrix (M = NxF)
     /// This is used to create a graph from the transposed matrix
     /// Use `GraphFacotry::build_lambda_graph` for the full computation
     pub fn prepare_from_items(
         matrix: DenseMatrix<f64>,
         graph_params: GraphParams,
     ) -> Self {
-        let nnodes = matrix.shape().1;
+        let nnodes = matrix.shape().0;
         debug!("Preparing GraphLaplacian from items matrix: {} nodes", nnodes);
         trace!("Transposing matrix for GraphLaplacian");
-        // Transpose into features matrix
-        Self { matrix: matrix.transpose(), nnodes, graph_params }
+
+        build_laplacian_matrix(matrix.transpose(), &graph_params, Some(matrix.shape().0))
     }
 
     /// Get the matrix dimensions as (rows, cols)
@@ -175,17 +187,35 @@ impl GraphLaplacian {
         self.matrix.shape()
     }
 
+    pub fn topk(&self) -> usize {
+        self.graph_params.topk
+    }
+
     /// Get a matrix element at position (i, j)
     pub fn get(&self, i: usize, j: usize) -> f64 {
         assert!(
             i < self.nnodes && j < self.nnodes,
             "Index out of bounds: ({}, {}) for {}x{} matrix",
-            i,
-            j,
-            self.nnodes,
-            self.nnodes
+            i, j, self.nnodes, self.nnodes
         );
-        *self.matrix.get((i, j))
+        self.matrix.get(i, j).copied().unwrap_or(0.0)
+    }
+
+    /// Get the diagonal entries (degrees) as a vector
+    pub fn degrees(&self) -> Vec<f64> {
+        trace!("Extracting diagonal degrees from {}×{} matrix", self.nnodes, self.nnodes);
+        let mut degrees: Vec<f64> = Vec::with_capacity(self.nnodes);
+        for i in 0..self.nnodes {
+            degrees.push(self.matrix.get(i, i).copied().unwrap_or(0.0));
+        }
+
+        let (min_degree, max_degree) = degrees
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), &d| {
+                (min.min(d), max.max(d))
+            });
+        debug!("Extracted degrees: min={:.6}, max={:.6}", min_degree, max_degree);
+        degrees
     }
 
     /// Set a matrix element at position (i, j)
@@ -199,29 +229,7 @@ impl GraphLaplacian {
             self.nnodes
         );
         trace!("Setting matrix element at ({}, {}) = {:.6}", i, j, value);
-        self.matrix.set((i, j), value);
-    }
-
-    /// Get the diagonal entries (degrees) as a vector
-    pub fn degrees(&self) -> Vec<f64> {
-        trace!(
-            "Extracting diagonal degrees from {}×{} matrix",
-            self.nnodes,
-            self.nnodes
-        );
-        let mut degrees: Vec<f64> = Vec::with_capacity(self.nnodes);
-        for i in 0..self.nnodes {
-            degrees.push(*self.matrix.get((i, i)));
-        }
-
-        let (min_degree, max_degree) = degrees
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), &d| {
-                (min.min(d), max.max(d))
-            });
-        debug!("Extracted degrees: min={:.6}, max={:.6}", min_degree, max_degree);
-
-        degrees
+        self.matrix.set(i, j, value);
     }
 
     /// Get the i-th row as a vector
@@ -235,7 +243,7 @@ impl GraphLaplacian {
         trace!("Extracting row {} from matrix", i);
         let mut row = Vec::with_capacity(self.nnodes);
         for j in 0..self.nnodes {
-            row.push(*self.matrix.get((i, j)));
+            row.push(*self.matrix.get(i, j).unwrap());
         }
         row
     }
@@ -251,7 +259,7 @@ impl GraphLaplacian {
         trace!("Extracting column {} from matrix", j);
         let mut col = Vec::with_capacity(self.nnodes);
         for i in 0..self.nnodes {
-            col.push(*self.matrix.get((i, j)));
+            col.push(*self.matrix.get(i, j).unwrap());
         }
         col
     }
@@ -268,22 +276,20 @@ impl GraphLaplacian {
 
         trace!("Computing Rayleigh quotient for vector of length {}", vector.len());
 
-        // Compute x^T L x (numerator)
-        let mut numerator = 0.0;
-        for i in 0..self.nnodes {
-            for j in 0..self.nnodes {
-                numerator += vector[i] * self.matrix.get((i, j)) * vector[j];
-            }
-        }
-
-        // Compute x^T x (denominator)
-        let denominator: f64 = vector.iter().map(|&x| x * x).sum();
+        // Compute L * x manually using sprs sparse matrix structure
+        let lx = self.multiply_vector(vector);
+        
+        // Compute x^T * (L * x)
+        let numerator: f64 = vector.iter().zip(lx.iter()).map(|(&xi, &lxi)| xi * lxi).sum();
+        
+        // Compute x^T * x
+        let denominator: f64 = vector.iter().map(|&xi| xi * xi).sum();
 
         let result = if denominator > 1e-15 {
             numerator / denominator
         } else {
             warn!("Zero vector encountered in Rayleigh quotient computation");
-            0.0 // Return 0 for zero vector
+            0.0
         };
 
         debug!(
@@ -293,7 +299,7 @@ impl GraphLaplacian {
         result
     }
 
-    /// Compute matrix-vector multiplication: y = L * x
+    /// Compute matrix-vector multiplication: y = L * x using sprs sparse matrix operations
     pub fn multiply_vector(&self, x: &[f64]) -> Vec<f64> {
         assert_eq!(
             x.len(),
@@ -305,16 +311,20 @@ impl GraphLaplacian {
 
         trace!(
             "Computing matrix-vector multiplication: {}×{} * {}",
-            self.nnodes,
-            self.nnodes,
-            x.len()
+            self.nnodes, self.nnodes, x.len()
         );
 
+        // Initialize result vector
         let mut result = vec![0.0; self.nnodes];
-        for (i, res) in result.iter_mut().enumerate() {
-            for (j, mul) in x.iter().enumerate() {
-                *res += self.matrix.get((i, j)) * mul;
+        
+        // Use sprs outer_iterator for efficient sparse matrix traversal
+        for (row_idx, row) in self.matrix.outer_iterator().enumerate() {
+            let mut sum = 0.0;
+            // Iterate over non-zero entries in this row
+            for (col_idx, &matrix_val) in row.iter() {
+                sum += matrix_val * x[col_idx];
             }
+            result[row_idx] = sum;
         }
 
         let result_norm = result.iter().map(|&x| x * x).sum::<f64>().sqrt();
@@ -330,7 +340,7 @@ impl GraphLaplacian {
 
         for i in 0..self.nnodes {
             for j in 0..self.nnodes {
-                let diff = (self.matrix.get((i, j)) - self.matrix.get((j, i))).abs();
+                let diff = (self.matrix.get(i, j).unwrap() - self.matrix.get(j, i).unwrap()).abs();
                 max_asymmetry = max_asymmetry.max(diff);
                 if diff > tolerance {
                     violations += 1;
@@ -354,7 +364,7 @@ impl GraphLaplacian {
         // Check row sums (should be ≈ 0)
         let mut max_row_sum: f64 = 0.0;
         for i in 0..self.nnodes {
-            let row_sum: f64 = (0..self.nnodes).map(|j| self.matrix.get((i, j))).sum();
+            let row_sum: f64 = (0..self.nnodes).map(|j| self.matrix.get(i, j).unwrap()).sum();
             max_row_sum = max_row_sum.max(row_sum.abs());
             if row_sum.abs() > tolerance {
                 validation.row_sum_violations.push((i, row_sum));
@@ -364,7 +374,7 @@ impl GraphLaplacian {
 
         // Check diagonal entries (should be positive for connected components)
         for i in 0..self.nnodes {
-            let diagonal = *self.matrix.get((i, i));
+            let diagonal = *self.matrix.get(i, i).unwrap();
             if diagonal < 0.0_f64 {
                 validation.negative_diagonal.push((i, diagonal));
             }
@@ -377,7 +387,7 @@ impl GraphLaplacian {
             for i in 0..self.nnodes {
                 for j in 0..self.nnodes {
                     let asymmetry =
-                        (self.matrix.get((i, j)) - self.matrix.get((j, i))).abs();
+                        (self.matrix.get(i, j).unwrap() - self.matrix.get(j, i).unwrap()).abs();
                     max_asymmetry = max_asymmetry.max(asymmetry);
                 }
             }
@@ -402,63 +412,39 @@ impl GraphLaplacian {
         validation
     }
 
-    /// Get the number of non-zero entries in the matrix
     pub fn nnz(&self) -> usize {
-        trace!("Counting non-zero entries in {}×{} matrix", self.nnodes, self.nnodes);
-        let mut count = 0;
-        for i in 0..self.nnodes {
-            for j in 0..self.nnodes {
-                if self.matrix.get((i, j)).abs() > 1e-15 {
-                    count += 1;
-                }
-            }
-        }
-        debug!("Found {} non-zero entries", count);
+        let count = self.matrix.nnz();
+        debug!("Matrix has {} non-zero entries", count);
         count
     }
 
-    /// Get the sparsity ratio (fraction of zero entries)
-    pub fn sparsity(&self) -> f64 {
-        let total_entries = self.nnodes * self.nnodes;
-        let non_zero_entries = self.nnz();
-        let sparsity = (total_entries - non_zero_entries) as f64 / total_entries as f64;
-        debug!(
-            "Matrix sparsity: {:.4} ({} zeros out of {} total entries)",
-            sparsity,
-            total_entries - non_zero_entries,
-            total_entries
-        );
-        sparsity
+    
+    pub fn sparsity(matrix: &CsMat<f64>) -> f64 {
+        let nnz = matrix.nnz(); // number of non-zero elements
+        let (rows, cols) = matrix.shape();
+        let total_elements = rows * cols;
+            
+        1.0 - (nnz as f64) / (total_elements as f64)
     }
 
-    /// Extract the adjacency matrix (negative of off-diagonal Laplacian entries)
-    pub fn extract_adjacency(&self) -> DenseMatrix<f64> {
+    pub fn extract_adjacency(&self) -> CsMat<f64> {
         info!("Extracting adjacency matrix from Laplacian");
-        let mut adjacency_data = Vec::with_capacity(self.nnodes * self.nnodes);
+        let mut triplets = sprs::TriMat::new((self.nnodes, self.nnodes));
 
-        for i in 0..self.nnodes {
-            for j in 0..self.nnodes {
-                if i == j {
-                    adjacency_data.push(0.0); // No self-loops
-                } else {
-                    // Adjacency weight = -Laplacian off-diagonal
-                    adjacency_data.push(-self.matrix.get((i, j)));
+        for (i, row) in self.matrix.outer_iterator().enumerate() {
+            for (j, &value) in row.iter() {
+                if i != j {
+                    triplets.add_triplet(i, j, -value);
                 }
             }
         }
 
-        let adjacency = DenseMatrix::from_iterator(
-            adjacency_data.into_iter(),
-            self.nnodes,
-            self.nnodes,
-            0,
-        );
-
-        debug!("Extracted adjacency matrix: {}×{}", self.nnodes, self.nnodes);
+        let adjacency = triplets.to_csr();
+        debug!("Extracted adjacency matrix: {}×{} with {} non-zeros", 
+               self.nnodes, self.nnodes, adjacency.nnz());
         adjacency
     }
 
-    /// Get statistics about the Laplacian matrix
     pub fn statistics(&self) -> LaplacianStats {
         trace!("Computing Laplacian statistics");
         let degrees = self.degrees();
@@ -467,7 +453,7 @@ impl GraphLaplacian {
         let mean_degree = degrees.iter().sum::<f64>() / self.nnodes as f64;
 
         let nnz = self.nnz();
-        let sparsity = self.sparsity();
+        let sparsity = Self::sparsity(&self.matrix);
 
         let stats = LaplacianStats {
             nnodes: self.nnodes,
@@ -485,20 +471,35 @@ impl GraphLaplacian {
         stats
     }
 
-    /// Get a reference to the underlying DenseMatrix
-    pub fn matrix(&self) -> &DenseMatrix<f64> {
+    pub fn matrix(&self) -> &CsMat<f64> {
         &self.matrix
     }
 
-    /// Get a mutable reference to the underlying DenseMatrix
-    pub fn matrix_mut(&mut self) -> &mut DenseMatrix<f64> {
-        &mut self.matrix
-    }
-
-    /// Clone the graph parameters
     pub fn params(&self) -> &GraphParams {
         &self.graph_params
     }
+
+    /// Get a mutable reference to the underlying DenseMatrix
+    pub fn matrix_mut(&mut self) -> &mut CsMat<f64> {
+        &mut self.matrix
+    }
+
+}
+
+pub fn dense_to_sparse(dense: &DenseMatrix<f64>) -> CsMat<f64> {
+    let (rows, cols) = dense.shape();
+    let mut triplets = sprs::TriMat::new((rows, cols));
+    
+    for i in 0..rows {
+        for j in 0..cols {
+            let value = *dense.get((i, j));
+            if value.abs() > 1e-15 {
+                triplets.add_triplet(i, j, value);
+            }
+        }
+    }
+    
+    triplets.to_csr()
 }
 
 /// Structure to hold Laplacian validation results
@@ -544,16 +545,9 @@ impl fmt::Display for GraphLaplacian {
         writeln!(f, "Parameters: {:?}", self.graph_params)?;
 
         if self.nnodes <= 10 {
-            // Show full matrix for small sizes
-            for i in 0..self.nnodes {
-                write!(f, "Row {}: [", i)?;
-                for j in 0..self.nnodes {
-                    write!(f, "{:8.4} ", self.matrix.get((i, j)))?;
-                }
-                writeln!(f, "]")?;
-            }
+            writeln!(f, "Small matrix - showing structure only")?;
+            writeln!(f, "Non-zero entries: {}", self.matrix.nnz())?;
         } else {
-            // Show summary for large matrices
             let stats = self.statistics();
             writeln!(f, "Matrix too large to display ({} nodes)", self.nnodes)?;
             writeln!(
