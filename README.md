@@ -24,8 +24,7 @@ let vectors = vec![
 ];
 
 let (aspace, _) = ArrowSpaceBuilder::new()
-    .with_rows(vectors)
-    .build();
+    .build(vectors);
 ```
 
 ### Requirements
