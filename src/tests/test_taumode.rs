@@ -9,8 +9,6 @@ use approx::relative_eq;
 use smartcore::linalg::basic::arrays::{Array, Array2};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
-use log::debug;
-
 #[test]
 fn test_select_tau_fixed() {
     // Valid fixed tau
@@ -297,7 +295,7 @@ fn test_compute_synthetic_lambdas_different_tau_modes() {
 
         all_lambdas.push(lambdas);
 
-        debug!("TauMode {:?} lambdas: {:?}", tau_mode, aspace.lambdas());
+        println!("TauMode {:?} lambdas: {:?}", tau_mode, aspace.lambdas());
     }
 
     // Assertions about different taumode strategies
@@ -336,14 +334,14 @@ fn test_compute_synthetic_lambdas_different_tau_modes() {
     let percentile_mean = percentile_lambdas.iter().sum::<f64>() / percentile_lambdas.len() as f64;
 
     // Statistical properties: different modes should have different central tendencies
-    debug!("Lambda means by mode:");
-    debug!("  Fixed(0.9): {:.6}", fixed_mean);
-    debug!("  Mean: {:.6}", mean_mean);
-    debug!(
+    println!("Lambda means by mode:");
+    println!("  Fixed(0.9): {:.6}", fixed_mean);
+    println!("  Mean: {:.6}", mean_mean);
+    println!(
         "  Median: {:.6}",
         median_lambdas.iter().sum::<f64>() / median_lambdas.len() as f64
     );
-    debug!("  Percentile(0.25): {:.6}", percentile_mean);
+    println!("  Percentile(0.25): {:.6}", percentile_mean);
 
     // Verify that modes produce meaningfully different distributions
     let lambda_variances: Vec<f64> = all_lambdas
@@ -360,7 +358,7 @@ fn test_compute_synthetic_lambdas_different_tau_modes() {
         "Lambda variances should be non-negative"
     );
 
-    debug!("Lambda variances by mode: {:?}", lambda_variances);
+    println!("Lambda variances by mode: {:?}", lambda_variances);
 }
 
 #[test]
@@ -412,13 +410,13 @@ fn test_synthetic_lambda_properties() {
         )
         .build(items.clone());
 
-    debug!("Synthetic lambdas: {:?}", aspace.lambdas);
-    debug!("Number of items: {}", aspace.lambdas.len());
+    println!("Synthetic lambdas: {:?}", aspace.lambdas);
+    println!("Number of items: {}", aspace.lambdas.len());
 
     // Properties that should hold:
     // 1. All lambdas are in [0, 1] due to bounded transform
     assert!(aspace.lambdas.iter().all(|&l| (0.0..=1.0).contains(&l)));
-    debug!("✓ All lambdas bounded in [0,1]");
+    println!("✓ All lambdas bounded in [0,1]");
 
     // 2. Lambdas are deterministic (same input -> same output)
     let (aspace2, _) = ArrowSpaceBuilder::new()
@@ -445,11 +443,11 @@ fn test_synthetic_lambda_properties() {
             l2
         );
     }
-    debug!("✓ Deterministic computation verified");
+    println!("✓ Deterministic computation verified");
 
     // 3. All values are finite
     assert!(aspace.lambdas.iter().all(|l| l.is_finite()));
-    debug!("✓ All lambdas are finite");
+    println!("✓ All lambdas are finite");
 
     // 4. Statistical properties for high-dimensional data
     let lambda_mean = aspace.lambdas.iter().sum::<f64>() / aspace.lambdas.len() as f64;
@@ -462,12 +460,12 @@ fn test_synthetic_lambda_properties() {
     let lambda_min = aspace.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
     let lambda_max: f64 = aspace.lambdas.iter().fold(0.0, |a, &b| a.max(b));
 
-    debug!("Lambda statistics:");
-    debug!("  Mean: {:.6}", lambda_mean);
-    debug!("  Variance: {:.6}", lambda_variance);
-    debug!("  Min: {:.6}", lambda_min);
-    debug!("  Max: {:.6}", lambda_max);
-    debug!("  Range: {:.6}", lambda_max - lambda_min);
+    println!("Lambda statistics:");
+    println!("  Mean: {:.6}", lambda_mean);
+    println!("  Variance: {:.6}", lambda_variance);
+    println!("  Min: {:.6}", lambda_min);
+    println!("  Max: {:.6}", lambda_max);
+    println!("  Range: {:.6}", lambda_max - lambda_min);
 
     // 5. Non-degenerate behavior (should have some variation across features)
     assert!(
@@ -478,7 +476,7 @@ fn test_synthetic_lambda_properties() {
         lambda_max > lambda_min,
         "Should have variation across features"
     );
-    debug!("✓ Non-degenerate feature discrimination confirmed");
+    println!("✓ Non-degenerate feature discrimination confirmed");
 
     // 6. Median mode specific property: values should be influenced by median threshold
     // Test with different tau modes to verify median produces different results
@@ -503,11 +501,11 @@ fn test_synthetic_lambda_properties() {
         modes_differ,
         "Median and Mean tau modes should produce different results"
     );
-    debug!("✓ Tau mode sensitivity verified");
+    println!("✓ Tau mode sensitivity verified");
 
     // 7. Consistency with spectral properties
     assert_eq!(aspace.lambdas.len(), 3, "Should have one lambda per item");
-    debug!("✓ Correct dimensionality maintained");
+    println!("✓ Correct dimensionality maintained");
 }
 
 #[test]
@@ -546,8 +544,8 @@ fn test_rayleigh_quotient_basic() {
         alt_quotient
     );
 
-    debug!("Constant quotient: {:.6}", quotient);
-    debug!("Alternating quotient: {:.6}", alt_quotient);
+    println!("Constant quotient: {:.6}", quotient);
+    println!("Alternating quotient: {:.6}", alt_quotient);
 }
 
 #[test]
@@ -599,7 +597,7 @@ fn test_batch_computation() {
 
     assert_eq!(quotients.len(), 4);
     for (i, &q) in quotients.iter().enumerate() {
-        debug!("Vector {}: quotient = {:.6}", i, q);
+        println!("Vector {}: quotient = {:.6}", i, q);
         assert!(q.is_finite(), "All quotients should be finite");
     }
 }
@@ -623,11 +621,11 @@ fn test_lambda_verification_quora_embeddings() {
         normalise: true,
     };
 
-    debug!("=== GRAPH PARAMETERS ===");
-    debug!("eps: {}", graph_params.eps);
-    debug!("k: {}", graph_params.k);
-    debug!("p: {}", graph_params.p);
-    debug!("sigma: {:?}", graph_params.sigma);
+    println!("=== GRAPH PARAMETERS ===");
+    println!("eps: {}", graph_params.eps);
+    println!("k: {}", graph_params.k);
+    println!("p: {}", graph_params.p);
+    println!("sigma: {:?}", graph_params.sigma);
 
     // Build Laplacian with specified parameters
     let gl = GraphFactory::build_laplacian_matrix(
@@ -643,18 +641,18 @@ fn test_lambda_verification_quora_embeddings() {
     // Build spectral ArrowSpace
     let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
 
-    debug!("\n=== INITIAL STATE ===");
-    debug!("Graph nodes: {}", gl.nnodes);
-    debug!("ArrowSpace shape: {:?}", aspace.data.shape());
-    debug!("Signals shape: {:?}", aspace.signals.shape());
+    println!("\n=== INITIAL STATE ===");
+    println!("Graph nodes: {}", gl.nnodes);
+    println!("ArrowSpace shape: {:?}", aspace.data.shape());
+    println!("Signals shape: {:?}", aspace.signals.shape());
 
     // Compute initial lambdas
     aspace.recompute_lambdas(&gl);
     let lambdas = aspace.lambdas();
 
-    debug!("\n=== LAMBDA COMPUTATION RESULTS ===");
-    debug!("Number of lambdas: {}", lambdas.len());
-    debug!(
+    println!("\n=== LAMBDA COMPUTATION RESULTS ===");
+    println!("Number of lambdas: {}", lambdas.len());
+    println!(
         "Lambda values (first 10): {:?}",
         &lambdas[..10.min(lambdas.len())]
     );
@@ -684,16 +682,16 @@ fn test_lambda_verification_quora_embeddings() {
         .sum::<f64>()
         / lambdas.len() as f64;
 
-    debug!("\n=== LAMBDA STATISTICS ===");
-    debug!("Min lambda: {:.6}", lambda_min);
-    debug!("Max lambda: {:.6}", lambda_max);
-    debug!("Mean lambda: {:.6}", lambda_mean);
-    debug!("Lambda variance: {:.6}", lambda_variance);
-    debug!("Lambda std dev: {:.6}", lambda_variance.sqrt());
-    debug!("Range: {:.6}", lambda_max - lambda_min);
+    println!("\n=== LAMBDA STATISTICS ===");
+    println!("Min lambda: {:.6}", lambda_min);
+    println!("Max lambda: {:.6}", lambda_max);
+    println!("Mean lambda: {:.6}", lambda_mean);
+    println!("Lambda variance: {:.6}", lambda_variance);
+    println!("Lambda std dev: {:.6}", lambda_variance.sqrt());
+    println!("Range: {:.6}", lambda_max - lambda_min);
 
     // Test with different tau modes for comprehensive validation
-    debug!("\n=== TAU MODE TESTING ===");
+    println!("\n=== TAU MODE TESTING ===");
     let tau_modes = vec![
         TauMode::Fixed(0.1),
         TauMode::Fixed(0.5),
@@ -712,7 +710,7 @@ fn test_lambda_verification_quora_embeddings() {
         let tau_lambdas = test_aspace.lambdas();
 
         let tau_mean = tau_lambdas.iter().sum::<f64>() / tau_lambdas.len() as f64;
-        debug!("TauMode {:?} - Mean lambda: {:.6}", tau_mode, tau_mean);
+        println!("TauMode {:?} - Mean lambda: {:.6}", tau_mode, tau_mean);
 
         // Validate tau mode results
         assert!(
@@ -730,14 +728,14 @@ fn test_lambda_verification_quora_embeddings() {
     }
 
     // Verify extreme parameters behavior
-    debug!("\n=== EXTREME PARAMETERS ANALYSIS ===");
-    debug!("With eps=1e-12 and sigma=5e-13, the graph should be very sparse");
-    debug!("Only very similar vectors (within 1e-12 distance) will be connected");
-    debug!("This may result in isolated nodes and specific spectral properties");
+    println!("\n=== EXTREME PARAMETERS ANALYSIS ===");
+    println!("With eps=1e-12 and sigma=5e-13, the graph should be very sparse");
+    println!("Only very similar vectors (within 1e-12 distance) will be connected");
+    println!("This may result in isolated nodes and specific spectral properties");
 
     // Success message
-    debug!("\n✓ Lambda verification completed successfully for 384-dimensional vector");
-    debug!("✓ All mathematical properties validated");
-    debug!("✓ TauMode computations verified");
-    debug!("✓ Extreme parameter behavior analyzed");
+    println!("\n✓ Lambda verification completed successfully for 384-dimensional vector");
+    println!("✓ All mathematical properties validated");
+    println!("✓ TauMode computations verified");
+    println!("✓ Extreme parameter behavior analyzed");
 }

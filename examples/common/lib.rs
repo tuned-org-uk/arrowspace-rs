@@ -1,7 +1,7 @@
 use arrowspace::core::{ArrowItem, ArrowSpace};
 use arrowspace::graph::GraphLaplacian;
 
-use smartcore::linalg::basic::arrays::{Array, Array2};
+use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
 use sprs::CsMat;
@@ -403,7 +403,6 @@ pub fn evaluate_parameter_quality(
     gl: &GraphLaplacian,
     queries: &[Vec<f64>],
     alpha: f64,
-    beta: f64,
     k: usize,
 ) -> f64 {
     // Combine multiple quality metrics:

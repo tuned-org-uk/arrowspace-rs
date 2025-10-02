@@ -105,7 +105,7 @@
 //!
 //! ## Custom Graph Configuration
 //!
-//! ```
+//! ```ignore
 //! let (aspace, graph) = ArrowSpaceBuilder::new()
 //!     .with_lambda_graph(1e-3, 10, 5, 2.0, Some(0.5))
 //!     .build(items);

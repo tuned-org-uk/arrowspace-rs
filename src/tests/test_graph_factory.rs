@@ -1,13 +1,11 @@
 use smartcore::dataset::iris;
-use smartcore::linalg::basic::arrays::{Array, Array2, ArrayView2};
+use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
 use crate::graph::{GraphFactory, GraphLaplacian, GraphParams};
 use crate::tests::GRAPH_PARAMS;
 
 use approx::{assert_relative_eq, relative_eq};
-
-use log::debug;
 
 #[test]
 fn test_build_lambda_graph_basic_sparse() {
@@ -316,7 +314,7 @@ fn test_new_from_items_transpose_verification() {
         epsilon = 1e-3
     ));
 
-    debug!("Transpose verification test passed");
+    println!("Transpose verification test passed");
 }
 
 #[test]
@@ -364,7 +362,7 @@ fn test_new_from_items_parameter_preservation() {
     assert_eq!(laplacian.graph_params.p, original_params.p);
     assert_eq!(laplacian.graph_params.sigma, original_params.sigma);
 
-    debug!("Parameter preservation test passed");
+    println!("Parameter preservation test passed");
 }
 
 #[test]
@@ -393,5 +391,5 @@ fn test_new_from_items_single_element() {
         epsilon = 1e-10
     );
 
-    debug!("Single element test passed");
+    println!("Single element test passed");
 }

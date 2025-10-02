@@ -1,4 +1,4 @@
-use smartcore::linalg::basic::arrays::{Array, Array2};
+use smartcore::linalg::basic::arrays::Array;
 
 use crate::builder::ArrowSpaceBuilder;
 use crate::core::{ArrowSpace, TAUDEFAULT};
@@ -10,8 +10,6 @@ use crate::tests::{GRAPH_PARAMS, TAU_PARAMS};
 
 use approx::{assert_relative_eq, assert_relative_ne, relative_eq};
 use smartcore::dataset::iris;
-
-use log::debug;
 
 #[test]
 fn arrowspace_build_and_recompute() {

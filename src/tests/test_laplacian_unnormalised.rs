@@ -1,5 +1,5 @@
 use approx::relative_eq;
-use smartcore::linalg::basic::{arrays::Array, matrix::DenseMatrix};
+use smartcore::linalg::basic:: matrix::DenseMatrix;
 use sprs::CsMat;
 
 use crate::{
@@ -8,8 +8,6 @@ use crate::{
 };
 
 use approx::assert_relative_eq;
-
-use log::debug;
 
 fn mat_eq(a: &CsMat<f64>, b: &CsMat<f64>, eps: f64) -> bool {
     if a.shape() != b.shape() {
@@ -249,12 +247,12 @@ fn test_cosine_similarity_scale_invariance() {
     let cosine_original = compute_cosine_similarity(&item1, &item2);
     let cosine_scaled = compute_cosine_similarity(&item1_scaled, &item2_scaled);
 
-    debug!("Original cosine similarity: {:.6}", cosine_original);
-    debug!("Scaled cosine similarity: {:.6}", cosine_scaled);
+    println!("Original cosine similarity: {:.6}", cosine_original);
+    println!("Scaled cosine similarity: {:.6}", cosine_scaled);
 
     // Cosine similarity should be identical (scale invariant)
     assert_relative_eq!(cosine_original, cosine_scaled, epsilon = 1e-10);
-    debug!("✓ Cosine similarity is scale invariant");
+    println!("✓ Cosine similarity is scale invariant");
 }
 
 #[test]
@@ -281,16 +279,16 @@ fn test_hybrid_similarity_scale_sensitivity() {
 
     let hybrid_scaled = compute_hybrid_similarity(&item1_scaled, &item2_scaled, alpha, beta);
 
-    debug!("Original hybrid similarity: {:.6}", hybrid_original);
-    debug!("Scaled hybrid similarity: {:.6}", hybrid_scaled);
-    debug!("Difference: {:.6}", (hybrid_original - hybrid_scaled).abs());
+    println!("Original hybrid similarity: {:.6}", hybrid_original);
+    println!("Scaled hybrid similarity: {:.6}", hybrid_scaled);
+    println!("Difference: {:.6}", (hybrid_original - hybrid_scaled).abs());
 
     // Hybrid similarity should be different (scale sensitive)
     assert!(
         (hybrid_original - hybrid_scaled).abs() > 1e-6,
         "Hybrid similarity should be scale sensitive"
     );
-    debug!("✓ Hybrid similarity is scale sensitive");
+    println!("✓ Hybrid similarity is scale sensitive");
 }
 
 #[test]
@@ -332,7 +330,7 @@ fn test_laplacian_with_normalized_vs_unnormalized_items() {
         })
         .collect();
 
-    debug!("=== SIMILARITY ANALYSIS ===");
+    println!("=== SIMILARITY ANALYSIS ===");
 
     // Compute pairwise similarities for both versions
     let mut cosine_similarities_unnorm = Vec::new();
@@ -358,7 +356,7 @@ fn test_laplacian_with_normalized_vs_unnormalized_items() {
             hybrid_similarities_unnorm.push(hybrid_unnorm);
             hybrid_similarities_norm.push(hybrid_norm);
 
-            debug!(
+            println!(
                 "Pair ({}, {}): Cosine unnorm={:.6}, norm={:.6} | Hybrid unnorm={:.6}, norm={:.6}",
                 i, j, cos_unnorm, cos_norm, hybrid_unnorm, hybrid_norm
             );
@@ -395,7 +393,7 @@ fn test_laplacian_with_normalized_vs_unnormalized_items() {
         "Hybrid similarities should differ between normalized and unnormalized items"
     );
 
-    debug!(
+    println!(
         "✓ Found {} significant differences in hybrid similarities",
         significant_differences
     );
@@ -466,12 +464,12 @@ fn test_laplacian_eigenvalues_with_normalization_differences() {
     let lambdas_norm = aspace_norm.lambdas();
     let lambdas_unnorm = aspace_unnorm.lambdas();
 
-    debug!("=== SPECTRAL ANALYSIS ===");
-    debug!(
+    println!("=== SPECTRAL ANALYSIS ===");
+    println!(
         "Normalized lambdas:   {:?}",
         &lambdas_norm[..5.min(lambdas_norm.len())]
     );
-    debug!(
+    println!(
         "Unnormalized lambdas: {:?}",
         &lambdas_unnorm[..5.min(lambdas_unnorm.len())]
     );
@@ -486,7 +484,7 @@ fn test_laplacian_eigenvalues_with_normalization_differences() {
     }
 
     // With pure cosine similarity, differences should be minimal
-    debug!(
+    println!(
         "Lambda differences (cosine): {}/{}",
         lambda_differences,
         lambdas_norm.len()
@@ -494,7 +492,7 @@ fn test_laplacian_eigenvalues_with_normalization_differences() {
 
     // Test with a different similarity measure that's not scale-invariant
     // This would require modifying the build_laplacian_matrix to accept custom similarity functions
-    debug!("✓ Cosine-based Laplacian shows expected scale invariance");
+    println!("✓ Cosine-based Laplacian shows expected scale invariance");
 }
 
 #[test]
@@ -546,8 +544,8 @@ fn test_hybrid_similarity_components() {
     // Test different scale combinations
     let scales = vec![0.1, 0.5, 1.0, 2.0, 10.0];
 
-    debug!("=== HYBRID SIMILARITY COMPONENT ANALYSIS ===");
-    debug!(
+    println!("=== HYBRID SIMILARITY COMPONENT ANALYSIS ===");
+    println!(
         "{:>8} {:>8} {:>12} {:>12} {:>12} {:>12}",
         "Scale1", "Scale2", "Cosine", "MagPenalty", "Hybrid", "Difference"
     );
@@ -573,7 +571,7 @@ fn test_hybrid_similarity_components() {
 
             let hybrid_manual = 0.6 * cosine + 0.4 * mag_penalty;
 
-            debug!(
+            println!(
                 "{:8.1} {:8.1} {:12.6} {:12.6} {:12.6} {:12.8}",
                 scale1,
                 scale2,
@@ -591,7 +589,7 @@ fn test_hybrid_similarity_components() {
         }
     }
 
-    debug!("✓ Hybrid similarity components computed correctly");
-    debug!("✓ Cosine component remains scale-invariant");
-    debug!("✓ Magnitude penalty varies with scale differences");
+    println!("✓ Hybrid similarity components computed correctly");
+    println!("✓ Cosine component remains scale-invariant");
+    println!("✓ Magnitude penalty varies with scale differences");
 }

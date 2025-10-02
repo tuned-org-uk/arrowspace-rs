@@ -5797,7 +5797,7 @@ pub const QUORA_EMBEDDS: &[&[f64]] = &[
 ];
 
 // Other random vectors with different precision
-
+#[allow(dead_code)]
 pub const PROTEINS_EMBEDS: &[&[f64]] = &[
     &[
         0.374540, 0.950714, 0.731994, 0.598658, 0.156019, 0.155995, 0.058084, 0.866176, 0.601115,

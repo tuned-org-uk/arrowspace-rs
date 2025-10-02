@@ -1,14 +1,12 @@
 use crate::graph::GraphParams;
 use approx::abs_diff_eq;
 use smartcore::linalg::basic::{
-    arrays::{Array, Array2},
+    arrays::Array2,
     matrix::DenseMatrix,
 };
 use sprs::CsMat;
 
 use crate::laplacian::*;
-
-use log::debug;
 
 // Helper function for creating test vectors with known similarities
 fn create_test_vectors() -> Vec<Vec<f64>> {
@@ -195,7 +193,7 @@ fn test_cosine_similarity_based_construction() {
         );
     } else {
         // Both are at threshold - this is acceptable behavior
-        debug!(
+        println!(
             "Note: 90° and 180° vectors have equal weights ({}) - likely thresholded",
             adj_02
         );
@@ -401,8 +399,8 @@ fn test_numerical_stability() {
     }
 
     println!(
-        "✓ Numerical stability verified: checked {} stored entries, all finite",
-        finite_entries
+        "✓ Numerical stability verified: finite entries ratio {}",
+        finite_entries / total_entries_checked
     );
     println!(
         "  Matrix sparsity: {}/{} entries stored ({:.1}%)",
@@ -440,7 +438,7 @@ fn test_performance_with_larger_dataset() {
     let duration = start.elapsed();
 
     assert_eq!(laplacian.nnodes, 15);
-    debug!("Large dataset (15 items) processed in {:?}", duration);
+    println!("Large dataset (15 items) processed in {:?}", duration);
 
     // Sanity check - should complete in reasonable time
     assert!(duration.as_secs() < 5, "Should complete within 5 seconds");
@@ -668,7 +666,7 @@ fn test_optimized_sparse_matrix_laplacian() {
         (1.0 - laplacian.matrix.nnz() as f64 / 16.0) * 100.0
     );
 
-    debug!("Optimized Sparse Matrix Laplacian test passed");
+    println!("Optimized Sparse Matrix Laplacian test passed");
 }
 
 #[test]
@@ -799,5 +797,5 @@ fn test_with_adjacency_output() {
         adjacency.nnz()
     );
 
-    debug!("Sparse Adjacency + Laplacian test passed");
+    println!("Sparse Adjacency + Laplacian test passed");
 }
