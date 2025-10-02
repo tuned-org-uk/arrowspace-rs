@@ -67,11 +67,9 @@ fn test_laplacian_unit_norm_items_invariance_under_normalisation_toggle() {
     let sigma = None;
 
     // normalise = true
-    let gl_norm =
-        GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, true);
+    let gl_norm = GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, true);
     // normalise = false
-    let gl_raw =
-        GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, false);
+    let gl_raw = GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, false);
 
     // Expect matrices equal within a small epsilon
     assert!(
@@ -99,12 +97,10 @@ fn test_direction_vs_magnitude_sensitivity() {
     let sigma = Some(0.1);
 
     // Build graph/Laplacian under normalisation=true (cosine-like, scale-invariant).
-    let gl_norm =
-        GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, true);
+    let gl_norm = GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, true);
 
     // Build graph/Laplacian under normalisation=false (τ-mode: magnitude-sensitive).
-    let gl_tau =
-        GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, false);
+    let gl_tau = GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, false);
 
     // For cosine-like normalisation, scaling a vector by k>0 leaves cosine unchanged,
     // so vectors 1 and 2 (same direction, different magnitudes) produce identical
@@ -146,13 +142,19 @@ fn test_direction_vs_magnitude_sensitivity() {
     // assert!(min_tau <= 1e-8, "Smallest eigenvalue (tau) should be ~0, got {}", min_tau); // Same PSD property applies to τ-mode Laplacian [web:131].
 }
 
-
 #[test]
 fn test_graph_params_normalise_flag_is_preserved() {
     // Verify GraphParams.normalise is propagated and preserved in the Laplacian
     // (ensures plumbing is correct).
     let items = vec![vec![1.0, 2.0], vec![3.0, 4.0]];
-    let params = GraphParams { eps: 0.25, k: 2, topk: 1, p: 2.0, sigma: None, normalise: false };
+    let params = GraphParams {
+        eps: 0.25,
+        k: 2,
+        topk: 1,
+        p: 2.0,
+        sigma: None,
+        normalise: false,
+    };
     // Prepare_from_items is expected to carry parameters through to the GraphLaplacian
     // (the constructor path that preserves settings).
     let m = DenseMatrix::from_2d_vec(&items).unwrap();
@@ -185,10 +187,8 @@ fn test_unit_norm_equivalence_of_laplacian_diagonals() {
     let p = 2.0;
     let sigma = None;
 
-    let gl_norm =
-        GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, true);
-    let gl_raw =
-        GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, false);
+    let gl_norm = GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, true);
+    let gl_raw = GraphFactory::build_laplacian_matrix(items.clone(), eps, k, topk, p, sigma, false);
 
     let d_norm = diag_vec(&gl_norm.matrix);
     let d_raw = diag_vec(&gl_raw.matrix);
@@ -209,25 +209,20 @@ fn compute_cosine_similarity(item1: &[f64], item2: &[f64]) -> f64 {
     let norm1 = item1.iter().map(|x| x * x).sum::<f64>().sqrt();
     let norm2 = item2.iter().map(|x| x * x).sum::<f64>().sqrt();
 
-    if norm1 > 1e-15 && norm2 > 1e-15 {
+    if norm1 > 1e-12 && norm2 > 1e-12 {
         dot / (norm1 * norm2)
     } else {
         0.0
     }
 }
 
-fn compute_hybrid_similarity(
-    item1: &[f64],
-    item2: &[f64],
-    alpha: f64,
-    beta: f64,
-) -> f64 {
+fn compute_hybrid_similarity(item1: &[f64], item2: &[f64], alpha: f64, beta: f64) -> f64 {
     let norm1 = item1.iter().map(|x| x * x).sum::<f64>().sqrt();
     let norm2 = item2.iter().map(|x| x * x).sum::<f64>().sqrt();
 
     let cosine_sim = compute_cosine_similarity(item1, item2);
 
-    if norm1 > 1e-15 && norm2 > 1e-15 {
+    if norm1 > 1e-12 && norm2 > 1e-12 {
         let magnitude_penalty = (-((norm1 / norm2).ln().abs())).exp();
         alpha * cosine_sim + beta * magnitude_penalty
     } else {
@@ -284,8 +279,7 @@ fn test_hybrid_similarity_scale_sensitivity() {
     let item1_scaled: Vec<f64> = item1.iter().map(|x| x * scale1).collect();
     let item2_scaled: Vec<f64> = item2.iter().map(|x| x * scale2).collect();
 
-    let hybrid_scaled =
-        compute_hybrid_similarity(&item1_scaled, &item2_scaled, alpha, beta);
+    let hybrid_scaled = compute_hybrid_similarity(&item1_scaled, &item2_scaled, alpha, beta);
 
     debug!("Original hybrid similarity: {:.6}", hybrid_original);
     debug!("Scaled hybrid similarity: {:.6}", hybrid_scaled);
@@ -304,20 +298,16 @@ fn test_laplacian_with_normalized_vs_unnormalized_items() {
     // Test Laplacian computation with both normalized and unnormalized items
     let items = vec![
         vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
+            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
         ],
         vec![
-            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38,
-            0.60,
+            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38, 0.60,
         ],
         vec![
-            0.77, 0.14, 0.47, 0.26, 0.59, 0.35, 0.51, 0.45, 0.23, 0.68, 0.10, 0.34,
-            0.54,
+            0.77, 0.14, 0.47, 0.26, 0.59, 0.35, 0.51, 0.45, 0.23, 0.68, 0.10, 0.34, 0.54,
         ],
     ];
 
@@ -334,7 +324,7 @@ fn test_laplacian_with_normalized_vs_unnormalized_items() {
         .iter()
         .map(|item| {
             let norm = item.iter().map(|x| x * x).sum::<f64>().sqrt();
-            if norm > 1e-15 {
+            if norm > 1e-12 {
                 item.iter().map(|x| x / norm).collect()
             } else {
                 item.clone()
@@ -353,40 +343,32 @@ fn test_laplacian_with_normalized_vs_unnormalized_items() {
     for i in 0..items.len() {
         for j in (i + 1)..items.len() {
             // Cosine similarities
-            let cos_unnorm = compute_cosine_similarity(
-                &items_unnormalized[i],
-                &items_unnormalized[j],
-            );
-            let cos_norm =
-                compute_cosine_similarity(&items_normalized[i], &items_normalized[j]);
+            let cos_unnorm =
+                compute_cosine_similarity(&items_unnormalized[i], &items_unnormalized[j]);
+            let cos_norm = compute_cosine_similarity(&items_normalized[i], &items_normalized[j]);
 
             // Hybrid similarities
-            let hybrid_unnorm = compute_hybrid_similarity(
-                &items_unnormalized[i],
-                &items_unnormalized[j],
-                0.6,
-                0.4,
-            );
-            let hybrid_norm = compute_hybrid_similarity(
-                &items_normalized[i],
-                &items_normalized[j],
-                0.6,
-                0.4,
-            );
+            let hybrid_unnorm =
+                compute_hybrid_similarity(&items_unnormalized[i], &items_unnormalized[j], 0.6, 0.4);
+            let hybrid_norm =
+                compute_hybrid_similarity(&items_normalized[i], &items_normalized[j], 0.6, 0.4);
 
             cosine_similarities_unnorm.push(cos_unnorm);
             cosine_similarities_norm.push(cos_norm);
             hybrid_similarities_unnorm.push(hybrid_unnorm);
             hybrid_similarities_norm.push(hybrid_norm);
 
-            debug!("Pair ({}, {}): Cosine unnorm={:.6}, norm={:.6} | Hybrid unnorm={:.6}, norm={:.6}", 
-                        i, j, cos_unnorm, cos_norm, hybrid_unnorm, hybrid_norm);
+            debug!(
+                "Pair ({}, {}): Cosine unnorm={:.6}, norm={:.6} | Hybrid unnorm={:.6}, norm={:.6}",
+                i, j, cos_unnorm, cos_norm, hybrid_unnorm, hybrid_norm
+            );
         }
     }
 
     // Cosine similarities should be nearly identical
-    for (unnorm, norm) in
-        cosine_similarities_unnorm.iter().zip(cosine_similarities_norm.iter())
+    for (unnorm, norm) in cosine_similarities_unnorm
+        .iter()
+        .zip(cosine_similarities_norm.iter())
     {
         assert!(
             (unnorm - norm).abs() < 1e-10,
@@ -399,8 +381,9 @@ fn test_laplacian_with_normalized_vs_unnormalized_items() {
 
     // Hybrid similarities should be different
     let mut significant_differences = 0;
-    for (unnorm, norm) in
-        hybrid_similarities_unnorm.iter().zip(hybrid_similarities_norm.iter())
+    for (unnorm, norm) in hybrid_similarities_unnorm
+        .iter()
+        .zip(hybrid_similarities_norm.iter())
     {
         if (unnorm - norm).abs() > 1e-6 {
             significant_differences += 1;
@@ -423,16 +406,13 @@ fn test_laplacian_eigenvalues_with_normalization_differences() {
     // Test how normalization affects the spectral properties
     let items = vec![
         vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
+            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
         ],
         vec![
-            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38,
-            0.60,
+            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38, 0.60,
         ],
     ];
 
@@ -444,8 +424,14 @@ fn test_laplacian_eigenvalues_with_normalization_differences() {
         .map(|(item, &scale)| item.iter().map(|x| x * scale).collect())
         .collect();
 
-    let graph_params =
-        GraphParams { eps: 0.1, k: 2, topk: 1, p: 2.0, sigma: None, normalise: false };
+    let graph_params = GraphParams {
+        eps: 0.1,
+        k: 2,
+        topk: 1,
+        p: 2.0,
+        sigma: None,
+        normalise: false,
+    };
 
     // Build Laplacians for both normalized and unnormalized versions
     let gl_normalized = GraphFactory::build_laplacian_matrix(
@@ -470,24 +456,21 @@ fn test_laplacian_eigenvalues_with_normalization_differences() {
 
     // Build ArrowSpaces and compute lambdas
     let aspace_norm = ArrowSpace::from_items_default(items.clone());
-    let mut aspace_norm = GraphFactory::build_spectral_laplacian(
-        aspace_norm,
-        &gl_normalized,
-    );
+    let mut aspace_norm = GraphFactory::build_spectral_laplacian(aspace_norm, &gl_normalized);
     aspace_norm.recompute_lambdas(&gl_normalized);
 
     let aspace_unnorm = ArrowSpace::from_items_default(items_unnormalized.clone());
-    let mut aspace_unnorm = GraphFactory::build_spectral_laplacian(
-        aspace_unnorm,
-        &gl_unnormalized,
-    );
+    let mut aspace_unnorm = GraphFactory::build_spectral_laplacian(aspace_unnorm, &gl_unnormalized);
     aspace_unnorm.recompute_lambdas(&gl_unnormalized);
 
     let lambdas_norm = aspace_norm.lambdas();
     let lambdas_unnorm = aspace_unnorm.lambdas();
 
     debug!("=== SPECTRAL ANALYSIS ===");
-    debug!("Normalized lambdas:   {:?}", &lambdas_norm[..5.min(lambdas_norm.len())]);
+    debug!(
+        "Normalized lambdas:   {:?}",
+        &lambdas_norm[..5.min(lambdas_norm.len())]
+    );
     debug!(
         "Unnormalized lambdas: {:?}",
         &lambdas_unnorm[..5.min(lambdas_unnorm.len())]
@@ -577,13 +560,12 @@ fn test_hybrid_similarity_components() {
             let item2_scaled: Vec<f64> = item2.iter().map(|x| x * scale2).collect();
 
             let cosine = compute_cosine_similarity(&item1_scaled, &item2_scaled);
-            let hybrid =
-                compute_hybrid_similarity(&item1_scaled, &item2_scaled, 0.6, 0.4);
+            let hybrid = compute_hybrid_similarity(&item1_scaled, &item2_scaled, 0.6, 0.4);
 
             // Compute magnitude penalty separately
             let norm1 = item1_scaled.iter().map(|x| x * x).sum::<f64>().sqrt();
             let norm2 = item2_scaled.iter().map(|x| x * x).sum::<f64>().sqrt();
-            let mag_penalty = if norm1 > 1e-15 && norm2 > 1e-15 {
+            let mag_penalty = if norm1 > 1e-12 && norm2 > 1e-12 {
                 (-((norm1 / norm2).ln().abs())).exp()
             } else {
                 0.0

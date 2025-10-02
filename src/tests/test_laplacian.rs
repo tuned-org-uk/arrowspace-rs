@@ -1,6 +1,9 @@
 use crate::graph::GraphParams;
 use approx::abs_diff_eq;
-use smartcore::linalg::basic::{arrays::{Array, Array2}, matrix::DenseMatrix};
+use smartcore::linalg::basic::{
+    arrays::{Array, Array2},
+    matrix::DenseMatrix,
+};
 use sprs::CsMat;
 
 use crate::laplacian::*;
@@ -19,7 +22,14 @@ fn create_test_vectors() -> Vec<Vec<f64>> {
 }
 
 fn default_params() -> GraphParams {
-    GraphParams { eps: 0.5, k: 3, topk: 2, p: 2.0, sigma: Some(0.1), normalise: false }
+    GraphParams {
+        eps: 0.5,
+        k: 3,
+        topk: 2,
+        p: 2.0,
+        sigma: Some(0.1),
+        normalise: false,
+    }
 }
 
 #[test]
@@ -30,7 +40,7 @@ fn test_basic_laplacian_construction() {
     let laplacian = build_laplacian_matrix(
         DenseMatrix::<f64>::from_2d_vec(&items).unwrap().transpose(),
         &params,
-        None
+        None,
     );
 
     assert_eq!(laplacian.nnodes, 5);
@@ -45,7 +55,7 @@ fn test_laplacian_mathematical_properties() {
     let laplacian = build_laplacian_matrix(
         DenseMatrix::<f64>::from_2d_vec(&items).unwrap().transpose(),
         &params,
-        None
+        None,
     );
 
     let n = laplacian.nnodes;
@@ -53,10 +63,8 @@ fn test_laplacian_mathematical_properties() {
     // Property 1: Row sums should be zero (within numerical precision)
     for (i, row) in laplacian.matrix.outer_iterator().enumerate() {
         let row_sum: f64 = row.iter().map(|(_, &value)| value).sum();
-        assert!(abs_diff_eq!(
-            row_sum, 
-            0.0, 
-            epsilon = 1e-12),
+        assert!(
+            abs_diff_eq!(row_sum, 0.0, epsilon = 1e-12),
             r#"Row {i} sum should be zero, got {row_sum:.2e}"#
         );
     }
@@ -70,16 +78,18 @@ fn test_laplacian_mathematical_properties() {
             let diff = (l_ij - l_ji).abs();
             if diff > 1e-12 {
                 asymmetry_violations += 1;
-                if asymmetry_violations <= 5 { // Show first 5 violations only
-                    println!("Asymmetry at ({}, {}): L_ij={:.2e}, L_ji={:.2e}, diff={:.2e}", 
-                             i, j, l_ij, l_ji, diff);
+                if asymmetry_violations <= 5 {
+                    // Show first 5 violations only
+                    println!(
+                        "Asymmetry at ({}, {}): L_ij={:.2e}, L_ji={:.2e}, diff={:.2e}",
+                        i, j, l_ij, l_ji, diff
+                    );
                 }
             }
-            assert!(abs_diff_eq!(
-                l_ij, 
-                l_ji, 
-                epsilon = 1e-12
-            ), r#"Matrix should be symmetric: L[{i},{j}]={l_ij:.2e} != L[{j},{i}]={l_ji:.2e}"#);
+            assert!(
+                abs_diff_eq!(l_ij, l_ji, epsilon = 1e-12),
+                r#"Matrix should be symmetric: L[{i},{j}]={l_ij:.2e} != L[{j},{i}]={l_ji:.2e}"#
+            );
         }
     }
 
@@ -112,7 +122,7 @@ fn test_laplacian_mathematical_properties() {
     }
 
     // Additional sparse matrix specific checks
-    
+
     // Property 5: Verify sparsity structure makes sense
     let expected_max_nnz = n * (params.k + 1); // k neighbors + diagonal
     assert!(
@@ -134,10 +144,13 @@ fn test_laplacian_mathematical_properties() {
         "CSR data length should match nnz"
     );
 
-    println!("✓ Laplacian mathematical properties verified for {}×{} sparse matrix with {} non-zeros", 
-             n, n, laplacian.matrix.nnz());
+    println!(
+        "✓ Laplacian mathematical properties verified for {}×{} sparse matrix with {} non-zeros",
+        n,
+        n,
+        laplacian.matrix.nnz()
+    );
 }
-
 
 #[test]
 fn test_cosine_similarity_based_construction() {
@@ -265,10 +278,8 @@ fn test_k_parameter_constraint() {
         normalise: true,
     };
 
-    let (_, adj_small_k) =
-        build_laplacian_matrix_with_adjacency(&items, &small_k_params);
-    let (_, adj_large_k) =
-        build_laplacian_matrix_with_adjacency(&items, &large_k_params);
+    let (_, adj_small_k) = build_laplacian_matrix_with_adjacency(&items, &small_k_params);
+    let (_, adj_large_k) = build_laplacian_matrix_with_adjacency(&items, &large_k_params);
 
     let connections_small_k = count_nonzero_adjacency(&adj_small_k);
     let connections_large_k = count_nonzero_adjacency(&adj_large_k);
@@ -286,7 +297,11 @@ fn test_k_parameter_constraint() {
 fn test_insufficient_data_panics() {
     let insufficient_items = vec![vec![1.0]]; // Only one item
     let params = default_params();
-    build_laplacian_matrix(DenseMatrix::<f64>::from_2d_vec(&insufficient_items).unwrap(), &params, None);
+    build_laplacian_matrix(
+        DenseMatrix::<f64>::from_2d_vec(&insufficient_items).unwrap(),
+        &params,
+        None,
+    );
 }
 
 #[test]
@@ -294,15 +309,25 @@ fn test_numerical_stability() {
     // Test with very small values that might cause numerical issues
     let small_values = vec![vec![1e-10, 2e-10], vec![3e-10, 1e-10], vec![2e-10, 3e-10]];
 
-    let params =
-        GraphParams { eps: 1.0, k: 2, topk: 1, p: 2.0, sigma: Some(1e-8), normalise: false };
+    let params = GraphParams {
+        eps: 1.0,
+        k: 2,
+        topk: 1,
+        p: 2.0,
+        sigma: Some(1e-8),
+        normalise: false,
+    };
 
-    let laplacian = build_laplacian_matrix(DenseMatrix::<f64>::from_2d_vec(&small_values).unwrap(), &params, None);
+    let laplacian = build_laplacian_matrix(
+        DenseMatrix::<f64>::from_2d_vec(&small_values).unwrap(),
+        &params,
+        None,
+    );
 
     // Should produce finite values - check all stored entries in sparse matrix
     let mut total_entries_checked = 0;
     let mut finite_entries = 0;
-    
+
     for (i, row) in laplacian.matrix.outer_iterator().enumerate() {
         for (j, &val) in row.iter() {
             total_entries_checked += 1;
@@ -330,11 +355,11 @@ fn test_numerical_stability() {
     }
 
     // Additional numerical stability checks for sparse matrices
-    
+
     // Check that no entries are NaN or infinite
     let has_nan = laplacian.matrix.data().iter().any(|&x| x.is_nan());
     let has_inf = laplacian.matrix.data().iter().any(|&x| x.is_infinite());
-    
+
     assert!(!has_nan, "Matrix should not contain NaN values");
     assert!(!has_inf, "Matrix should not contain infinite values");
 
@@ -360,25 +385,32 @@ fn test_numerical_stability() {
         laplacian.matrix.data().len(),
         "CSR indices and data arrays should have same length"
     );
-    
+
     // Check that row pointers are monotonic (CSR property)
     let indptr = laplacian.matrix.indptr();
     let indptr_slice = indptr.raw_storage();
     for i in 1..indptr_slice.len() {
         assert!(
-            indptr_slice[i] >= indptr_slice[i-1],
+            indptr_slice[i] >= indptr_slice[i - 1],
             "CSR row pointers should be monotonic: indptr[{}]={} < indptr[{}]={}",
-            i, indptr_slice[i], i-1, indptr_slice[i-1]
+            i,
+            indptr_slice[i],
+            i - 1,
+            indptr_slice[i - 1]
         );
     }
 
-    println!("✓ Numerical stability verified: checked {} stored entries, all finite", finite_entries);
-    println!("  Matrix sparsity: {}/{} entries stored ({:.1}%)", 
-             laplacian.matrix.nnz(), 
-             9, // 3x3
-             laplacian.matrix.nnz() as f64 / 9.0 * 100.0);
+    println!(
+        "✓ Numerical stability verified: checked {} stored entries, all finite",
+        finite_entries
+    );
+    println!(
+        "  Matrix sparsity: {}/{} entries stored ({:.1}%)",
+        laplacian.matrix.nnz(),
+        9, // 3x3
+        laplacian.matrix.nnz() as f64 / 9.0 * 100.0
+    );
 }
-
 
 #[test]
 fn test_performance_with_larger_dataset() {
@@ -388,12 +420,23 @@ fn test_performance_with_larger_dataset() {
         .map(|inner_slice| inner_slice.to_vec())
         .collect();
 
-    let params =
-        GraphParams { eps: 0.8, k: 10, topk: 3, p: 2.0, sigma: Some(0.1), normalise: false };
+    let params = GraphParams {
+        eps: 0.8,
+        k: 10,
+        topk: 3,
+        p: 2.0,
+        sigma: Some(0.1),
+        normalise: false,
+    };
 
     let start = std::time::Instant::now();
     let laplacian = build_laplacian_matrix(
-        DenseMatrix::<f64>::from_2d_vec(&large_items).unwrap().transpose(), &params, None);
+        DenseMatrix::<f64>::from_2d_vec(&large_items)
+            .unwrap()
+            .transpose(),
+        &params,
+        None,
+    );
     let duration = start.elapsed();
 
     assert_eq!(laplacian.nnodes, 15);
@@ -410,7 +453,7 @@ fn count_nonzero_adjacency(adjacency: &CsMat<f64>) -> usize {
     for i in 0..rows {
         for j in 0..cols {
             let a = adjacency.get(i, j).unwrap_or(&0.0);
-            if i != j && a.abs() > 1e-15 {
+            if i != j && a.abs() > 1e-12 {
                 count += 1;
             }
         }
@@ -438,9 +481,11 @@ fn test_arrowspace_integration_pattern_sparse() {
     };
 
     let laplacian = build_laplacian_matrix(
-        DenseMatrix::<f64>::from_2d_vec(&protein_like_data).unwrap().transpose(),
+        DenseMatrix::<f64>::from_2d_vec(&protein_like_data)
+            .unwrap()
+            .transpose(),
         &arrowspace_params,
-        None
+        None,
     );
 
     // Basic shape checks
@@ -471,7 +516,10 @@ fn test_arrowspace_integration_pattern_sparse() {
                     assert!(
                         (v - v_t).abs() < tol,
                         "Laplacian not symmetric at ({},{}) vs ({},{})",
-                        i, j, j, i
+                        i,
+                        j,
+                        j,
+                        i
                     );
                 }
             }
@@ -505,11 +553,20 @@ fn test_optimized_sparse_matrix_laplacian() {
         vec![0.0, 0.8, 0.2],
     ];
 
-    let params =
-        GraphParams { eps: 0.8, k: 2, topk: 1, p: 2.0, sigma: Some(0.1), normalise: false };
+    let params = GraphParams {
+        eps: 0.8,
+        k: 2,
+        topk: 1,
+        p: 2.0,
+        sigma: Some(0.1),
+        normalise: false,
+    };
 
     let laplacian = build_laplacian_matrix(
-        DenseMatrix::<f64>::from_2d_vec(&items).unwrap().transpose(), &params, None);
+        DenseMatrix::<f64>::from_2d_vec(&items).unwrap().transpose(),
+        &params,
+        None,
+    );
 
     // Verify structure
     assert_eq!(laplacian.nnodes, 4);
@@ -543,7 +600,14 @@ fn test_optimized_sparse_matrix_laplacian() {
         for (j, &l_ij) in row.iter() {
             let l_ji = laplacian.matrix.get(j, i).copied().unwrap_or(0.0);
             let diff = (l_ij - l_ji).abs();
-            assert!(diff < 1e-10, "Matrix should be symmetric at ({},{}): L_ij={:.2e}, L_ji={:.2e}", i, j, l_ij, l_ji);
+            assert!(
+                diff < 1e-10,
+                "Matrix should be symmetric at ({},{}): L_ij={:.2e}, L_ji={:.2e}",
+                i,
+                j,
+                l_ij,
+                l_ji
+            );
         }
     }
 
@@ -566,7 +630,9 @@ fn test_optimized_sparse_matrix_laplacian() {
                 assert!(
                     value <= 1e-10,
                     "Off-diagonal L[{},{}] should be non-positive, got {:.6}",
-                    i, j, value
+                    i,
+                    j,
+                    value
                 );
             }
         }
@@ -594,27 +660,40 @@ fn test_optimized_sparse_matrix_laplacian() {
     );
 
     println!("✓ Sparse matrix Laplacian test passed");
-    println!("  Matrix: {}×{} with {} non-zeros ({:.1}% sparse)", 
-             4, 4, laplacian.matrix.nnz(),
-             (1.0 - laplacian.matrix.nnz() as f64 / 16.0) * 100.0);
-    
+    println!(
+        "  Matrix: {}×{} with {} non-zeros ({:.1}% sparse)",
+        4,
+        4,
+        laplacian.matrix.nnz(),
+        (1.0 - laplacian.matrix.nnz() as f64 / 16.0) * 100.0
+    );
+
     debug!("Optimized Sparse Matrix Laplacian test passed");
 }
-
 
 #[test]
 fn test_with_adjacency_output() {
     let items = vec![vec![1.0, 0.0], vec![0.9, 0.1], vec![0.0, 1.0]];
 
-    let params =
-        GraphParams { eps: 0.5, k: 2, topk: 1, p: 1.0, sigma: Some(0.2), normalise: false };
+    let params = GraphParams {
+        eps: 0.5,
+        k: 2,
+        topk: 1,
+        p: 1.0,
+        sigma: Some(0.2),
+        normalise: false,
+    };
 
     let (laplacian, adjacency) = build_laplacian_matrix_with_adjacency(&items, &params);
 
     // Verify adjacency has zero diagonal
     for i in 0..3 {
         let diag_val = adjacency.get(i, i).copied().unwrap_or(0.0);
-        assert_eq!(diag_val, 0.0, "Adjacency diagonal [{},{}] should be zero", i, i);
+        assert_eq!(
+            diag_val, 0.0,
+            "Adjacency diagonal [{},{}] should be zero",
+            i, i
+        );
     }
 
     // Verify Laplacian = Degree - Adjacency
@@ -625,13 +704,16 @@ fn test_with_adjacency_output() {
         } else {
             0.0
         };
-        
+
         // Check diagonal entry of Laplacian equals degree
         let laplacian_diag = laplacian.matrix.get(i, i).copied().unwrap_or(0.0);
         assert!(
             (laplacian_diag - degree).abs() < 1e-10,
             "Laplacian diagonal L[{},{}]={:.6} should equal degree {:.6}",
-            i, i, laplacian_diag, degree
+            i,
+            i,
+            laplacian_diag,
+            degree
         );
 
         // Verify off-diagonal: L[i,j] = -A[i,j]
@@ -640,18 +722,23 @@ fn test_with_adjacency_output() {
                 let adjacency_val = adjacency.get(i, j).copied().unwrap_or(0.0);
                 let laplacian_val = laplacian.matrix.get(i, j).copied().unwrap_or(0.0);
                 let expected = -adjacency_val;
-                
+
                 assert!(
                     (laplacian_val - expected).abs() < 1e-10,
                     "Laplacian L[{},{}]={:.6} should equal -A[{},{}]={:.6}",
-                    i, j, laplacian_val, i, j, expected
+                    i,
+                    j,
+                    laplacian_val,
+                    i,
+                    j,
+                    expected
                 );
             }
         }
     }
 
     // Additional sparse matrix specific checks
-    
+
     // Verify both matrices have same sparsity structure for off-diagonals
     for (i, lapl_row) in laplacian.matrix.outer_iterator().enumerate() {
         for (j, &lapl_val) in lapl_row.iter() {
@@ -660,9 +747,13 @@ fn test_with_adjacency_output() {
                 if adj_val != 0.0 {
                     // If adjacency has an entry, Laplacian should have its negative
                     assert!(
-                        lapl_val.abs() > 1e-15,
+                        lapl_val.abs() > 1e-12,
                         "If A[{},{}]={:.6} != 0, then L[{},{}] should be non-zero",
-                        i, j, adj_val, i, j
+                        i,
+                        j,
+                        adj_val,
+                        i,
+                        j
                     );
                 }
             }
@@ -676,24 +767,37 @@ fn test_with_adjacency_output() {
             assert!(
                 (adj_val - adj_transpose).abs() < 1e-10,
                 "Adjacency should be symmetric: A[{},{}]={:.6} != A[{},{}]={:.6}",
-                i, j, adj_val, j, i, adj_transpose
+                i,
+                j,
+                adj_val,
+                j,
+                i,
+                adj_transpose
             );
         }
     }
 
     // Verify sparsity characteristics
-    println!("✓ Adjacency matrix: {}×{} with {} non-zeros", 
-             adjacency.shape().0, adjacency.shape().1, adjacency.nnz());
-    println!("✓ Laplacian matrix: {}×{} with {} non-zeros", 
-             laplacian.matrix.shape().0, laplacian.matrix.shape().1, laplacian.matrix.nnz());
-    
+    println!(
+        "✓ Adjacency matrix: {}×{} with {} non-zeros",
+        adjacency.shape().0,
+        adjacency.shape().1,
+        adjacency.nnz()
+    );
+    println!(
+        "✓ Laplacian matrix: {}×{} with {} non-zeros",
+        laplacian.matrix.shape().0,
+        laplacian.matrix.shape().1,
+        laplacian.matrix.nnz()
+    );
+
     // Laplacian should have at least as many entries as adjacency (due to diagonal)
     assert!(
         laplacian.matrix.nnz() >= adjacency.nnz(),
         "Laplacian ({} nnz) should have at least as many entries as adjacency ({} nnz)",
-        laplacian.matrix.nnz(), adjacency.nnz()
+        laplacian.matrix.nnz(),
+        adjacency.nnz()
     );
 
     debug!("Sparse Adjacency + Laplacian test passed");
 }
-

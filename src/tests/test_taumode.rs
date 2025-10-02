@@ -2,8 +2,8 @@ use crate::builder::ArrowSpaceBuilder;
 use crate::core::ArrowSpace;
 use crate::graph::{dense_to_sparse, GraphFactory, GraphParams};
 use crate::taumode::{TauMode, TAU_FLOOR};
-use crate::tests::GRAPH_PARAMS;
 use crate::tests::test_data::make_moons_hd;
+use crate::tests::GRAPH_PARAMS;
 
 use approx::relative_eq;
 use smartcore::linalg::basic::arrays::{Array, Array2};
@@ -18,9 +18,18 @@ fn test_select_tau_fixed() {
     assert_eq!(TauMode::select_tau(&energies, TauMode::Fixed(0.3)), 0.3);
 
     // Invalid fixed tau should return floor
-    assert_eq!(TauMode::select_tau(&energies, TauMode::Fixed(-0.1)), TAU_FLOOR);
-    assert_eq!(TauMode::select_tau(&energies, TauMode::Fixed(0.0)), TAU_FLOOR);
-    assert_eq!(TauMode::select_tau(&energies, TauMode::Fixed(f64::NAN)), TAU_FLOOR);
+    assert_eq!(
+        TauMode::select_tau(&energies, TauMode::Fixed(-0.1)),
+        TAU_FLOOR
+    );
+    assert_eq!(
+        TauMode::select_tau(&energies, TauMode::Fixed(0.0)),
+        TAU_FLOOR
+    );
+    assert_eq!(
+        TauMode::select_tau(&energies, TauMode::Fixed(f64::NAN)),
+        TAU_FLOOR
+    );
     assert_eq!(
         TauMode::select_tau(&energies, TauMode::Fixed(f64::INFINITY)),
         TAU_FLOOR
@@ -32,17 +41,13 @@ fn test_select_tau_mean() {
     // Normal case
     let energies = vec![1.0, 2.0, 3.0];
     let expected_mean = 2.0;
-    assert!(
-        (TauMode::select_tau(&energies, TauMode::Mean) - expected_mean).abs() < 1e-12
-    );
+    assert!((TauMode::select_tau(&energies, TauMode::Mean) - expected_mean).abs() < 1e-12);
 
     // With NaN/Inf values - should filter them out
     let energies_with_nan = vec![1.0, f64::NAN, 3.0, f64::INFINITY, 2.0];
     let expected_filtered_mean = 2.0; // (1.0 + 3.0 + 2.0) / 3
     assert!(
-        (TauMode::select_tau(&energies_with_nan, TauMode::Mean)
-            - expected_filtered_mean)
-            .abs()
+        (TauMode::select_tau(&energies_with_nan, TauMode::Mean) - expected_filtered_mean).abs()
             < 1e-12
     );
 
@@ -64,10 +69,7 @@ fn test_select_tau_median() {
     // Even number of elements
     let energies_even = vec![1.0, 2.0, 3.0, 4.0];
     let expected_median = 2.5; // (2.0 + 3.0) / 2
-    assert!(
-        (TauMode::select_tau(&energies_even, TauMode::Median) - expected_median).abs()
-            < 1e-12
-    );
+    assert!((TauMode::select_tau(&energies_even, TauMode::Median) - expected_median).abs() < 1e-12);
 
     // Single element
     let single = vec![5.0];
@@ -79,7 +81,10 @@ fn test_select_tau_median() {
 
     // All invalid should return floor
     let all_invalid = vec![f64::NAN, f64::INFINITY];
-    assert_eq!(TauMode::select_tau(&all_invalid, TauMode::Median), TAU_FLOOR);
+    assert_eq!(
+        TauMode::select_tau(&all_invalid, TauMode::Median),
+        TAU_FLOOR
+    );
 
     // Empty should return floor
     let empty: Vec<f64> = vec![];
@@ -91,28 +96,49 @@ fn test_select_tau_percentile() {
     let energies = vec![1.0, 2.0, 3.0, 4.0, 5.0];
 
     // 0th percentile (minimum)
-    assert_eq!(TauMode::select_tau(&energies, TauMode::Percentile(0.0)), 1.0);
+    assert_eq!(
+        TauMode::select_tau(&energies, TauMode::Percentile(0.0)),
+        1.0
+    );
 
     // 100th percentile (maximum)
-    assert_eq!(TauMode::select_tau(&energies, TauMode::Percentile(1.0)), 5.0);
+    assert_eq!(
+        TauMode::select_tau(&energies, TauMode::Percentile(1.0)),
+        5.0
+    );
 
     // 50th percentile (median)
-    assert_eq!(TauMode::select_tau(&energies, TauMode::Percentile(0.5)), 3.0);
+    assert_eq!(
+        TauMode::select_tau(&energies, TauMode::Percentile(0.5)),
+        3.0
+    );
 
     // Out of bounds percentiles should be clamped
-    assert_eq!(TauMode::select_tau(&energies, TauMode::Percentile(-0.1)), 1.0);
-    assert_eq!(TauMode::select_tau(&energies, TauMode::Percentile(1.5)), 5.0);
+    assert_eq!(
+        TauMode::select_tau(&energies, TauMode::Percentile(-0.1)),
+        1.0
+    );
+    assert_eq!(
+        TauMode::select_tau(&energies, TauMode::Percentile(1.5)),
+        5.0
+    );
 
     // Empty array should return floor
     let empty: Vec<f64> = vec![];
-    assert_eq!(TauMode::select_tau(&empty, TauMode::Percentile(0.5)), TAU_FLOOR);
+    assert_eq!(
+        TauMode::select_tau(&empty, TauMode::Percentile(0.5)),
+        TAU_FLOOR
+    );
 }
 
 #[test]
 fn test_select_tau_floor_enforcement() {
     // Very small positive values should be preserved if above floor
     let small_positive = vec![TAU_FLOOR * 2.0];
-    assert_eq!(TauMode::select_tau(&small_positive, TauMode::Mean), TAU_FLOOR * 2.0);
+    assert_eq!(
+        TauMode::select_tau(&small_positive, TauMode::Mean),
+        TAU_FLOOR * 2.0
+    );
 
     // Values below floor should be raised to floor
     let below_floor = vec![TAU_FLOOR / 2.0];
@@ -128,12 +154,10 @@ fn test_compute_synthetic_lambdas_basic() {
     // Create a realistic high-dimensional ArrowSpace with meaningful feature patterns
     let items = vec![
         vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
+            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
         ],
     ];
 
@@ -169,16 +193,13 @@ fn test_compute_synthetic_lambdas_basic() {
 fn test_compute_synthetic_lambdas_different_alpha() {
     let items = vec![
         vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
+            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
         ],
         vec![
-            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38,
-            0.60,
+            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38, 0.60,
         ],
     ];
 
@@ -195,19 +216,19 @@ fn test_compute_synthetic_lambdas_different_alpha() {
     // Test with alpha = 1.0 (pure energy term)
     let aspace1 = ArrowSpace::from_items_default(items.clone());
     let mut aspace1 = GraphFactory::build_spectral_laplacian(aspace1, &gl);
-    TauMode::compute_taumode_lambdas(&mut aspace1, &gl,TauMode::Fixed(0.9));
+    TauMode::compute_taumode_lambdas(&mut aspace1, &gl, TauMode::Fixed(0.9));
     let lambdas1 = aspace1.lambdas().to_vec();
 
     // Test with alpha = 0.0 (pure dispersion term)
     let aspace2 = ArrowSpace::from_items_default(items.clone());
     let mut aspace2 = GraphFactory::build_spectral_laplacian(aspace2, &gl);
-    TauMode::compute_taumode_lambdas(&mut aspace2, &gl,TauMode::Fixed(0.9));
+    TauMode::compute_taumode_lambdas(&mut aspace2, &gl, TauMode::Fixed(0.9));
     let lambdas2 = aspace2.lambdas().to_vec();
 
     // Test with alpha = 0.5 (balanced)
     let aspace3 = ArrowSpace::from_items_default(items);
     let mut aspace3 = GraphFactory::build_spectral_laplacian(aspace3, &gl);
-    TauMode::compute_taumode_lambdas(&mut aspace3, &gl,TauMode::Fixed(0.9));
+    TauMode::compute_taumode_lambdas(&mut aspace3, &gl, TauMode::Fixed(0.9));
     let lambdas3 = aspace3.lambdas().to_vec();
 
     // All should be different (unless edge case)
@@ -216,7 +237,9 @@ fn test_compute_synthetic_lambdas_different_alpha() {
 
     // All should be finite and bounded
     for lambdas in [&lambdas1, &lambdas2, &lambdas3] {
-        assert!(lambdas.iter().all(|&l| l.is_finite() && (0.0..=1.0).contains(&l)));
+        assert!(lambdas
+            .iter()
+            .all(|&l| l.is_finite() && (0.0..=1.0).contains(&l)));
     }
 }
 
@@ -230,18 +253,22 @@ fn test_compute_synthetic_lambdas_zero_vectors() {
     let gl = GraphFactory::build_laplacian_matrix(items, 1e-3, 2, 2, 2.0, None, true);
     let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
 
-    TauMode::compute_taumode_lambdas(&mut aspace, &gl,TauMode::Median);
+    TauMode::compute_taumode_lambdas(&mut aspace, &gl, TauMode::Median);
 }
 
 #[test]
 fn test_compute_synthetic_lambdas_different_tau_modes() {
     let dims = 10;
-    
-    let items: Vec<Vec<f64>> = make_moons_hd(300, 0.12, 0.01, dims,42);
+
+    let items: Vec<Vec<f64>> = make_moons_hd(300, 0.12, 0.01, dims, 42);
 
     let gl = GraphFactory::build_laplacian_matrix(
         items.clone(),
-    1e-3, 5, GRAPH_PARAMS.topk, GRAPH_PARAMS.p, Some(1e-3 * 0.50),
+        1e-3,
+        5,
+        GRAPH_PARAMS.topk,
+        GRAPH_PARAMS.p,
+        Some(1e-3 * 0.50),
         GRAPH_PARAMS.normalise,
     );
 
@@ -257,14 +284,15 @@ fn test_compute_synthetic_lambdas_different_tau_modes() {
 
     for tau_mode in tau_modes {
         let aspace = ArrowSpace::from_items_default(items.clone());
-        let mut aspace =
-            GraphFactory::build_spectral_laplacian(aspace, &gl);
-        TauMode::compute_taumode_lambdas(&mut aspace, &gl,tau_mode);
+        let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
+        TauMode::compute_taumode_lambdas(&mut aspace, &gl, tau_mode);
 
         let lambdas = aspace.lambdas().to_vec();
 
         // All modes should produce valid results
-        assert!(lambdas.iter().all(|&l| l.is_finite() && (0.0..=1.0).contains(&l)));
+        assert!(lambdas
+            .iter()
+            .all(|&l| l.is_finite() && (0.0..=1.0).contains(&l)));
         assert_eq!(lambdas.len(), 300); // One lambda per item
 
         all_lambdas.push(lambdas);
@@ -305,8 +333,7 @@ fn test_compute_synthetic_lambdas_different_tau_modes() {
 
     // Percentile(0.25) should generally produce lower values than Mean
     // since it uses the 25th percentile as threshold
-    let percentile_mean =
-        percentile_lambdas.iter().sum::<f64>() / percentile_lambdas.len() as f64;
+    let percentile_mean = percentile_lambdas.iter().sum::<f64>() / percentile_lambdas.len() as f64;
 
     // Statistical properties: different modes should have different central tendencies
     debug!("Lambda means by mode:");
@@ -323,8 +350,7 @@ fn test_compute_synthetic_lambdas_different_tau_modes() {
         .iter()
         .map(|lambdas| {
             let mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
-            lambdas.iter().map(|&x| (x - mean).powi(2)).sum::<f64>()
-                / lambdas.len() as f64
+            lambdas.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / lambdas.len() as f64
         })
         .collect();
 
@@ -345,13 +371,12 @@ fn test_compute_synthetic_lambdas_graph_mismatch_panics() {
 
     // Create a graph with wrong number of features
     let wrong_items = vec![vec![1.0], vec![2.0], vec![3.0]]; // 3 items instead of 2
-    let wrong_gl =
-        GraphFactory::build_laplacian_matrix(wrong_items, 1e-3, 2, 2, 2.0, None, true);
+    let wrong_gl = GraphFactory::build_laplacian_matrix(wrong_items, 1e-3, 2, 2, 2.0, None, true);
 
     let aspace = GraphFactory::build_spectral_laplacian(aspace, &wrong_gl);
 
     // This should panic due to node count mismatch
-    TauMode::compute_taumode_lambdas(&mut aspace.clone(), &wrong_gl,TauMode::Median);
+    TauMode::compute_taumode_lambdas(&mut aspace.clone(), &wrong_gl, TauMode::Median);
 }
 
 #[test]
@@ -367,16 +392,13 @@ fn test_synthetic_lambda_properties() {
     // Test that synthetic lambdas satisfy expected mathematical properties
     let items = vec![
         vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
+            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
         ],
         vec![
-            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38,
-            0.60,
+            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38, 0.60,
         ],
     ];
 
@@ -401,15 +423,20 @@ fn test_synthetic_lambda_properties() {
     // 2. Lambdas are deterministic (same input -> same output)
     let (aspace2, _) = ArrowSpaceBuilder::new()
         .with_lambda_graph(
-        GRAPH_PARAMS.eps,
-        GRAPH_PARAMS.k,
-        GRAPH_PARAMS.topk,
-        GRAPH_PARAMS.p,
-        GRAPH_PARAMS.sigma,
+            GRAPH_PARAMS.eps,
+            GRAPH_PARAMS.k,
+            GRAPH_PARAMS.topk,
+            GRAPH_PARAMS.p,
+            GRAPH_PARAMS.sigma,
         )
         .build(items.clone());
 
-    for (i, (l1, l2)) in aspace.lambdas.iter().zip(aspace2.lambdas.iter()).enumerate() {
+    for (i, (l1, l2)) in aspace
+        .lambdas
+        .iter()
+        .zip(aspace2.lambdas.iter())
+        .enumerate()
+    {
         assert!(
             relative_eq!(*l1, *l2, epsilon = 1e-12),
             "Synthetic lambdas should be deterministic at feature {}: {} != {}",
@@ -426,9 +453,12 @@ fn test_synthetic_lambda_properties() {
 
     // 4. Statistical properties for high-dimensional data
     let lambda_mean = aspace.lambdas.iter().sum::<f64>() / aspace.lambdas.len() as f64;
-    let lambda_variance =
-        aspace.lambdas.iter().map(|&x| (x - lambda_mean).powi(2)).sum::<f64>()
-            / aspace.lambdas.len() as f64;
+    let lambda_variance = aspace
+        .lambdas
+        .iter()
+        .map(|&x| (x - lambda_mean).powi(2))
+        .sum::<f64>()
+        / aspace.lambdas.len() as f64;
     let lambda_min = aspace.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
     let lambda_max: f64 = aspace.lambdas.iter().fold(0.0, |a, &b| a.max(b));
 
@@ -444,7 +474,10 @@ fn test_synthetic_lambda_properties() {
         lambda_variance > 0.0,
         "Lambda variance should be positive, indicating feature discrimination"
     );
-    assert!(lambda_max > lambda_min, "Should have variation across features");
+    assert!(
+        lambda_max > lambda_min,
+        "Should have variation across features"
+    );
     debug!("✓ Non-degenerate feature discrimination confirmed");
 
     // 6. Median mode specific property: values should be influenced by median threshold
@@ -466,7 +499,10 @@ fn test_synthetic_lambda_properties() {
         .zip(aspace3.lambdas.iter())
         .any(|(&median, &mean)| (median - mean).abs() > 1e-10);
 
-    assert!(modes_differ, "Median and Mean tau modes should produce different results");
+    assert!(
+        modes_differ,
+        "Median and Mean tau modes should produce different results"
+    );
     debug!("✓ Tau mode sensitivity verified");
 
     // 7. Consistency with spectral properties
@@ -493,10 +529,15 @@ fn test_rayleigh_quotient_basic() {
 
     // Test with alternating vector (should give larger eigenvalue)
     let alternating_vector = vec![1.0, -1.0, 1.0];
-    let alt_quotient =
-        TauMode::compute_rayleigh_quotient_from_matrix(&dense_to_sparse(&matrix), &alternating_vector);
+    let alt_quotient = TauMode::compute_rayleigh_quotient_from_matrix(
+        &dense_to_sparse(&matrix),
+        &alternating_vector,
+    );
 
-    assert!(alt_quotient > quotient, "Alternating vector should have higher energy");
+    assert!(
+        alt_quotient > quotient,
+        "Alternating vector should have higher energy"
+    );
     assert!(alt_quotient > 0.0, "Should be positive for this matrix");
 
     assert!(
@@ -517,7 +558,8 @@ fn test_scale_invariance() {
     let vector = vec![1.0, 2.0];
     let scaled_vector = vec![2.0, 4.0]; // 2x scaled
 
-    let quotient1 = TauMode::compute_rayleigh_quotient_from_matrix(&dense_to_sparse(&matrix), &vector);
+    let quotient1 =
+        TauMode::compute_rayleigh_quotient_from_matrix(&dense_to_sparse(&matrix), &vector);
     let quotient2 =
         TauMode::compute_rayleigh_quotient_from_matrix(&dense_to_sparse(&matrix), &scaled_vector);
 
@@ -546,7 +588,12 @@ fn test_batch_computation() {
     let matrix_data = vec![2.0, -1.0, -1.0, 2.0];
     let matrix = DenseMatrix::from_iterator(matrix_data.into_iter(), 2, 2, 0);
 
-    let vectors = vec![vec![1.0, 0.0], vec![0.0, 1.0], vec![1.0, 1.0], vec![1.0, -1.0]];
+    let vectors = vec![
+        vec![1.0, 0.0],
+        vec![0.0, 1.0],
+        vec![1.0, 1.0],
+        vec![1.0, -1.0],
+    ];
 
     let quotients = TauMode::compute_rayleigh_quotients_batch(&dense_to_sparse(&matrix), &vectors);
 
@@ -561,14 +608,18 @@ fn test_batch_computation() {
 #[test]
 fn test_lambda_verification_quora_embeddings() {
     let dims = 10;
-    
-    let items: Vec<Vec<f64>> = make_moons_hd(300, 0.12, 0.01, dims,42);
+
+    let items: Vec<Vec<f64>> = make_moons_hd(300, 0.12, 0.01, dims, 42);
 
     let aspace = ArrowSpace::from_items_default(items.clone());
 
     // Graph parameters as specified
     let graph_params = GraphParams {
-        eps: 1e-3, k: 5, topk: GRAPH_PARAMS.topk, p: GRAPH_PARAMS.p, sigma: Some(1e-3 * 0.50),
+        eps: 1e-3,
+        k: 5,
+        topk: GRAPH_PARAMS.topk,
+        p: GRAPH_PARAMS.p,
+        sigma: Some(1e-3 * 0.50),
         normalise: true,
     };
 
@@ -603,20 +654,35 @@ fn test_lambda_verification_quora_embeddings() {
 
     debug!("\n=== LAMBDA COMPUTATION RESULTS ===");
     debug!("Number of lambdas: {}", lambdas.len());
-    debug!("Lambda values (first 10): {:?}", &lambdas[..10.min(lambdas.len())]);
+    debug!(
+        "Lambda values (first 10): {:?}",
+        &lambdas[..10.min(lambdas.len())]
+    );
 
     // Basic validation
-    assert_eq!(lambdas.len(), 300, "Should have one lambda per item dimension");
-    assert!(lambdas.iter().all(|&l| l.is_finite()), "All lambdas should be finite");
-    assert!(lambdas.iter().all(|&l| l >= 0.0), "All lambdas should be non-negative");
+    assert_eq!(
+        lambdas.len(),
+        300,
+        "Should have one lambda per item dimension"
+    );
+    assert!(
+        lambdas.iter().all(|&l| l.is_finite()),
+        "All lambdas should be finite"
+    );
+    assert!(
+        lambdas.iter().all(|&l| l >= 0.0),
+        "All lambdas should be non-negative"
+    );
 
     // Statistical analysis
     let lambda_min = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
     let lambda_max: f64 = lambdas.iter().fold(0.0, |a, &b| a.max(b));
     let lambda_mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
-    let lambda_variance =
-        lambdas.iter().map(|&x| (x - lambda_mean).powi(2)).sum::<f64>()
-            / lambdas.len() as f64;
+    let lambda_variance = lambdas
+        .iter()
+        .map(|&x| (x - lambda_mean).powi(2))
+        .sum::<f64>()
+        / lambdas.len() as f64;
 
     debug!("\n=== LAMBDA STATISTICS ===");
     debug!("Min lambda: {:.6}", lambda_min);

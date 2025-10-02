@@ -142,7 +142,12 @@ impl ArrowItem {
     #[inline]
     pub fn dot(&self, other: &ArrowItem) -> f64 {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
-        let result = self.item.iter().zip(other.item.iter()).map(|(a, b)| a * b).sum();
+        let result = self
+            .item
+            .iter()
+            .zip(other.item.iter())
+            .map(|(a, b)| a * b)
+            .sum();
         trace!("Computed dot product: {:.6}", result);
         result
     }
@@ -233,9 +238,10 @@ impl ArrowItem {
             other.item.len(),
             "items should be of the same length"
         );
+        let beta = 1.0 - alpha;
         let semantic_sim = self.cosine_similarity(other);
         let lambda_sim = 1.0 / (1.0 + (self.lambda - other.lambda).abs());
-        let result = alpha * semantic_sim + (1.0 - alpha) * lambda_sim;
+        let result = alpha * semantic_sim + beta * lambda_sim;
         trace!(
             "Lambda similarity: semantic={:.6}, lambda={:.6}, combined={:.6}",
             semantic_sim,
@@ -254,7 +260,10 @@ impl ArrowItem {
     pub fn add_inplace(&mut self, other: &ArrowItem) {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
         trace!("Adding vectors in-place");
-        self.item.iter_mut().zip(other.item.iter()).for_each(|(a, b)| *a += *b);
+        self.item
+            .iter_mut()
+            .zip(other.item.iter())
+            .for_each(|(a, b)| *a += *b);
     }
 
     /// Multiplies element-wise in-place by another row.
@@ -266,7 +275,10 @@ impl ArrowItem {
     pub fn mul_inplace(&mut self, other: &ArrowItem) {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
         trace!("Multiplying vectors element-wise in-place");
-        self.item.iter_mut().zip(other.item.iter()).for_each(|(a, b)| *a *= *b);
+        self.item
+            .iter_mut()
+            .zip(other.item.iter())
+            .for_each(|(a, b)| *a *= *b);
     }
 
     /// Scales all elements by a scalar in place.
@@ -311,10 +323,10 @@ impl ArrowItem {
 pub struct ArrowSpace {
     pub nfeatures: usize,
     pub nitems: usize,
-    pub data: DenseMatrix<f64>,   // NxF raw data
-    pub signals: CsMat<f64>,      // Laplacian(Transpose(NxF))
-    pub lambdas: Vec<f64>,        // N lambdas (every lambda is a lambda for an item-row)
-    pub taumode: TauMode,         // tau_mode as in select_tau_mode
+    pub data: DenseMatrix<f64>, // NxF raw data
+    pub signals: CsMat<f64>,    // Laplacian(Transpose(NxF))
+    pub lambdas: Vec<f64>,      // N lambdas (every lambda is a lambda for an item-row)
+    pub taumode: TauMode,       // tau_mode as in select_tau_mode
 }
 
 pub const TAUDEFAULT: TauMode = TauMode::Median;
@@ -339,7 +351,10 @@ impl ArrowSpace {
     /// Only to be used in tests. `ArrowSpaceBuilder`
     pub fn new(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
-        assert!(items.len() > 1, "cannot create a arrowspace of one arrow only");
+        assert!(
+            items.len() > 1,
+            "cannot create a arrowspace of one arrow only"
+        );
         let n_items = items.len(); // Number of items (columns in final layout)
         let n_features = items[0].len(); // Number of features (rows in final layout)
         Self {
@@ -347,8 +362,8 @@ impl ArrowSpace {
             nitems: n_items,
             data: DenseMatrix::from_2d_vec(&items).unwrap(),
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
-            lambdas: vec![0.0; n_items], // will be computed later
-            taumode: taumode,
+            lambdas: vec![0.0; n_items],        // will be computed later
+            taumode,
         }
     }
     /// Builds from a vector of equally-sized rows and per-row lambdas.
@@ -372,7 +387,10 @@ impl ArrowSpace {
     #[cfg(test)]
     pub fn from_items_default(items: Vec<Vec<f64>>) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
-        assert!(items.len() > 1, "cannot create a arrowspace of one arrow only");
+        assert!(
+            items.len() > 1,
+            "cannot create a arrowspace of one arrow only"
+        );
         let n_items = items.len(); // Number of items (columns in final layout)
         let n_features = items[0].len(); // Number of features (rows in final layout)
 
@@ -396,24 +414,17 @@ impl ArrowSpace {
             nitems: n_items,
             data: data_matrix,
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
-            lambdas: vec![0.0; n_items], // will be computed later
+            lambdas: vec![0.0; n_items],        // will be computed later
             taumode: TAUDEFAULT,
-
         }
     }
 
     /// Returns a Vec<Vec<...>> from data for external usage
     #[inline]
     pub fn data_to_vec(&self) -> Vec<Vec<f64>> {
-        let vv = (0..self.data.shape().0)
-            .map(|row_idx| {
-                self.data.get_row(row_idx)
-                    .iterator(0)
-                    .copied()
-                    .collect()
-            })
-            .collect();
-        vv
+        (0..self.data.shape().0)
+            .map(|row_idx| self.data.get_row(row_idx).iterator(0).copied().collect())
+            .collect()
     }
 
     /// Before searching a lambda-tau value has to be computed for the query
@@ -423,8 +434,8 @@ impl ArrowSpace {
             item.iter().all(|&x| x.is_finite()),
             "Query item contains invalid values (NaN or infinity). All values must be finite."
         );
-        let tau = TauMode::select_tau(&item, self.taumode);
-        TauMode::compute_item_vector_synthetic_lambda(&item, &gl.matrix, tau)
+        let tau = TauMode::select_tau(item, self.taumode);
+        TauMode::compute_item_vector_synthetic_lambda(item, &gl.matrix, tau)
     }
 
     /// Returns a shared reference to all lambdas.
@@ -438,7 +449,9 @@ impl ArrowSpace {
     pub fn get_feature(&self, i: usize) -> ArrowFeature {
         assert!(i < self.nfeatures, "feature index out of bounds");
         trace!("Extracting feature {} from ArrowSpace", i);
-        ArrowFeature { feature: self.data.get_col(i).iterator(0).copied().collect() }
+        ArrowFeature {
+            feature: self.data.get_col(i).iterator(0).copied().collect(),
+        }
     }
 
     /// Modify feature column in-place
@@ -582,7 +595,7 @@ impl ArrowSpace {
     pub fn recompute_lambdas(&mut self, gl: &GraphLaplacian) {
         debug!("Recomputing lambdas with tau mode: {:?}", self.taumode);
         // Use the existing synthetic lambda computation
-        TauMode::compute_taumode_lambdas(self, gl,self.taumode);
+        TauMode::compute_taumode_lambdas(self, gl, self.taumode);
 
         let lambda_stats = {
             let min = self.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
@@ -619,10 +632,14 @@ impl ArrowSpace {
         &self,
         query: &ArrowItem,
         k: usize,
-        alpha : f64,
+        alpha: f64,
     ) -> Vec<(usize, f64)> {
         info!("Lambda-aware search: k={}", k);
-        debug!("Query vector dimension: {}, lambda: {:.6}", query.len(), query.lambda);
+        debug!(
+            "Query vector dimension: {}, lambda: {:.6}",
+            query.len(),
+            query.lambda
+        );
 
         let mut results: Vec<_> = (0..self.nitems)
             .map(|i| {
@@ -636,7 +653,11 @@ impl ArrowSpace {
 
         debug!("Search completed, returning {} results", results.len());
         if !results.is_empty() {
-            trace!("Top result: index={}, score={:.6}", results[0].0, results[0].1);
+            trace!(
+                "Top result: index={}, score={:.6}",
+                results[0].0,
+                results[0].1
+            );
         }
 
         results
@@ -672,7 +693,10 @@ impl ArrowSpace {
             })
             .collect();
 
-        debug!("Range search completed, found {} items within radius", results.len());
+        debug!(
+            "Range search completed, found {} items within radius",
+            results.len()
+        );
         results
     }
 

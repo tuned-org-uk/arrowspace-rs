@@ -147,7 +147,7 @@ In the lambda-aware similarity score: **s = α·cosine + β·(1/(1+|λ_q-λ_i|))
 The code includes several safeguards:
 
 ```rust
-pub const TAU_FLOOR: f64 = 1e-9;
+pub const TAU_FLOOR: f64 = 1e-11;
 
 // Filters out NaN/Inf values and enforces minimum
 let filtered_energies: Vec<f64> = energies

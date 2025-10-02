@@ -78,7 +78,7 @@ pub enum TauMode {
     Percentile(f64),
 }
 
-pub const TAU_FLOOR: f64 = 1e-9;
+pub const TAU_FLOOR: f64 = 1e-10;
 
 impl TauMode {
     pub fn select_tau(energies: &[f64], mode: TauMode) -> f64 {
@@ -103,8 +103,7 @@ impl TauMode {
                 m.max(TAU_FLOOR)
             }
             TauMode::Median | TauMode::Percentile(_) => {
-                let mut v: Vec<f64> =
-                    energies.iter().copied().filter(|x| x.is_finite()).collect();
+                let mut v: Vec<f64> = energies.iter().copied().filter(|x| x.is_finite()).collect();
                 if v.is_empty() {
                     return TAU_FLOOR;
                 }
@@ -167,7 +166,7 @@ impl TauMode {
                     &item.item,
                     match aspace.signals.shape() {
                         (0, 0) => &gl.matrix,
-                        _ => &aspace.signals
+                        _ => &aspace.signals,
                     },
                     tau,
                 )
@@ -184,7 +183,7 @@ impl TauMode {
     /// * graph.matrix: standard L(FxN) in `GraphLaplacian`
     pub fn compute_item_vector_synthetic_lambda(
         item_vector: &[f64], // F-dimensional external query vector
-        graph: &CsMat<f64>, // Existing ArrowSpace with computed spectrum
+        graph: &CsMat<f64>,  // Existing ArrowSpace with computed spectrum
         tau: f64,
     ) -> f64 {
         assert_eq!(
@@ -195,7 +194,10 @@ impl TauMode {
             graph.shape().0,
         );
 
-        if item_vector.iter().all(|&v| approx::relative_eq!(v, 0.0, epsilon = 1e-9)) {
+        if item_vector
+            .iter()
+            .all(|&v| approx::relative_eq!(v, 0.0, epsilon = 1e-10))
+        {
             panic!(r#"This vector {:?} is a constant zero vector"#, item_vector)
         }
 
@@ -206,8 +208,7 @@ impl TauMode {
         }
 
         // Step 1: Compute Rayleigh energy E_q = query^T * spectrum * query / (query^T * query)
-        let e_raw =
-            Self::compute_rayleigh_quotient_from_matrix(graph, item_vector);
+        let e_raw = Self::compute_rayleigh_quotient_from_matrix(graph, item_vector);
 
         // Step 2: Compute dispersion G_q using edge-wise energy distribution
         let g_raw = Self::compute_item_dispersion(item_vector, graph);
@@ -229,10 +230,7 @@ impl TauMode {
     }
 
     /// Compute dispersion G_q for the query vector using edge-wise energy distribution
-    fn compute_item_dispersion(
-        item_vector: &[f64],
-        spectrum: &CsMat<f64>,
-    ) -> f64 {
+    fn compute_item_dispersion(item_vector: &[f64], spectrum: &CsMat<f64>) -> f64 {
         let n_features = item_vector.len();
 
         // Compute total edge energy: sum over all edges w_ij * (x_i - x_j)^2
@@ -243,7 +241,7 @@ impl TauMode {
                 if i != j {
                     let lij = match spectrum.get(i, j) {
                         Some(v) => *v,
-                        _ => 0.0
+                        _ => 0.0,
                     };
                     // For Laplacian, off-diagonal entries are -w_ij, so w_ij = -lij
                     let w = (-lij).max(0.0);
@@ -264,7 +262,7 @@ impl TauMode {
                     if i != j {
                         let lij = match spectrum.get(i, j) {
                             Some(v) => *v,
-                            _ => 0.0
+                            _ => 0.0,
                         };
                         let w = (-lij).max(0.0);
                         if w > 0.0 {
@@ -301,10 +299,7 @@ impl TauMode {
     ///
     /// # Panics
     /// Panics if vector length doesn't match matrix dimensions
-    pub fn compute_rayleigh_quotient_from_matrix(
-        matrix: &CsMat<f64>,
-        vector: &[f64],
-    ) -> f64 {
+    pub fn compute_rayleigh_quotient_from_matrix(matrix: &CsMat<f64>, vector: &[f64]) -> f64 {
         let n = matrix.shape().0;
         assert_eq!(
             vector.len(),
@@ -334,7 +329,7 @@ impl TauMode {
         let denominator: f64 = vector.iter().map(|&x| x * x).sum();
 
         // Return quotient or 0 for zero vector
-        if denominator > 1e-15 {
+        if denominator > 1e-12 {
             numerator / denominator
         } else {
             0.0 // Return 0 for zero vector (convention)
@@ -342,10 +337,7 @@ impl TauMode {
     }
 
     /// Batch computation for multiple vectors (efficient for multiple queries)
-    pub fn compute_rayleigh_quotients_batch(
-        matrix: &CsMat<f64>,
-        vectors: &[Vec<f64>],
-    ) -> Vec<f64> {
+    pub fn compute_rayleigh_quotients_batch(matrix: &CsMat<f64>, vectors: &[Vec<f64>]) -> Vec<f64> {
         vectors
             .iter()
             .map(|v| Self::compute_rayleigh_quotient_from_matrix(matrix, v))

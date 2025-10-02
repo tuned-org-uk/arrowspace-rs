@@ -32,15 +32,15 @@
 use crate::graph::{GraphLaplacian, GraphParams};
 
 use smartcore::algorithm::neighbour::cosinepair::CosinePair;
+use smartcore::api::{Transformer, UnsupervisedEstimator};
 use smartcore::linalg::basic::arrays::{Array, Array2};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 use smartcore::preprocessing::numerical::{StandardScaler, StandardScalerParameters};
-use smartcore::api::{UnsupervisedEstimator, Transformer};
 
+use log::{debug, info, trace};
+use rayon::prelude::*;
 use sprs::{CsMat, TriMat};
 use std::collections::BTreeMap;
-use rayon::prelude::*;
-use log::{debug, info, trace};
 
 /// Builds a graph Laplacian matrix from a collection of high-dimensional vectors
 ///
@@ -119,15 +119,23 @@ use log::{debug, info, trace};
 /// * **Memory usage**: Stores sparse n×n matrix using CSR format
 /// * **Preprocessing**: Optional normalisation and norm precomputation minimise repeated calculations
 pub fn build_laplacian_matrix(
-    transposed: DenseMatrix<f64>,       // matrix to compute the Laplacian
-    params: &GraphParams,          // requested params from the graph
+    transposed: DenseMatrix<f64>, // matrix to compute the Laplacian
+    params: &GraphParams,         // requested params from the graph
     // n_items of the original dataset (in case to need the computation of L(FxN))
     n_items: Option<usize>,
 ) -> GraphLaplacian {
     let (d, n) = transposed.shape();
-    assert!(n >= 2 && d >= 2, "items should be at least of shape (2,2): ({},{})", d, n);
+    assert!(
+        n >= 2 && d >= 2,
+        "items should be at least of shape (2,2): ({},{})",
+        d,
+        n
+    );
 
-    info!("Building Laplacian matrix for {} items with {} features", n, d);
+    info!(
+        "Building Laplacian matrix for {} items with {} features",
+        n, d
+    );
     debug!(
         "Graph parameters: eps={}, k={}, p={}, sigma={:?}, normalise={}",
         params.eps, params.k, params.p, params.sigma, params.normalise
@@ -148,17 +156,21 @@ pub fn build_laplacian_matrix(
     let triplets = _main_laplacian(&mut items, params);
 
     let sparse_matrix: CsMat<f64> = triplets.to_csr();
-    let graph_laplacian = GraphLaplacian { 
-        matrix: sparse_matrix, 
+    let graph_laplacian = GraphLaplacian {
+        matrix: sparse_matrix,
         nnodes: match n_items {
             Some(n_items) => n_items,
-            None => n
+            None => n,
         },
-        graph_params: params.clone() 
+        graph_params: params.clone(),
     };
 
-    info!("Successfully built sparse Laplacian matrix ({}x{}) with {} non-zeros", 
-          n, n, graph_laplacian.matrix.nnz());
+    info!(
+        "Successfully built sparse Laplacian matrix ({}x{}) with {} non-zeros",
+        n,
+        n,
+        graph_laplacian.matrix.nnz()
+    );
     graph_laplacian
 }
 
@@ -166,7 +178,7 @@ pub fn build_laplacian_matrix(
 /// Provide the main steps of computation for Laplacian(items)
 fn _main_laplacian(
     items: &mut DenseMatrix<f64>,
-    params: &GraphParams
+    params: &GraphParams,
 ) -> sprs::TriMatBase<Vec<usize>, Vec<f64>> {
     let n = items.shape().0;
 
@@ -181,16 +193,14 @@ fn _main_laplacian(
     let adj_rows: Vec<Vec<(usize, f64)>> = (0..n)
         .into_par_iter()
         .map(|i| {
-            let item: Vec<f64> =  items.get_row(i).iterator(0).copied().collect();
+            let item: Vec<f64> = items.get_row(i).iterator(0).copied().collect();
             let neighbors = &fastpair.query(&item, params.topk + 1).unwrap();
             neighbors
                 .iter()
                 .filter_map(|(distance, j)| {
                     if i != *j && *distance <= params.eps {
-                        let weight = 1.0
-                            / (1.0
-                                + (distance / params.sigma.unwrap_or(1.0))
-                                    .powf(params.p));
+                        let weight =
+                            1.0 / (1.0 + (distance / params.sigma.unwrap_or(1.0)).powf(params.p));
                         if weight > 1e-12 {
                             Some((*j, weight))
                         } else {
@@ -215,12 +225,15 @@ fn _main_laplacian(
         .enumerate()
         .flat_map(|(i, row)| {
             // Convert to owned data for parallel processing
-            row.par_iter().map(move |&(j, w)| (i, j, w)).collect::<Vec<_>>()
+            row.par_iter()
+                .map(move |&(j, w)| (i, j, w))
+                .collect::<Vec<_>>()
         })
         .collect();
 
     // Sequential symmetrization to avoid race conditions
-    let mut edge_map: std::collections::HashMap<(usize, usize), f64> = std::collections::HashMap::new();
+    let mut edge_map: std::collections::HashMap<(usize, usize), f64> =
+        std::collections::HashMap::new();
 
     // Add all edges in both directions
     for (i, j, w) in all_edges {
@@ -233,7 +246,8 @@ fn _main_laplacian(
     // Convert back to adjacency lists
     let mut sym: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
     for ((i, j), w) in edge_map {
-        if i != j { // Skip diagonal entries for now
+        if i != j {
+            // Skip diagonal entries for now
             sym[i].push((j, w));
         }
     }
@@ -242,7 +256,6 @@ fn _main_laplacian(
     sym.par_iter_mut().for_each(|row| {
         row.sort_unstable_by_key(|&(j, _)| j);
     });
-
 
     // Step 5: Build sparse Laplacian matrix L = D - A using triplet format
     info!("Converting adjacency to sparse Laplacian matrix");
@@ -279,7 +292,10 @@ pub fn build_laplacian_matrix_with_adjacency(
         panic!("Matrix too small")
     }
 
-    info!("Building Laplacian with adjacency matrix output for {} items", n_items);
+    info!(
+        "Building Laplacian with adjacency matrix output for {} items",
+        n_items
+    );
 
     let adjacency_matrix = build_adjacency_matrix(items, params);
 
@@ -287,7 +303,12 @@ pub fn build_laplacian_matrix_with_adjacency(
     let mut laplacian_triplets = TriMat::new((n_items, n_items));
 
     for i in 0..n_items {
-        let degree: f64 = adjacency_matrix.outer_view(i).unwrap().iter().map(|(_, &w)| w).sum();
+        let degree: f64 = adjacency_matrix
+            .outer_view(i)
+            .unwrap()
+            .iter()
+            .map(|(_, &w)| w)
+            .sum();
         laplacian_triplets.add_triplet(i, i, degree);
 
         for (j, &weight) in adjacency_matrix.outer_view(i).unwrap().iter() {
@@ -309,10 +330,7 @@ pub fn build_laplacian_matrix_with_adjacency(
 }
 
 /// Helper function to build just the adjacency matrix
-fn build_adjacency_matrix(
-    items: &[Vec<f64>],
-    params: &GraphParams,
-) -> CsMat<f64> {
+fn build_adjacency_matrix(items: &[Vec<f64>], params: &GraphParams) -> CsMat<f64> {
     let n_items = items.len();
     debug!("Building adjacency matrix for {} items", n_items);
 
@@ -334,9 +352,12 @@ fn build_adjacency_matrix(
             }
 
             let denom = norms[i] * norms[j];
-            let cosine_sim = if denom > 1e-15 {
-                let dot: f64 =
-                    items[i].iter().zip(items[j].iter()).map(|(a, b)| a * b).sum();
+            let cosine_sim = if denom > 1e-12 {
+                let dot: f64 = items[i]
+                    .iter()
+                    .zip(items[j].iter())
+                    .map(|(a, b)| a * b)
+                    .sum();
                 (dot / denom).clamp(-1.0, 1.0)
             } else {
                 0.0
@@ -346,7 +367,7 @@ fn build_adjacency_matrix(
             if distance <= params.eps {
                 let normalized_dist = distance / sigma;
                 let weight = 1.0 / (1.0 + normalized_dist.powf(params.p));
-                if weight > 1e-15 {
+                if weight > 1e-12 {
                     candidates.push((j, distance, weight));
                 }
             }
@@ -381,9 +402,9 @@ fn build_adjacency_matrix(
         let keys: Vec<_> = adj[i].keys().copied().collect();
         for j in keys {
             let w = *adj[i].get(&j).unwrap_or(&0.0);
-            if w > 1e-15 {
+            if w > 1e-12 {
                 let back_entry = adj[j].entry(i).or_insert(0.0);
-                if *back_entry < 1e-15 {
+                if *back_entry < 1e-12 {
                     *back_entry = w;
                 }
             }
@@ -394,13 +415,16 @@ fn build_adjacency_matrix(
     let mut triplets = TriMat::new((n_items, n_items));
     for (i, ad) in adj.iter().enumerate() {
         for (&j, &weight) in ad.iter() {
-            if i != j && weight > 1e-15 {
+            if i != j && weight > 1e-12 {
                 triplets.add_triplet(i, j, weight);
             }
         }
     }
 
     let adjacency_matrix = triplets.to_csr();
-    debug!("Successfully built sparse adjacency matrix with {} non-zeros", adjacency_matrix.nnz());
+    debug!(
+        "Successfully built sparse adjacency matrix with {} non-zeros",
+        adjacency_matrix.nnz()
+    );
     adjacency_matrix
 }

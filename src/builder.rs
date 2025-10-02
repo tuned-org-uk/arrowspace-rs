@@ -1,6 +1,4 @@
-use smartcore::linalg::basic::arrays::Array;
-
-use crate::core::{ArrowItem, ArrowSpace, TAUDEFAULT};
+use crate::core::{ArrowSpace, TAUDEFAULT};
 use crate::graph::{GraphFactory, GraphLaplacian};
 use crate::taumode::TauMode;
 
@@ -84,7 +82,11 @@ impl ArrowSpaceBuilder {
         );
         debug!(
             "Lambda graph will use {} for normalization",
-            if self.normalise { "normalized items" } else { "raw item magnitudes" }
+            if self.normalise {
+                "normalized items"
+            } else {
+                "raw item magnitudes"
+            }
         );
 
         self.lambda_eps = eps;
@@ -130,7 +132,7 @@ impl ArrowSpaceBuilder {
         if self.lambda_k <= 5 {
             self.lambda_topk = 3;
         } else if self.lambda_k < 10 {
-            self.lambda_topk =  4;
+            self.lambda_topk = 4;
         };
     }
 
@@ -159,9 +161,15 @@ impl ArrowSpaceBuilder {
             "Building ArrowSpace from {} items with {} features",
             n_items, n_features
         );
-        debug!("Build configuration: eps={}, k={}, p={}, sigma={:?}, normalise={}, synthesis={:?}", 
-               self.lambda_eps, self.lambda_k, self.lambda_p, self.lambda_sigma,
-               self.normalise, self.synthesis);
+        debug!(
+            "Build configuration: eps={}, k={}, p={}, sigma={:?}, normalise={}, synthesis={:?}",
+            self.lambda_eps,
+            self.lambda_k,
+            self.lambda_p,
+            self.lambda_sigma,
+            self.normalise,
+            self.synthesis
+        );
 
         // 1) Base graph selection
         trace!("Creating ArrowSpace from items");
@@ -189,7 +197,7 @@ impl ArrowSpaceBuilder {
 
         // Branch: if spectral L_2 laplacian is required, compute
         // if aspace.signals is not set, gl.matrix will be used
-        if self.prebuilt_spectral == true {
+        if self.prebuilt_spectral {
             // Compute signals FxF laplacian
             trace!("Building spectral Laplacian for ArrowSpace");
             aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
@@ -200,8 +208,11 @@ impl ArrowSpaceBuilder {
         }
 
         // Compute taumode lambdas
-        info!("Computing taumode lambdas with synthesis: {:?}", self.synthesis);
-        TauMode::compute_taumode_lambdas(&mut aspace, &gl,self.synthesis);
+        info!(
+            "Computing taumode lambdas with synthesis: {:?}",
+            self.synthesis
+        );
+        TauMode::compute_taumode_lambdas(&mut aspace, &gl, self.synthesis);
 
         let lambda_stats = {
             let lambdas = aspace.lambdas();
