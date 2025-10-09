@@ -858,7 +858,8 @@ fn create_test_space() -> (ArrowSpace, GraphLaplacian) {
         vec![5.0, 6.0, 7.0],
     ];
 
-    let builder = ArrowSpaceBuilder::new().with_lambda_graph(1.0, 2, 3, 2.0, Some(0.5));
+    let builder = ArrowSpaceBuilder::new()
+        .with_lambda_graph(1.0, 2, 3, 2.0, Some(0.5));
 
     builder.build(items)
 }
@@ -1038,21 +1039,91 @@ fn test_prepare_query_item_with_different_graph_params() {
 
 #[test]
 fn test_prepare_query_item_normalized_vs_unnormalized() {
-    let (aspace, gl) = create_test_space();
+    // Generate 300D moon dataset
+    let items = make_moons_hd(50, 0.25, 0.05, 300, 42);
+    assert_eq!(items[0].len(), 300, "Expected 300-dimensional data");
+    
+    let (aspace, gl) = ArrowSpaceBuilder::new()
+        .with_lambda_graph(
+            1e-1,
+            5,
+            GRAPH_PARAMS.topk,
+            GRAPH_PARAMS.p,
+            Some(1e-1 * 0.50),
+        )
+        .with_normalisation(true)
+        .with_spectral(false)
+        .with_sparsity_check(false)
+        .build(items[0..45].to_vec());
 
-    // Test with normalized query
-    let norm = (1.0_f64.powi(2) + 1.0_f64.powi(2) + 1.0_f64.powi(2)).sqrt();
-    let query_normalized = vec![1.0 / norm, 1.0 / norm, 1.0 / norm];
-    let l0 = aspace.prepare_query_item(&query_normalized, &gl);
-    println!("test item, tau median -> tau: {:?}", l0);
+    // Create a 300D query vector (all ones)
+    let query_base = items[45].clone();
+    
+    // Test 1: Normalized query (unit norm)
+    let norm = (query_base.iter().map(|x| x * x).sum::<f64>()).sqrt();
+    let query_normalized: Vec<f64> = query_base.iter().map(|x| x / norm).collect();
+    
+    // Verify normalization
+    let norm_check = (query_normalized.iter().map(|x| x * x).sum::<f64>()).sqrt();
+    assert!((norm_check - 1.0).abs() < 1e-10, "Query should be normalized to unit norm");
+    
+    let lambda_normalized = aspace.prepare_query_item(&query_normalized, &gl);
+    println!("Normalized query (300D, unit norm) → lambda: {:.6}", lambda_normalized);
 
-    // Test with unnormalized query
-    let query_unnormalized = vec![10.0, 10.0, 10.0];
-    let l1 = aspace.prepare_query_item(&query_unnormalized, &gl);
-    println!("test item, tau median -> tau: {:?}", l1);
+    // Test 2: Unnormalized query (10x larger)
+    let query_unnormalized: Vec<f64> = query_base.iter().map(|x| x * 10.0).collect();
+    let unnorm_norm = (query_unnormalized.iter().map(|x| x * x).sum::<f64>()).sqrt();
+    println!("Unnormalized query norm: {:.2} (should be ~173.2)", unnorm_norm);
+    
+    let lambda_unnormalized = aspace.prepare_query_item(&query_unnormalized, &gl);
+    println!("Unnormalized query (300D, 10x scale) → lambda: {:.6}", lambda_unnormalized);
 
-    assert_ne!(l0, l1);
+    // Assertions
+    assert!(lambda_normalized.is_finite(), "Normalized lambda should be finite");
+    assert!(lambda_unnormalized.is_finite(), "Unnormalized lambda should be finite");
+    assert!(lambda_normalized >= 0.0, "Lambda should be non-negative");
+    assert!(lambda_unnormalized >= 0.0, "Lambda should be non-negative");
+    
+    // Lambdas should be DIFFERENT because normalization affects tau computation
+    approx::assert_relative_ne!(
+        lambda_normalized,
+        lambda_unnormalized,
+        epsilon = 1e-6,
+        max_relative = 0.01
+    );
+    
+    println!("✓ Normalization effect verified: Δλ = {:.6}", 
+             (lambda_normalized - lambda_unnormalized).abs());
 }
+
+#[test]
+fn test_prepare_query_item_moon_structure() {
+    let items = make_moons_hd(50, 0.25, 0.05, 300, 42);
+    
+    let (aspace, gl) = ArrowSpaceBuilder::new()
+        .with_lambda_graph(1e-1, 5, GRAPH_PARAMS.topk, GRAPH_PARAMS.p, Some(1e-1 * 0.50))
+        .with_normalisation(true)
+        .with_spectral(false)
+        .with_sparsity_check(false)
+        .build(items[0..45].to_vec());
+
+    // Query 1: From upper moon (items 0-24)
+    let query_upper = items[5].clone();
+    
+    // Query 2: From lower moon (items 25-49)
+    let query_lower = items[30].clone();
+    
+    let lambda_upper = aspace.prepare_query_item(&query_upper, &gl);
+    let lambda_lower = aspace.prepare_query_item(&query_lower, &gl);
+    
+    println!("Upper moon query → lambda: {:.6}", lambda_upper);
+    println!("Lower moon query → lambda: {:.6}", lambda_lower);
+    
+    // Lambdas should be different for different manifold regions
+    assert!((lambda_upper - lambda_lower).abs() > 1e-3, 
+            "Different moon regions should have different lambdas");
+}
+
 
 #[test]
 fn test_prepare_query_item_non_scale_invariance() {

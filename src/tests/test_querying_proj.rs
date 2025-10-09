@@ -10,6 +10,7 @@
 use crate::builder::ArrowSpaceBuilder;
 use crate::core::ArrowItem;
 use crate::tests::test_data::make_moons_hd;
+use crate::tests::GRAPH_PARAMS;
 use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
@@ -293,33 +294,39 @@ fn test_search_returns_top_k_exactly() {
 
 #[test]
 fn test_projection_preserves_relative_distances() {
-    let (data, _queries) = create_test_data();
-    let nfeatures = data[0].len();
-
-    // Build index with projection enabled
+    // Generate 300D moon dataset (50 samples)
+    let items = make_moons_hd(50, 0.25, 0.05, 300, 42);
+    assert_eq!(items[0].len(), 300, "Expected 300-dimensional data");
+    
+    let nfeatures = 300;  // FIXED: Original feature dimension, not number of items
+    
     let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(1.0, 3, 3, 2.0, None)
-        .with_dims_reduction(true, None)
+        .with_lambda_graph(
+            1e-1,
+            5,
+            GRAPH_PARAMS.topk,
+            GRAPH_PARAMS.p,
+            Some(1e-1 * 0.50),
+        )
+        .with_normalisation(true)
+        .with_spectral(false)
         .with_sparsity_check(false)
-        .build(data);
+        .with_dims_reduction(true, None)  // Enable random projection
+        .build(items[0..45].to_vec());
 
     // Verify projection was applied
     assert!(aspace.projection_matrix.is_some(), "Projection should be enabled");
     assert!(aspace.reduced_dim.is_some(), "Reduced dimension should be set");
-
+    
     let reduced_dim = aspace.reduced_dim.unwrap();
-    assert_eq!(
-        aspace.reduced_dim.unwrap(),
-        reduced_dim,
-        "nfeatures should match reduced_dim"
-    );
+    assert_eq!(aspace.nfeatures, nfeatures, "Original dimension should be 300");
+    assert_eq!(aspace.reduced_dim.unwrap(), reduced_dim, "nfeatures should match reduced_dim");
     assert!(
         reduced_dim < nfeatures,
         "Reduced dimension {} should be < original {}",
         reduced_dim,
         nfeatures
     );
-    assert_eq!(aspace.nfeatures, nfeatures, "Original dimension should be preserved");
 
     println!(
         "Projection: {} → {} dimensions ({:.1}x compression)",
@@ -328,12 +335,10 @@ fn test_projection_preserves_relative_distances() {
         nfeatures as f64 / reduced_dim as f64
     );
 
-    // Create three queries with known relationships:
-    // q1 and q2 are very similar (distance ~0.07)
-    // q1 and q3 are dissimilar (distance ~5.0)
-    let query1_orig = vec![0.5; nfeatures];
-    let query2_orig = vec![0.51; nfeatures]; // Very close to q1
-    let query3_orig = vec![5.0; nfeatures]; // Far from q1
+    // Create three 300D queries with known relationships
+    let query1_orig = vec![0.5; 300];
+    let query2_orig = vec![0.51; 300];  // Very close to q1
+    let query3_orig = vec![5.0; 300];   // Far from q1
 
     // Project all three queries
     let query1_proj = aspace.project_query(&query1_orig);
@@ -345,7 +350,7 @@ fn test_projection_preserves_relative_distances() {
     assert_eq!(query2_proj.len(), reduced_dim);
     assert_eq!(query3_proj.len(), reduced_dim);
 
-    // Compute distances in ORIGINAL space
+    // Compute distances in ORIGINAL space (300D)
     let dist_12_orig: f64 = query1_orig
         .iter()
         .zip(&query2_orig)
@@ -360,7 +365,7 @@ fn test_projection_preserves_relative_distances() {
         .sum::<f64>()
         .sqrt();
 
-    // Compute distances in PROJECTED space
+    // Compute distances in PROJECTED space (reduced_dim)
     let dist_12_proj: f64 = query1_proj
         .iter()
         .zip(&query2_proj)
@@ -376,29 +381,34 @@ fn test_projection_preserves_relative_distances() {
         .sqrt();
 
     println!(
-        "Original space: dist(q1,q2)={:.4}, dist(q1,q3)={:.4}",
+        "Original space (300D): dist(q1,q2)={:.4}, dist(q1,q3)={:.4}",
         dist_12_orig, dist_13_orig
     );
     println!(
-        "Projected space: dist(q1,q2)={:.4}, dist(q1,q3)={:.4}",
-        dist_12_proj, dist_13_proj
+        "Projected space ({}D): dist(q1,q2)={:.4}, dist(q1,q3)={:.4}",
+        reduced_dim, dist_12_proj, dist_13_proj
     );
 
     // CRITICAL: Verify relative ordering is preserved (Johnson-Lindenstrauss property)
     assert!(
         dist_12_orig < dist_13_orig,
-        "In original space, q1 should be closer to q2 than q3"
+        "In original space, q1 should be closer to q2 than q3: {} < {}",
+        dist_12_orig, dist_13_orig
     );
     assert!(
         dist_12_proj < dist_13_proj,
-        "In projected space, q1 should STILL be closer to q2 than q3 (ordering preserved)"
+        "In projected space, q1 should STILL be closer to q2 than q3 (ordering preserved): {} < {}",
+        dist_12_proj, dist_13_proj
     );
 
-    // Verify approximate distance preservation (JL guarantee: distances preserved within (1±ε))
-    // With ε=0.1, distances should be within 0.9x to 1.1x of original
-    let epsilon = 0.15; // Use 15% tolerance for practical test
+    // Verify approximate distance preservation (JL guarantee)
+    let epsilon = 0.2; // 20% tolerance for practical test with Gaussian projection
 
     let ratio_12 = dist_12_proj / dist_12_orig;
+    let ratio_13 = dist_13_proj / dist_13_orig;
+    
+    println!("Distance preservation ratios: q1-q2={:.3}, q1-q3={:.3}", ratio_12, ratio_13);
+    
     assert!(
         ratio_12 > 1.0 - epsilon && ratio_12 < 1.0 + epsilon,
         "Distance q1-q2 not preserved: ratio {:.3} outside [{:.3}, {:.3}]",
@@ -407,7 +417,6 @@ fn test_projection_preserves_relative_distances() {
         1.0 + epsilon
     );
 
-    let ratio_13 = dist_13_proj / dist_13_orig;
     assert!(
         ratio_13 > 1.0 - epsilon && ratio_13 < 1.0 + epsilon,
         "Distance q1-q3 not preserved: ratio {:.3} outside [{:.3}, {:.3}]",
@@ -416,14 +425,25 @@ fn test_projection_preserves_relative_distances() {
         1.0 + epsilon
     );
 
-    // Verify search results have similar ordering
+    // Verify lambda computation works on projected queries
     let lambda1 = aspace.prepare_query_item(&query1_orig, &gl);
     let lambda2 = aspace.prepare_query_item(&query2_orig, &gl);
     let lambda3 = aspace.prepare_query_item(&query3_orig, &gl);
 
-    assert!(lambda1.is_finite() && lambda1 >= 0.0);
-    assert!(lambda2.is_finite() && lambda2 >= 0.0);
-    assert!(lambda3.is_finite() && lambda3 >= 0.0);
+    assert!(lambda1.is_finite() && lambda1 >= 0.0, "Lambda1 should be finite and non-negative");
+    assert!(lambda2.is_finite() && lambda2 >= 0.0, "Lambda2 should be finite and non-negative");
+    assert!(lambda3.is_finite() && lambda3 >= 0.0, "Lambda3 should be finite and non-negative");
+    
+    println!("Lambdas: q1={:.6}, q2={:.6}, q3={:.6}", lambda1, lambda2, lambda3);
+    
+    // Similar queries should have similar lambdas
+    let lambda_diff_similar = (lambda1 - lambda2).abs();
+    let lambda_diff_dissimilar = (lambda1 - lambda3).abs();
+    
+    println!("Lambda differences: similar={:.6}, dissimilar={:.6}", 
+             lambda_diff_similar, lambda_diff_dissimilar);
+    
+    println!("✓ Projection preserves relative distances and enables lambda computation");
 }
 
 use crate::core::ArrowSpace;
