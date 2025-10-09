@@ -1,4 +1,4 @@
-// Copyright [2025] tuned.org.uk
+/// Copyright [2025] Mec-iS, tuned.org.uk
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
 //    You may obtain a copy of the License at
@@ -11,9 +11,13 @@
 //    See the License for the specific language governing permissions and
 //    limitations under the License.
 pub mod builder;
+pub mod clustering;
 pub mod core;
 pub mod graph;
 pub mod laplacian;
+pub mod reduction;
+pub mod sampling;
+pub mod sparsification;
 pub mod taumode;
 
 #[cfg(test)]
@@ -26,8 +30,10 @@ static INIT: Once = Once::new();
 pub fn init() {
     INIT.call_once(|| {
         // don't panic if called multiple times across binaries
-        let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-            .is_test(true) // nicer formatting for tests
-            .try_init();
+        let _ = env_logger::Builder::from_env(
+            env_logger::Env::default().default_filter_or("info"),
+        )
+        .is_test(true) // nicer formatting for tests
+        .try_init();
     });
 }

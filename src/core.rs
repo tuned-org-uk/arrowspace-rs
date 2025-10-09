@@ -19,7 +19,7 @@
 //!
 //!
 //! Run documentation tests with `cargo test --doc`; Rustdoc extracts code blocks
-//! and executes them as tests, ensuring examples stay correct over time.
+//! and executes them as tests, ensuring examples stay correct over time[3][6].
 //!
 //! # Panics
 //!
@@ -36,17 +36,21 @@
 //! # Testing examples
 //!
 //! Rustdoc preprocesses examples: it injects the crate, wraps code in `fn main`
-//! if missing, and allows common lints to reduce boilerplate. Keep examples
+//! if missing, and allows common lints to reduce boilerplate[3][11]. Keep examples
 //! small and focused; add hidden setup lines with `#` when needed so that examples
-//! compile while showing only the essential lines to readers.
+//! compile while showing only the essential lines to readers[3][4][8].
 
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashSet};
 use std::fmt::Debug;
 
+use rayon::prelude::*;
 use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 use sprs::CsMat;
 
 use crate::graph::GraphLaplacian;
+use crate::reduction::ImplicitProjection;
 use crate::taumode::TauMode;
 
 // Add logging
@@ -67,7 +71,7 @@ use log::{debug, info, trace, warn};
 /// use arrowspace::core::ArrowItem;
 ///
 /// let mut a = ArrowItem::new(vec![1.0, 2.0, 3.0], 0.5);
-/// let b = ArrowItem::new(vec![1.0, 0.0, 1.0], 1.2);
+/// let b = vec![1.0, 0.0, 1.0];
 ///
 /// let cos = a.cosine_similarity(&b);
 /// assert!(cos.is_finite());
@@ -125,6 +129,50 @@ impl ArrowItem {
         self.item.is_empty()
     }
 
+    /// Lambda component similarity (spectral distance)
+    #[inline]
+    pub fn lambda_component_similarity(&self, other: &ArrowItem) -> f64 {
+        let lambda_diff = (self.lambda - other.lambda).abs();
+        1.0 - lambda_diff.min(1.0)
+    }
+
+    /// Combined lambda-aware similarity
+    /// Combines semantic (cosine) similarity and lambda proximity (Rayleigh plus dispersion).
+    ///
+    /// `alpha` weights semantic similarity; `beta` weights lambda proximity
+    /// defined as `1 / (1 + |lambda_a - lambda_b|)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use arrowspace::core::ArrowItem;
+    /// let a = ArrowItem::new(vec![1.0, 0.0], 0.5);
+    /// let b = ArrowItem::new(vec![1.0, 0.0], 0.6);
+    /// let s = a.lambda_similarity(&b, 0.7);
+    /// assert!(s <= 1.0 && s >= 0.0);
+    /// ```
+    #[inline]
+    pub fn lambda_similarity(&self, other: &ArrowItem, alpha: f64) -> f64 {
+        assert_eq!(
+            self.item.len(),
+            other.item.len(),
+            "items should be of the same length"
+        );
+        let cosine_sim = self.cosine_similarity(&other.item);
+        let lambda_sim = self.lambda_component_similarity(other);
+
+        let result = alpha * cosine_sim + (1.0 - alpha) * lambda_sim;
+
+        trace!(
+            "Lambda similarity: semantic={:.6}, lambda={:.6}, combined={:.6}",
+            cosine_sim,
+            lambda_sim,
+            result
+        );
+
+        result
+    }
+
     /// Computes the dot product with another row without allocating.
     ///
     /// # Panics
@@ -142,12 +190,7 @@ impl ArrowItem {
     #[inline]
     pub fn dot(&self, other: &ArrowItem) -> f64 {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
-        let result = self
-            .item
-            .iter()
-            .zip(other.item.iter())
-            .map(|(a, b)| a * b)
-            .sum();
+        let result = self.item.iter().zip(other.item.iter()).map(|(a, b)| a * b).sum();
         trace!("Computed dot product: {:.6}", result);
         result
     }
@@ -173,14 +216,14 @@ impl ArrowItem {
     /// ```
     /// use arrowspace::core::ArrowItem;
     /// let a = ArrowItem::new(vec![1.0, 0.0], 0.0);
-    /// let b = ArrowItem::new(vec![0.0, 1.0], 0.0);
+    /// let b = vec![0.0, 1.0];
     /// assert!((a.cosine_similarity(&b) - 0.0).abs() < 1e-12);
     /// ```
     #[inline]
-    pub fn cosine_similarity(&self, other: &ArrowItem) -> f64 {
-        let denom = ArrowItem::norm(&self.item) * ArrowItem::norm(&other.item);
+    pub fn cosine_similarity(&self, other: &[f64]) -> f64 {
+        let denom = ArrowItem::norm(&self.item) * ArrowItem::norm(other);
         let result = if denom > 0.0 {
-            self.dot(other) / denom
+            self.dot(&ArrowItem::new(other.to_vec(), 0.0)) / denom
         } else {
             warn!("Zero vector encountered in cosine similarity computation");
             0.0
@@ -217,40 +260,6 @@ impl ArrowItem {
         result
     }
 
-    /// Combines semantic (cosine) similarity and lambda proximity.
-    ///
-    /// `alpha` weights semantic similarity; `beta` weights lambda proximity
-    /// defined as `1 / (1 + |lambda_a - lambda_b|)`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use arrowspace::core::ArrowItem;
-    /// let a = ArrowItem::new(vec![1.0, 0.0], 0.5);
-    /// let b = ArrowItem::new(vec![1.0, 0.0], 0.6);
-    /// let s = a.lambda_similarity(&b, 0.7);
-    /// assert!(s <= 1.0 && s >= 0.0);
-    /// ```
-    #[inline]
-    pub fn lambda_similarity(&self, other: &ArrowItem, alpha: f64) -> f64 {
-        assert_eq!(
-            self.item.len(),
-            other.item.len(),
-            "items should be of the same length"
-        );
-        let beta = 1.0 - alpha;
-        let semantic_sim = self.cosine_similarity(other);
-        let lambda_sim = 1.0 / (1.0 + (self.lambda - other.lambda).abs());
-        let result = alpha * semantic_sim + beta * lambda_sim;
-        trace!(
-            "Lambda similarity: semantic={:.6}, lambda={:.6}, combined={:.6}",
-            semantic_sim,
-            lambda_sim,
-            result
-        );
-        result
-    }
-
     /// Adds another row element-wise in-place.
     ///
     /// # Panics
@@ -260,10 +269,7 @@ impl ArrowItem {
     pub fn add_inplace(&mut self, other: &ArrowItem) {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
         trace!("Adding vectors in-place");
-        self.item
-            .iter_mut()
-            .zip(other.item.iter())
-            .for_each(|(a, b)| *a += *b);
+        self.item.iter_mut().zip(other.item.iter()).for_each(|(a, b)| *a += *b);
     }
 
     /// Multiplies element-wise in-place by another row.
@@ -275,10 +281,7 @@ impl ArrowItem {
     pub fn mul_inplace(&mut self, other: &ArrowItem) {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
         trace!("Multiplying vectors element-wise in-place");
-        self.item
-            .iter_mut()
-            .zip(other.item.iter())
-            .for_each(|(a, b)| *a *= *b);
+        self.item.iter_mut().zip(other.item.iter()).for_each(|(a, b)| *a *= *b);
     }
 
     /// Scales all elements by a scalar in place.
@@ -298,6 +301,34 @@ impl ArrowItem {
     #[inline]
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, f64> {
         self.item.iter_mut()
+    }
+}
+
+/// Scored item for min-heap (keeps top-k by popping smallest)
+#[derive(Debug, Clone, Copy)]
+struct ScoredItem {
+    index: usize,
+    score: f64,
+}
+
+impl PartialEq for ScoredItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.score == other.score
+    }
+}
+
+impl Eq for ScoredItem {}
+
+impl PartialOrd for ScoredItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        // Reverse for min-heap (smallest score at top)
+        other.score.partial_cmp(&self.score)
+    }
+}
+
+impl Ord for ScoredItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap_or(Ordering::Equal)
     }
 }
 
@@ -321,12 +352,23 @@ impl ArrowItem {
 ///
 #[derive(Clone, Debug)]
 pub struct ArrowSpace {
-    pub nfeatures: usize,
+    pub nfeatures: usize, // F: original dimensions
     pub nitems: usize,
     pub data: DenseMatrix<f64>, // NxF raw data
     pub signals: CsMat<f64>,    // Laplacian(Transpose(NxF))
     pub lambdas: Vec<f64>,      // N lambdas (every lambda is a lambda for an item-row)
     pub taumode: TauMode,       // tau_mode as in select_tau_mode
+
+    /// Cluster assignment per original row (N entries, each in 0..X or None for outliers)
+    pub cluster_assignments: Vec<Option<usize>>,
+    /// Cluster sizes (X entries)
+    pub cluster_sizes: Vec<usize>,
+    /// Squared distance threshold used during clustering
+    pub cluster_radius: f64,
+
+    // Projection data: dims reduction data (needed to prepare the query vector)
+    pub projection_matrix: Option<ImplicitProjection>, // F × r (if projection was used)
+    pub reduced_dim: Option<usize>, // r (reduced dimension, None if no projection)
 }
 
 pub const TAUDEFAULT: TauMode = TauMode::Median;
@@ -342,6 +384,13 @@ impl Default for ArrowSpace {
             lambdas: Vec::new(),
             // enable synthetic λ with Median τ by default
             taumode: TAUDEFAULT,
+            // Clustering defaults
+            cluster_assignments: Vec::new(),
+            cluster_sizes: Vec::new(),
+            cluster_radius: 0.0,
+            // projection
+            projection_matrix: None,
+            reduced_dim: None,
         }
     }
 }
@@ -351,10 +400,7 @@ impl ArrowSpace {
     /// Only to be used in tests. `ArrowSpaceBuilder`
     pub fn new(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
-        assert!(
-            items.len() > 1,
-            "cannot create a arrowspace of one arrow only"
-        );
+        assert!(items.len() > 1, "cannot create a arrowspace of one arrow only");
         let n_items = items.len(); // Number of items (columns in final layout)
         let n_features = items[0].len(); // Number of features (rows in final layout)
         Self {
@@ -364,6 +410,13 @@ impl ArrowSpace {
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
             lambdas: vec![0.0; n_items],        // will be computed later
             taumode,
+            // Clustering defaults
+            cluster_assignments: Vec::new(),
+            cluster_sizes: Vec::new(),
+            cluster_radius: 0.0,
+            // projection
+            projection_matrix: None,
+            reduced_dim: None,
         }
     }
     /// Builds from a vector of equally-sized rows and per-row lambdas.
@@ -387,10 +440,7 @@ impl ArrowSpace {
     #[cfg(test)]
     pub fn from_items_default(items: Vec<Vec<f64>>) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
-        assert!(
-            items.len() > 1,
-            "cannot create a arrowspace of one arrow only"
-        );
+        assert!(items.len() > 1, "cannot create a arrowspace of one arrow only");
         let n_items = items.len(); // Number of items (columns in final layout)
         let n_features = items[0].len(); // Number of features (rows in final layout)
 
@@ -416,6 +466,13 @@ impl ArrowSpace {
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
             lambdas: vec![0.0; n_items],        // will be computed later
             taumode: TAUDEFAULT,
+            // Clustering defaults
+            cluster_assignments: Vec::new(),
+            cluster_sizes: Vec::new(),
+            cluster_radius: 0.0,
+            // projection
+            projection_matrix: None,
+            reduced_dim: None,
         }
     }
 
@@ -427,6 +484,36 @@ impl ArrowSpace {
             .collect()
     }
 
+    /// Project query vector to reduced space if projection was used during indexing
+    ///
+    /// # Arguments
+    /// * `query` - Original F-dimensional query vector
+    ///
+    /// # Returns
+    /// * If projection was used: r-dimensional projected query
+    /// * If no projection: original query unchanged
+    pub fn project_query(&self, query: &[f64]) -> Vec<f64> {
+        assert_eq!(
+            query.len(),
+            self.nfeatures,
+            "Query dimension {} doesn't match index original dimension {}",
+            query.len(),
+            self.nfeatures
+        );
+
+        if let Some(ref proj) = self.projection_matrix {
+            debug!(
+                "Projecting query: {} → {} dimensions using seed-based projection",
+                self.nfeatures,
+                self.reduced_dim.unwrap()
+            );
+            proj.project(query)
+        } else {
+            debug!("No projection applied, returning original query");
+            query.to_vec()
+        }
+    }
+
     /// Before searching a lambda-tau value has to be computed for the query
     ///  vector. Pass the query item and the `GraphLaplacian` to this method.
     pub fn prepare_query_item(&self, item: &[f64], gl: &GraphLaplacian) -> f64 {
@@ -434,8 +521,17 @@ impl ArrowSpace {
             item.iter().all(|&x| x.is_finite()),
             "Query item contains invalid values (NaN or infinity). All values must be finite."
         );
-        let tau = TauMode::select_tau(item, self.taumode);
-        TauMode::compute_item_vector_synthetic_lambda(item, &gl.matrix, tau)
+
+        // if dim reduction is active and if the target dimensions are lower that the original ones
+        let item = if self.projection_matrix.as_ref().is_some() {
+            let projected_item = self.project_query(item);
+            projected_item
+        } else {
+            item.to_vec()
+        };
+
+        let tau = TauMode::select_tau(item.as_slice(), self.taumode);
+        TauMode::compute_item_vector_synthetic_lambda(item.as_slice(), &gl.matrix, tau)
     }
 
     /// Returns a shared reference to all lambdas.
@@ -444,14 +540,18 @@ impl ArrowSpace {
         self.lambdas.as_ref()
     }
 
+    /// Returns cluster assignment for row i (None if outlier or not clustered).
+    #[inline]
+    pub fn cluster_of(&self, i: usize) -> Option<usize> {
+        self.cluster_assignments.get(i).copied().flatten()
+    }
+
     /// Returns an owned ArrowFeature copy of the requested column.
     #[inline]
     pub fn get_feature(&self, i: usize) -> ArrowFeature {
         assert!(i < self.nfeatures, "feature index out of bounds");
         trace!("Extracting feature {} from ArrowSpace", i);
-        ArrowFeature {
-            feature: self.data.get_col(i).iterator(0).copied().collect(),
-        }
+        ArrowFeature { feature: self.data.get_col(i).iterator(0).copied().collect() }
     }
 
     /// Modify feature column in-place
@@ -611,8 +711,21 @@ impl ArrowSpace {
     }
 
     /// Lambda-aware top-k search against an ArrowItem query.
+    /// Single-pass parallel dual scoring with `ArrowScore`.
     ///
     /// Returns indices and scores sorted descending by similarity.
+    /// Algorithm:
+    /// 1. Single parallel scan maintains:
+    ///    - Semantic top-1 (best cosine)
+    ///    - High semantic matches (cosine > 0.95)
+    ///    - Top-k lambda-aware candidates (min-heap)
+    /// 2. Union: high semantic + top-k lambda (deduplicated)
+    /// 3. Replace lowest lambda score with semantic top-1 if needed
+    ///
+    /// # Performance
+    /// - O(N) scan with O(k log k) heap operations per thread
+    /// - No full array allocation or sorting
+    /// - Lock-free concurrent top-k tracking via DashMap
     ///
     /// # Examples
     ///
@@ -635,10 +748,11 @@ impl ArrowSpace {
         alpha: f64,
     ) -> Vec<(usize, f64)> {
         info!("Lambda-aware search: k={}", k);
-        debug!(
-            "Query vector dimension: {}, lambda: {:.6}",
-            query.len(),
-            query.lambda
+        debug!("Query vector dimension: {}, lambda: {:.6}", query.len(), query.lambda);
+
+        assert_ne!(
+            query.lambda, 0.0,
+            "Lambda of the item is 0.0, prepare the item before searching"
         );
 
         let mut results: Vec<_> = (0..self.nitems)
@@ -653,14 +767,135 @@ impl ArrowSpace {
 
         debug!("Search completed, returning {} results", results.len());
         if !results.is_empty() {
-            trace!(
-                "Top result: index={}, score={:.6}",
-                results[0].0,
-                results[0].1
-            );
+            trace!("Top result: index={}, score={:.6}", results[0].0, results[0].1);
         }
 
         results
+    }
+
+    /// A version of `search_lambda_aware` that mix-in results from pure cosine similarity
+    #[inline]
+    pub fn search_lambda_aware_hybrid(
+        &self,
+        query: &ArrowItem,
+        k: usize,
+        alpha: f64,
+    ) -> Vec<(usize, f64)> {
+        info!("Pure rayon streaming search: k={}, alpha={}", k, alpha);
+
+        if k == 0 {
+            return Vec::new();
+        }
+
+        let beta = 1.0 - alpha;
+        let semantic_threshold = 0.9999;
+
+        // Parallel fold-reduce with thread-local state
+        let (lambda_heap, semantic_top, high_semantic_vec) = (0..self.nitems)
+            .into_par_iter()
+            .fold(
+                || {
+                    (
+                        BinaryHeap::with_capacity(k), // Lambda top-k heap
+                        (0usize, f64::NEG_INFINITY),  // Semantic best
+                        Vec::new(),                   // High semantic matches
+                    )
+                },
+                |(mut heap, mut sem_best, mut high_sem), i| {
+                    let item = self.get_item(i);
+
+                    // Single computation of both similarities
+                    let cosine = query.cosine_similarity(&item.item);
+                    let lambda_component = query.lambda_component_similarity(&item);
+                    let lambda_score = alpha * cosine + beta * lambda_component;
+
+                    // Track semantic best
+                    if cosine > sem_best.1 {
+                        sem_best = (i, cosine);
+                    }
+
+                    // Track high semantic matches
+                    if cosine > semantic_threshold {
+                        high_sem.push((i, cosine));
+                    }
+
+                    // Maintain lambda top-k heap
+                    if heap.len() < k {
+                        heap.push(ScoredItem { index: i, score: lambda_score });
+                    } else if let Some(&min) = heap.peek() {
+                        if lambda_score > min.score {
+                            heap.pop();
+                            heap.push(ScoredItem { index: i, score: lambda_score });
+                        }
+                    }
+
+                    (heap, sem_best, high_sem)
+                },
+            )
+            .reduce(
+                || (BinaryHeap::new(), (0, f64::NEG_INFINITY), Vec::new()),
+                |(mut h1, s1, mut hs1), (h2, s2, hs2)| {
+                    // Merge semantic best
+                    let sem = if s1.1 > s2.1 { s1 } else { s2 };
+
+                    // Merge high semantic
+                    hs1.extend(hs2);
+
+                    // Merge heaps
+                    for item in h2 {
+                        if h1.len() < k {
+                            h1.push(item);
+                        } else if let Some(&min) = h1.peek() {
+                            if item.score > min.score {
+                                h1.pop();
+                                h1.push(item);
+                            }
+                        }
+                    }
+
+                    (h1, sem, hs1)
+                },
+            );
+
+        debug!(
+            "Semantic top: idx={}, score={:.6}, high_semantic_count={}",
+            semantic_top.0,
+            semantic_top.1,
+            high_semantic_vec.len()
+        );
+
+        // Union: high semantic + lambda top-k
+        let mut result_set = HashSet::with_capacity(k + high_semantic_vec.len());
+        let mut score_map =
+            std::collections::HashMap::with_capacity(result_set.capacity());
+
+        // Add high semantic matches
+        for (idx, score) in high_semantic_vec {
+            result_set.insert(idx);
+            score_map.insert(idx, score);
+        }
+
+        // Add lambda top-k
+        for item in lambda_heap.into_sorted_vec().into_iter().rev() {
+            result_set.insert(item.index);
+            score_map.entry(item.index).or_insert(item.score);
+        }
+
+        // Ensure semantic top-1 is included
+        result_set.insert(semantic_top.0);
+        score_map.entry(semantic_top.0).or_insert(semantic_top.1);
+
+        // Convert to vector and sort
+        let mut final_results: Vec<(usize, f64)> = result_set
+            .into_iter()
+            .map(|idx| (idx, *score_map.get(&idx).unwrap()))
+            .collect();
+
+        final_results.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        final_results.truncate(k);
+
+        debug!("Final: {} results", final_results.len());
+        final_results
     }
 
     /// Range search by Euclidean distance within `radius`.
@@ -693,10 +928,7 @@ impl ArrowSpace {
             })
             .collect();
 
-        debug!(
-            "Range search completed, found {} items within radius",
-            results.len()
-        );
+        debug!("Range search completed, found {} items within radius", results.len());
         results
     }
 
@@ -762,4 +994,9 @@ impl<'a> IntoIterator for &'a mut ArrowItem {
     fn into_iter(self) -> Self::IntoIter {
         self.item.iter_mut()
     }
+}
+
+pub fn densematrix_to_vecvec(matrix: &DenseMatrix<f64>) -> Vec<Vec<f64>> {
+    let (rows, cols) = matrix.shape();
+    (0..rows).map(|r| (0..cols).map(|c| matrix.get((r, c)).clone()).collect()).collect()
 }

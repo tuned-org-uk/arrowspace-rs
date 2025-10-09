@@ -319,6 +319,7 @@ pub fn search_effectiveness_score(
     aspace: &ArrowSpace,
     queries: &[Vec<f64>],
     alpha: f64,
+    _beta: f64,
     k: usize,
 ) -> f64 {
     if queries.is_empty() {
@@ -327,7 +328,6 @@ pub fn search_effectiveness_score(
 
     let mut total_score = 0.0;
     let mut valid_queries = 0;
-    let beta = 1.0 - alpha;
 
     for query in queries.iter() {
         if query.len() != aspace.nfeatures {
@@ -372,7 +372,7 @@ pub fn search_effectiveness_score(
 
         // Reward if lambda-aware search provides different results than pure cosine
         // This indicates the spectral component is contributing meaningfully
-        if beta > 0.0 {
+        if (1.0 - alpha) > 0.0 {
             result_quality += 0.2;
         }
 
@@ -403,13 +403,14 @@ pub fn evaluate_parameter_quality(
     gl: &GraphLaplacian,
     queries: &[Vec<f64>],
     alpha: f64,
+    beta: f64,
     k: usize,
 ) -> f64 {
     // Combine multiple quality metrics:
     let connectivity_score = graph_connectivity_score(gl);
     let lambda_distribution_score = lambda_quality_score(aspace.lambdas());
     let search_quality_score = 
-        search_effectiveness_score(aspace, queries, alpha, k);
+        search_effectiveness_score(aspace, queries, alpha, beta, k);
 
     // search quality is compared to cosine, the objective is to find meaningful relation
     // beyond cosine similarity so the search quality score is given less importance

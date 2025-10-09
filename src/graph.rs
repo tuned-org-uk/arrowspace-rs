@@ -1,132 +1,3 @@
-//! Graph Laplacian Construction and Analysis for ArrowSpace
-//!
-//! This module provides the core infrastructure for building and manipulating graph Laplacian
-//! matrices used in the ArrowSpace framework. It implements λ-proximity graphs that capture
-//! both geometric relationships between data items and spectral relationships between features.
-//!
-//! # Overview
-//!
-//! The module centers around two main concepts:
-//!
-//! 1. **Item-to-Item Graphs**: A standard graph Laplacian (N×N) where nodes represent data items
-//!    and edges capture similarity relationships based on rectified cosine distance.
-//!
-//! 2. **Feature-to-Feature Graphs**: A spectral Laplacian (F×F) derived from the item graph,
-//!    where nodes represent features and edges capture co-occurrence patterns across the data manifold.
-//!
-//! # Core Components
-//!
-//! ## GraphParams
-//!
-//! Configuration for graph construction with numerical stability guarantees:
-//! - `eps`: Maximum rectified cosine distance threshold for edge inclusion
-//! - `k`: Maximum degree (number of neighbors) per node
-//! - `topk`: Number of candidates considered during nearest neighbor search
-//! - `p`: Kernel parameter for weight computation (typically 2.0 for Gaussian-like kernels)
-//! - `sigma`: Kernel bandwidth tolerance (defaults to `eps * 0.5`)
-//! - `normalise`: Whether to normalize input vectors (disable to preserve magnitude information)
-//!
-//! ## GraphLaplacian
-//!
-//! A sparse symmetric positive semi-definite matrix L = D - W where:
-//! - D is the degree matrix (diagonal)
-//! - W is the weighted adjacency matrix
-//! - Row sums equal zero (within numerical tolerance of 1e-10)
-//!
-//! The Laplacian encodes the graph structure and enables spectral analysis via the Rayleigh quotient:
-//! ```ignore
-//! R(L, x) = (x^T L x) / (x^T x)
-//! ```
-//! which measures how much signal x varies across connected nodes.
-//!
-//! ## GraphFactory
-//!
-//! Factory methods for constructing Laplacian matrices with proper validation:
-//! - `build_laplacian_matrix`: Constructs item-to-item (N×N) graph from data matrix
-//! - `build_spectral_laplacian`: Derives feature-to-feature (F×F) graph from item graph
-//!
-//! # Mathematical Properties
-//!
-//! All constructed Laplacians satisfy:
-//! 1. **Symmetry**: L(i,j) = L(j,i) for all i,j
-//! 2. **Zero row sums**: Σⱼ L(i,j) = 0 for all i (within tolerance)
-//! 3. **Positive semi-definite**: x^T L x ≥ 0 for all x
-//! 4. **Sparsity**: Typically < 5% dense (enforced via assertion)
-//!
-//! # Numerical Stability
-//!
-//! The module maintains precision at the 1e-10 level through:
-//! - Sparse matrix representations (via `sprs::CsMat`)
-//! - Validation of Laplacian properties via `verify_properties`
-//! - Sparsity enforcement to prevent degenerate dense graphs
-//! - Complementary value storage to avoid accumulated subtraction errors
-//!
-//! # Usage Example
-//!
-//! ```ignore
-//! use arrowspace::graph::{GraphFactory, GraphParams};
-//!
-//! // Define graph construction parameters
-//! let params = GraphParams {
-//!     eps: 1.0,
-//!     k: 10,
-//!     topk: 20,
-//!     p: 2.0,
-//!     sigma: Some(0.5),
-//!     normalise: false,
-//! };
-//!
-//! // Build item-to-item Laplacian (N×N)
-//! let items = vec![
-//!     vec![1.0, 2.0, 3.0],  // Item 1
-//!     vec![2.0, 3.0, 4.0],  // Item 2
-//!     vec![3.0, 4.0, 5.0],  // Item 3
-//! ];
-//! let laplacian = GraphFactory::build_laplacian_matrix(
-//!     items, 1.0, 10, 20, 2.0, Some(0.5), false
-//! );
-//!
-//! // Verify Laplacian properties
-//! let validation = laplacian.verify_properties(1e-10);
-//! assert!(validation.is_valid);
-//!
-//! // Compute Rayleigh quotient for a signal
-//! let signal = vec![1.0, 0.5, 0.2];
-//! let smoothness = laplacian.rayleigh_quotient(&signal);
-//!
-//! // Build feature-to-feature spectral Laplacian (F×F)
-//! let aspace_with_signals = GraphFactory::build_spectral_laplacian(
-//!     aspace,
-//!     &laplacian
-//! );
-//! ```
-//!
-//! # Integration with ArrowSpace
-//!
-//! This module is typically accessed through `ArrowSpaceBuilder`:
-//! ```ignore
-//! use arrowspace::builder::ArrowSpaceBuilder;
-//!
-//! let builder = ArrowSpaceBuilder::new()
-//!     .with_lambda_graph(1.0, 10, 20, 2.0, Some(0.5));
-//!
-//! let (aspace, graph_laplacian) = builder.build(items);
-//! ```
-//!
-//! # Performance Characteristics
-//!
-//! - **Construction**: O(N² log N) for brute-force nearest neighbors, O(N log N) with approximate methods
-//! - **Storage**: O(k·N) due to sparsity (typically k << N)
-//! - **Matrix-vector multiplication**: O(k·N) for sparse operations
-//! - **Rayleigh quotient**: O(k·N) via sparse matrix-vector product
-//!
-//! # Logging
-//!
-//! The module uses the `log` crate with the following levels:
-//! - `trace`: Detailed matrix operations and inner loop diagnostics
-//! - `debug`: Matrix dimensions, statistics, and validation results
-//! - `info`: High-level construction steps and summary information
-//! - `warn`: Numerical issues or validation failures
 use std::fmt;
 
 use crate::core::ArrowSpace;
@@ -141,12 +12,13 @@ use log::{debug, info, trace, warn};
 
 #[derive(Debug, Clone)]
 pub struct GraphParams {
-    pub eps: f64,           // maximum rectified cosine distance (see `docs/`)
-    pub k: usize,           // max number of neighbours for node
-    pub topk: usize,        // number of results to be considered for closest neighbors
-    pub p: f64,             // kernel parameter
+    pub eps: f64,             // maximum rectified cosine distance (see `docs/`)
+    pub k: usize,             // max number of neighbours for node
+    pub topk: usize, // number of results to be considered for closest neighbors
+    pub p: f64,      // kernel parameter
     pub sigma: Option<f64>, // tolerance for eps
-    pub normalise: bool,    // avoid normalisation as may hinder magnitude information
+    pub normalise: bool, // avoid normalisation as may hinder magnitude information
+    pub sparsity_check: bool, // check for proper level of sparsity (some datasets works well even if sparse)
 }
 
 // Custom PartialEq implementation using approximate equality for floats
@@ -173,8 +45,11 @@ impl Eq for GraphParams {}
 /// Graph Laplacian
 #[derive(Debug, Clone)]
 pub struct GraphLaplacian {
-    // store the fully computed graph laplacian
+    // store initial data from builder
+    pub init_data: DenseMatrix<f64>, // clustered centroids: XxF matrix where X <= max_clusters
+    // store the fully computed sparse graph laplacian
     pub matrix: CsMat<f64>,
+    // number of the nodes of the *original raw data*
     pub nnodes: usize,
     pub graph_params: GraphParams,
 }
@@ -189,17 +64,17 @@ pub struct GraphFactory;
 
 impl GraphFactory {
     /// This is a lower level method: use `ArrowSpaceBuilder::build`
-    /// Build a graph Laplacian matrix and transpose it so to be ready to
-    ///  be used to analyse signal features
-    ///
-    pub fn build_laplacian_matrix(
+    /// Transpose the items matrix and build a graph Laplacian matrix
+    ///  so to be ready to be used to analyse signal features
+    pub fn build_laplacian_matrix_from_items(
         items: Vec<Vec<f64>>,        // N×F: N items, each with F features
         eps: f64,                    // maximum rectified cosine distance (see `docs/`)
         k: usize,                    // max number of neighbours for node
-        topk: usize,                 // number of results to be considered for closest neighbors
-        p: f64,                      // kernel parameter
+        topk: usize, // number of results to be considered for closest neighbors
+        p: f64,      // kernel parameter
         sigma_override: Option<f64>, // tolerance for eps
-        normalise: bool,             // pre-normalisation before laplacian computation
+        normalise: bool, // pre-normalisation before laplacian computation
+        sparsity_check: bool, // flag to disable sparsity check (some datasets works well even if sparse)
     ) -> GraphLaplacian {
         info!("Building Laplacian matrix for {} items", items.len());
         debug!(
@@ -217,18 +92,75 @@ impl GraphFactory {
                 p,
                 sigma: sigma_override,
                 normalise,
+                sparsity_check,
             },
             Some(items.len()),
         );
 
-        let sparsity_input = GraphLaplacian::sparsity(&result.matrix);
-        if sparsity_input > 0.95 {
-            panic!(
-                "Resulting laplacian matrix is too sparse {:?}",
-                sparsity_input
-            )
+        if sparsity_check {
+            let sparsity_input = GraphLaplacian::sparsity(&result.matrix);
+            if sparsity_input > 0.95 {
+                panic!("Resulting laplacian matrix is too sparse {:?}", sparsity_input)
+            }
         }
         assert!(result.nnodes == items.len());
+
+        info!(
+            "Laplacian matrix built: {}×{} with {} nodes, {} non-zeros",
+            result.matrix.shape().0,
+            result.matrix.shape().1,
+            result.nnodes,
+            result.matrix.nnz()
+        );
+        result
+    }
+
+    /// This is a lower level method: use `ArrowSpaceBuilder::build`
+    /// Transpose the resulting matrix from clustering and build a graph Laplacian matrix
+    ///  so to be ready to be used to analyse signal features
+    pub fn build_laplacian_matrix_from_k_cluster(
+        clustered: DenseMatrix<f64>, // X×F: X centroids of cluisters, each with F features
+        eps: f64,                    // maximum rectified cosine distance (see `docs/`)
+        k: usize,                    // max number of neighbours for node
+        topk: usize, // number of results to be considered for closest neighbors
+        p: f64,      // kernel parameter
+        sigma_override: Option<f64>, // tolerance for eps
+        normalise: bool, // pre-normalisation before laplacian computation
+        sparsity_check: bool, // flag to disable sparsity check (some datasets works well even if sparse)
+        n_items: usize,       // items number of the origina raw data
+    ) -> GraphLaplacian {
+        info!(
+            "Building Laplacian matrix for K cluster: {} clusters",
+            clustered.shape().0
+        );
+        debug!(
+            "Laplacian parameters: eps={}, k={}, p={}, sigma={:?}, normalise={}",
+            eps, k, p, sigma_override, normalise
+        );
+        assert!(clustered.shape().0 <= n_items);
+
+        let result = crate::laplacian::build_laplacian_matrix(
+            // items are transposed here
+            clustered.transpose(),
+            &GraphParams {
+                eps,
+                k,
+                topk,
+                p,
+                sigma: sigma_override,
+                normalise,
+                sparsity_check,
+            },
+            Some(n_items),
+        );
+
+        if sparsity_check {
+            let sparsity_input = GraphLaplacian::sparsity(&result.matrix);
+            if sparsity_input > 0.95 {
+                panic!("Resulting laplacian matrix is too sparse {:?}", sparsity_input)
+            }
+        }
+        assert!(result.nnodes == n_items);
 
         info!(
             "Laplacian matrix built: {}×{} with {} nodes, {} non-zeros",
@@ -270,10 +202,7 @@ impl GraphFactory {
         let sparsity_output = GraphLaplacian::sparsity(&aspace.signals);
         println!("sparsity {:?}", sparsity_output);
         if sparsity_output > 0.95 {
-            panic!(
-                "Resulting spectral matrix is too sparse {:?}",
-                sparsity_output
-            )
+            panic!("Resulting spectral matrix is too sparse {:?}", sparsity_output)
         }
 
         assert!(
@@ -282,10 +211,7 @@ impl GraphFactory {
             "result should be a FxF matrix"
         );
 
-        info!(
-            "Built F×F feature matrix: {}×{}",
-            aspace.nfeatures, aspace.nfeatures
-        );
+        info!("Built F×F feature matrix: {}×{}", aspace.nfeatures, aspace.nfeatures);
         let stats = {
             let nnz = graph_laplacian.matrix.nnz();
             let total = aspace.nfeatures * aspace.nfeatures;
@@ -319,15 +245,19 @@ impl GraphLaplacian {
     /// Create a new GraphLaplacian from an items matrix (M = NxF)
     /// This is used to create a graph from the transposed matrix
     /// Use `GraphFacotry::build_lambda_graph` for the full computation
-    pub fn prepare_from_items(matrix: DenseMatrix<f64>, graph_params: GraphParams) -> Self {
+    pub fn prepare_from_items(
+        matrix: DenseMatrix<f64>,
+        graph_params: GraphParams,
+    ) -> Self {
         let nnodes = matrix.shape().0;
-        debug!(
-            "Preparing GraphLaplacian from items matrix: {} nodes",
-            nnodes
-        );
+        debug!("Preparing GraphLaplacian from items matrix: {} nodes", nnodes);
         trace!("Transposing matrix for GraphLaplacian");
 
-        build_laplacian_matrix(matrix.transpose(), &graph_params, Some(matrix.shape().0))
+        build_laplacian_matrix(
+            matrix.transpose(),
+            &graph_params,
+            Some(matrix.shape().0),
+        )
     }
 
     /// Get the matrix dimensions as (rows, cols)
@@ -369,10 +299,7 @@ impl GraphLaplacian {
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), &d| {
                 (min.min(d), max.max(d))
             });
-        debug!(
-            "Extracted degrees: min={:.6}, max={:.6}",
-            min_degree, max_degree
-        );
+        debug!("Extracted degrees: min={:.6}, max={:.6}", min_degree, max_degree);
         degrees
     }
 
@@ -432,25 +359,19 @@ impl GraphLaplacian {
             self.nnodes
         );
 
-        trace!(
-            "Computing Rayleigh quotient for vector of length {}",
-            vector.len()
-        );
+        trace!("Computing Rayleigh quotient for vector of length {}", vector.len());
 
         // Compute L * x manually using sprs sparse matrix structure
         let lx = self.multiply_vector(vector);
 
         // Compute x^T * (L * x)
-        let numerator: f64 = vector
-            .iter()
-            .zip(lx.iter())
-            .map(|(&xi, &lxi)| xi * lxi)
-            .sum();
+        let numerator: f64 =
+            vector.iter().zip(lx.iter()).map(|(&xi, &lxi)| xi * lxi).sum();
 
         // Compute x^T * x
         let denominator: f64 = vector.iter().map(|&xi| xi * xi).sum();
 
-        let result = if denominator > 1e-10 {
+        let result = if denominator > 1e-12 {
             numerator / denominator
         } else {
             warn!("Zero vector encountered in Rayleigh quotient computation");
@@ -495,10 +416,7 @@ impl GraphLaplacian {
         }
 
         let result_norm = result.iter().map(|&x| x * x).sum::<f64>().sqrt();
-        trace!(
-            "Matrix-vector multiplication result norm: {:.6}",
-            result_norm
-        );
+        trace!("Matrix-vector multiplication result norm: {:.6}", result_norm);
         result
     }
 
@@ -510,7 +428,9 @@ impl GraphLaplacian {
 
         for i in 0..self.nnodes {
             for j in 0..self.nnodes {
-                let diff = (self.matrix.get(i, j).unwrap() - self.matrix.get(j, i).unwrap()).abs();
+                let diff = (self.matrix.get(i, j).unwrap()
+                    - self.matrix.get(j, i).unwrap())
+                .abs();
                 max_asymmetry = max_asymmetry.max(diff);
                 if diff > tolerance {
                     violations += 1;
@@ -528,18 +448,14 @@ impl GraphLaplacian {
 
     /// Verify Laplacian properties: row sums ≈ 0, positive diagonal, symmetric
     pub fn verify_properties(&self, tolerance: f64) -> LaplacianValidation {
-        info!(
-            "Verifying Laplacian properties with tolerance {:.2e}",
-            tolerance
-        );
+        info!("Verifying Laplacian properties with tolerance {:.2e}", tolerance);
         let mut validation = LaplacianValidation::new();
 
         // Check row sums (should be ≈ 0)
         let mut max_row_sum: f64 = 0.0;
         for i in 0..self.nnodes {
-            let row_sum: f64 = (0..self.nnodes)
-                .map(|j| self.matrix.get(i, j).unwrap())
-                .sum();
+            let row_sum: f64 =
+                (0..self.nnodes).map(|j| self.matrix.get(i, j).unwrap()).sum();
             max_row_sum = max_row_sum.max(row_sum.abs());
             if row_sum.abs() > tolerance {
                 validation.row_sum_violations.push((i, row_sum));
@@ -561,8 +477,9 @@ impl GraphLaplacian {
             let mut max_asymmetry: f64 = 0.0;
             for i in 0..self.nnodes {
                 for j in 0..self.nnodes {
-                    let asymmetry =
-                        (self.matrix.get(i, j).unwrap() - self.matrix.get(j, i).unwrap()).abs();
+                    let asymmetry = (self.matrix.get(i, j).unwrap()
+                        - self.matrix.get(j, i).unwrap())
+                    .abs();
                     max_asymmetry = max_asymmetry.max(asymmetry);
                 }
             }
@@ -577,14 +494,8 @@ impl GraphLaplacian {
         debug!("  Valid: {}", validation.is_valid);
         debug!("  Symmetric: {}", validation.is_symmetric);
         debug!("  Max row sum error: {:.2e}", validation.max_row_sum_error);
-        debug!(
-            "  Row sum violations: {}",
-            validation.row_sum_violations.len()
-        );
-        debug!(
-            "  Negative diagonal entries: {}",
-            validation.negative_diagonal.len()
-        );
+        debug!("  Row sum violations: {}", validation.row_sum_violations.len());
+        debug!("  Negative diagonal entries: {}", validation.negative_diagonal.len());
 
         if !validation.is_valid {
             warn!("Laplacian validation failed - matrix may have numerical issues");

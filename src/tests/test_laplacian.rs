@@ -1,12 +1,12 @@
 use crate::graph::GraphParams;
+use crate::tests::test_helpers;
 use approx::abs_diff_eq;
-use smartcore::linalg::basic::{
-    arrays::Array2,
-    matrix::DenseMatrix,
-};
+use smartcore::linalg::basic::{arrays::Array2, matrix::DenseMatrix};
 use sprs::CsMat;
 
 use crate::laplacian::*;
+
+use log::debug;
 
 // Helper function for creating test vectors with known similarities
 fn create_test_vectors() -> Vec<Vec<f64>> {
@@ -27,6 +27,7 @@ fn default_params() -> GraphParams {
         p: 2.0,
         sigma: Some(0.1),
         normalise: false,
+        sparsity_check: true,
     }
 }
 
@@ -142,12 +143,8 @@ fn test_laplacian_mathematical_properties() {
         "CSR data length should match nnz"
     );
 
-    println!(
-        "✓ Laplacian mathematical properties verified for {}×{} sparse matrix with {} non-zeros",
-        n,
-        n,
-        laplacian.matrix.nnz()
-    );
+    println!("✓ Laplacian mathematical properties verified for {}×{} sparse matrix with {} non-zeros", 
+             n, n, laplacian.matrix.nnz());
 }
 
 #[test]
@@ -167,9 +164,11 @@ fn test_cosine_similarity_based_construction() {
         p: 1.0,
         sigma: Some(0.5), // Increased sigma for better discrimination
         normalise: true,
+        sparsity_check: true,
     };
 
-    let (_, adjacency) = build_laplacian_matrix_with_adjacency(&items, &params);
+    let (_, adjacency) =
+        test_helpers::build_laplacian_matrix_with_adjacency(&items, &params);
 
     // Check that similar vectors have higher adjacency weights
     let adj_01 = *adjacency.get(0, 1).unwrap(); // Should be highest (45° angle)
@@ -193,7 +192,7 @@ fn test_cosine_similarity_based_construction() {
         );
     } else {
         // Both are at threshold - this is acceptable behavior
-        println!(
+        debug!(
             "Note: 90° and 180° vectors have equal weights ({}) - likely thresholded",
             adj_02
         );
@@ -224,10 +223,14 @@ fn test_eps_parameter_constraint() {
         p: 1.0,
         sigma: Some(0.1),
         normalise: true,
+        sparsity_check: true,
     };
 
     let (_, adjacency_restrictive) =
-        build_laplacian_matrix_with_adjacency(&items, &restrictive_params);
+        test_helpers::build_laplacian_matrix_with_adjacency(
+            &items,
+            &restrictive_params,
+        );
 
     // Test with permissive eps
     let permissive_params = GraphParams {
@@ -237,10 +240,11 @@ fn test_eps_parameter_constraint() {
         p: 1.0,
         sigma: Some(0.1),
         normalise: true,
+        sparsity_check: true,
     };
 
     let (_, adjacency_permissive) =
-        build_laplacian_matrix_with_adjacency(&items, &permissive_params);
+        test_helpers::build_laplacian_matrix_with_adjacency(&items, &permissive_params);
 
     // Count non-zero adjacency entries
     let count_restrictive = count_nonzero_adjacency(&adjacency_restrictive);
@@ -265,6 +269,7 @@ fn test_k_parameter_constraint() {
         p: 1.0,
         sigma: Some(0.1),
         normalise: true,
+        sparsity_check: true,
     };
 
     let large_k_params = GraphParams {
@@ -274,10 +279,13 @@ fn test_k_parameter_constraint() {
         p: 1.0,
         sigma: Some(0.1),
         normalise: true,
+        sparsity_check: true,
     };
 
-    let (_, adj_small_k) = build_laplacian_matrix_with_adjacency(&items, &small_k_params);
-    let (_, adj_large_k) = build_laplacian_matrix_with_adjacency(&items, &large_k_params);
+    let (_, adj_small_k) =
+        test_helpers::build_laplacian_matrix_with_adjacency(&items, &small_k_params);
+    let (_, adj_large_k) =
+        test_helpers::build_laplacian_matrix_with_adjacency(&items, &large_k_params);
 
     let connections_small_k = count_nonzero_adjacency(&adj_small_k);
     let connections_large_k = count_nonzero_adjacency(&adj_large_k);
@@ -314,6 +322,7 @@ fn test_numerical_stability() {
         p: 2.0,
         sigma: Some(1e-8),
         normalise: false,
+        sparsity_check: true,
     };
 
     let laplacian = build_laplacian_matrix(
@@ -323,12 +332,12 @@ fn test_numerical_stability() {
     );
 
     // Should produce finite values - check all stored entries in sparse matrix
-    let mut total_entries_checked = 0;
+    let mut _total_entries_checked = 0;
     let mut finite_entries = 0;
 
     for (i, row) in laplacian.matrix.outer_iterator().enumerate() {
         for (j, &val) in row.iter() {
-            total_entries_checked += 1;
+            _total_entries_checked += 1;
             assert!(
                 val.is_finite(),
                 "Matrix entry [{},{}] should be finite, got {}",
@@ -399,8 +408,8 @@ fn test_numerical_stability() {
     }
 
     println!(
-        "✓ Numerical stability verified: finite entries ratio {}",
-        finite_entries / total_entries_checked
+        "✓ Numerical stability verified: checked {} stored entries, all finite",
+        finite_entries
     );
     println!(
         "  Matrix sparsity: {}/{} entries stored ({:.1}%)",
@@ -425,20 +434,19 @@ fn test_performance_with_larger_dataset() {
         p: 2.0,
         sigma: Some(0.1),
         normalise: false,
+        sparsity_check: true,
     };
 
     let start = std::time::Instant::now();
     let laplacian = build_laplacian_matrix(
-        DenseMatrix::<f64>::from_2d_vec(&large_items)
-            .unwrap()
-            .transpose(),
+        DenseMatrix::<f64>::from_2d_vec(&large_items).unwrap().transpose(),
         &params,
         None,
     );
     let duration = start.elapsed();
 
     assert_eq!(laplacian.nnodes, 15);
-    println!("Large dataset (15 items) processed in {:?}", duration);
+    debug!("Large dataset (15 items) processed in {:?}", duration);
 
     // Sanity check - should complete in reasonable time
     assert!(duration.as_secs() < 5, "Should complete within 5 seconds");
@@ -476,12 +484,11 @@ fn test_arrowspace_integration_pattern_sparse() {
         p: 2.0,
         sigma: None,
         normalise: true,
+        sparsity_check: true,
     };
 
     let laplacian = build_laplacian_matrix(
-        DenseMatrix::<f64>::from_2d_vec(&protein_like_data)
-            .unwrap()
-            .transpose(),
+        DenseMatrix::<f64>::from_2d_vec(&protein_like_data).unwrap().transpose(),
         &arrowspace_params,
         None,
     );
@@ -558,6 +565,7 @@ fn test_optimized_sparse_matrix_laplacian() {
         p: 2.0,
         sigma: Some(0.1),
         normalise: false,
+        sparsity_check: true,
     };
 
     let laplacian = build_laplacian_matrix(
@@ -572,10 +580,7 @@ fn test_optimized_sparse_matrix_laplacian() {
     assert_eq!(laplacian.matrix.shape().1, 3);
 
     // Verify sparse matrix properties
-    assert!(
-        laplacian.matrix.nnz() > 0,
-        "Matrix should have some non-zero entries"
-    );
+    assert!(laplacian.matrix.nnz() > 0, "Matrix should have some non-zero entries");
     assert!(
         laplacian.matrix.nnz() <= 16, // 4x4 matrix
         "Matrix cannot have more than 16 entries"
@@ -666,7 +671,7 @@ fn test_optimized_sparse_matrix_laplacian() {
         (1.0 - laplacian.matrix.nnz() as f64 / 16.0) * 100.0
     );
 
-    println!("Optimized Sparse Matrix Laplacian test passed");
+    debug!("Optimized Sparse Matrix Laplacian test passed");
 }
 
 #[test]
@@ -680,18 +685,16 @@ fn test_with_adjacency_output() {
         p: 1.0,
         sigma: Some(0.2),
         normalise: false,
+        sparsity_check: true,
     };
 
-    let (laplacian, adjacency) = build_laplacian_matrix_with_adjacency(&items, &params);
+    let (laplacian, adjacency) =
+        test_helpers::build_laplacian_matrix_with_adjacency(&items, &params);
 
     // Verify adjacency has zero diagonal
     for i in 0..3 {
         let diag_val = adjacency.get(i, i).copied().unwrap_or(0.0);
-        assert_eq!(
-            diag_val, 0.0,
-            "Adjacency diagonal [{},{}] should be zero",
-            i, i
-        );
+        assert_eq!(diag_val, 0.0, "Adjacency diagonal [{},{}] should be zero", i, i);
     }
 
     // Verify Laplacian = Degree - Adjacency
@@ -797,5 +800,5 @@ fn test_with_adjacency_output() {
         adjacency.nnz()
     );
 
-    println!("Sparse Adjacency + Laplacian test passed");
+    debug!("Sparse Adjacency + Laplacian test passed");
 }

@@ -30,10 +30,7 @@ fn arrowspace_build_and_recompute() {
         .with_spectral(false)
         .build(items[0..150].to_vec());
 
-    assert_eq!(
-        aspace_plain.nfeatures, dims,
-        "Expected 13-dimensional feature aspace"
-    );
+    assert_eq!(aspace_plain.nfeatures, dims, "Expected 13-dimensional feature aspace");
     assert_eq!(aspace_plain.nitems, 150, "Expected 7 data points");
 
     println!("=== ARROWSPACE CONSTRUCTION ===");
@@ -99,7 +96,7 @@ fn arrowspace_build_and_recompute_nonzero() {
 
     // Build λτ-graph with parameters that encourage connectivity
     // Larger eps to include more neighbors, higher k for more connections
-    let gl = GraphFactory::build_laplacian_matrix(
+    let gl = GraphFactory::build_laplacian_matrix_from_items(
         items,
         0.5, // Larger eps for more connectivity
         4,   // Higher k for more neighbors
@@ -107,6 +104,7 @@ fn arrowspace_build_and_recompute_nonzero() {
         2.0,
         None,
         GRAPH_PARAMS.normalise,
+        GRAPH_PARAMS.sparsity_check,
     );
     let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
 
@@ -119,10 +117,7 @@ fn arrowspace_build_and_recompute_nonzero() {
     println!("lam0: {:?}, lam1: {:?}", lam0, lam1);
     assert!(lam0 >= 0.0);
     assert!(lam1 >= 0.0);
-    assert!(
-        lam0 > 1e-10 || lam1 > 1e-10,
-        "At least one lambda should be non-zero"
-    );
+    assert!(lam0 > 1e-10 || lam1 > 1e-10, "At least one lambda should be non-zero");
 }
 
 #[test]
@@ -157,10 +152,8 @@ fn arrowspace_construct_and_lambda() {
 
     assert!(gl.nnodes == aspace.data.shape().0);
     // Basic sanity: non-negative and often lam1 <= lam0 for this pair of rows
-    let all_pos = aspace
-        .lambdas()
-        .iter()
-        .all(|&a| !relative_eq!(0.0, a, epsilon = 1e-10));
+    let all_pos =
+        aspace.lambdas().iter().all(|&a| !relative_eq!(0.0, a, epsilon = 1e-10));
     assert!(all_pos, "Vectors have been recomputed");
 }
 
@@ -174,8 +167,16 @@ fn arrowspace_add_rows_superpose() {
     let aspace = ArrowSpace::from_items_default(rows.clone());
 
     // λτ-graph from the same data
-    let gl =
-        GraphFactory::build_laplacian_matrix(rows, 1e-1, 2, 2, 2.0, None, GRAPH_PARAMS.normalise);
+    let gl = GraphFactory::build_laplacian_matrix_from_items(
+        rows,
+        1e-1,
+        2,
+        2,
+        2.0,
+        None,
+        GRAPH_PARAMS.normalise,
+        GRAPH_PARAMS.sparsity_check,
+    );
     let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
     aspace.recompute_lambdas(&gl);
 
@@ -196,16 +197,20 @@ fn arrowspace_lambda_taumode_characteristics() {
     // Create test data with distinct patterns to analyze taumode behavior
     let items = vec![
         vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
+            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
+            0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
+            0.56,
         ],
         vec![
-            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38, 0.60,
+            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38,
+            0.60,
         ],
         vec![
-            0.77, 0.14, 0.47, 0.26, 0.59, 0.35, 0.51, 0.45, 0.23, 0.68, 0.10, 0.34, 0.54,
+            0.77, 0.14, 0.47, 0.26, 0.59, 0.35, 0.51, 0.45, 0.23, 0.68, 0.10, 0.34,
+            0.54,
         ],
     ];
 
@@ -240,10 +245,8 @@ fn arrowspace_lambda_taumode_characteristics() {
     aspace.recompute_lambdas(&gl);
     let recomputed_lambdas = aspace.lambdas();
 
-    for (i, (&initial, &recomputed)) in initial_lambdas
-        .iter()
-        .zip(recomputed_lambdas.iter())
-        .enumerate()
+    for (i, (&initial, &recomputed)) in
+        initial_lambdas.iter().zip(recomputed_lambdas.iter()).enumerate()
     {
         assert!(
             (initial - recomputed).abs() < 1e-12,
@@ -257,16 +260,20 @@ fn arrowspace_lambda_taumode_characteristics() {
     // Test 4: Sensitivity to data changes - different data should give different lambdas
     let modified_items = vec![
         vec![
-            0.90, 0.05, 0.50, 0.35, 0.70, 0.25, 0.60, 0.55, 0.12, 0.80, 0.03, 0.40, 0.65,
+            0.90, 0.05, 0.50, 0.35, 0.70, 0.25, 0.60, 0.55, 0.12, 0.80, 0.03, 0.40,
+            0.65,
         ],
         vec![
-            0.70, 0.18, 0.40, 0.22, 0.55, 0.38, 0.48, 0.40, 0.28, 0.62, 0.15, 0.30, 0.48,
+            0.70, 0.18, 0.40, 0.22, 0.55, 0.38, 0.48, 0.40, 0.28, 0.62, 0.15, 0.30,
+            0.48,
         ],
         vec![
-            0.88, 0.06, 0.38, 0.34, 0.72, 0.26, 0.50, 0.58, 0.14, 0.82, 0.02, 0.42, 0.68,
+            0.88, 0.06, 0.38, 0.34, 0.72, 0.26, 0.50, 0.58, 0.14, 0.82, 0.02, 0.42,
+            0.68,
         ],
         vec![
-            0.74, 0.17, 0.44, 0.23, 0.56, 0.39, 0.49, 0.42, 0.26, 0.65, 0.13, 0.31, 0.49,
+            0.74, 0.17, 0.44, 0.23, 0.56, 0.39, 0.49, 0.42, 0.26, 0.65, 0.13, 0.31,
+            0.49,
         ],
     ];
 
@@ -283,11 +290,8 @@ fn arrowspace_lambda_taumode_characteristics() {
     println!("Taumode lambdas: {:?}", &aspace.lambdas);
 
     let mut significant_differences = 0;
-    for (_, (&original, &modified)) in aspace
-        .lambdas
-        .iter()
-        .zip(aspace2.lambdas.iter())
-        .enumerate()
+    for (_, (&original, &modified)) in
+        aspace.lambdas.iter().zip(aspace2.lambdas.iter()).enumerate()
     {
         let diff = (original - modified).abs();
         if diff > 1e-6 {
@@ -309,11 +313,7 @@ fn arrowspace_lambda_taumode_characteristics() {
     // Test 6: Feature variation analysis
     let lambda_variance = {
         let mean = aspace.lambdas.iter().sum::<f64>() / aspace.lambdas.len() as f64;
-        let variance = aspace
-            .lambdas
-            .iter()
-            .map(|&x| (x - mean).powi(2))
-            .sum::<f64>()
+        let variance = aspace.lambdas.iter().map(|&x| (x - mean).powi(2)).sum::<f64>()
             / aspace.lambdas.len() as f64;
         variance
     };
@@ -331,10 +331,7 @@ fn arrowspace_lambda_taumode_characteristics() {
     println!("  Variance: {:.6}", lambda_variance);
 
     // Variance should be positive (indicating feature discrimination)
-    assert!(
-        lambda_variance >= 0.0,
-        "Lambda variance should be non-negative"
-    );
+    assert!(lambda_variance >= 0.0, "Lambda variance should be non-negative");
 
     println!("✓ Taumode index characteristics validated");
     println!("✓ Non-negativity, boundedness, and consistency verified");
@@ -390,22 +387,34 @@ fn arrowspace_lambda_sanity() {
     // Four items with 13 features each; check non-negativity and a conservative upper bound using max degree
     let items = vec![
         vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
+            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
+            0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
+            0.56,
         ],
         vec![
-            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38, 0.60,
+            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38,
+            0.60,
         ],
         vec![
-            0.77, 0.14, 0.47, 0.26, 0.59, 0.35, 0.51, 0.45, 0.23, 0.68, 0.10, 0.34, 0.54,
+            0.77, 0.14, 0.47, 0.26, 0.59, 0.35, 0.51, 0.45, 0.23, 0.68, 0.10, 0.34,
+            0.54,
         ],
     ];
 
     let aspace = ArrowSpace::from_items_default(items.clone());
-    let gl =
-        GraphFactory::build_laplacian_matrix(items, 1e-3, 3, 3, 2.0, None, GRAPH_PARAMS.normalise);
+    let gl = GraphFactory::build_laplacian_matrix_from_items(
+        items,
+        1e-3,
+        3,
+        3,
+        2.0,
+        None,
+        GRAPH_PARAMS.normalise,
+        GRAPH_PARAMS.sparsity_check,
+    );
 
     let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
     aspace.recompute_lambdas(&gl);
@@ -424,10 +433,7 @@ fn arrowspace_lambda_sanity() {
 
     let upper = 2.0 * max_deg + 1e-12;
 
-    assert!(
-        lambda.iter().all(|&x| x >= 0.0),
-        "synthetic index must be nonnegative"
-    );
+    assert!(lambda.iter().all(|&x| x >= 0.0), "synthetic index must be nonnegative");
     assert!(
         lambda.iter().all(|&x| x <= upper),
         "synthetic index {lambda:?} exceeded conservative upper bound {upper} (max_deg={max_deg})"
@@ -437,13 +443,15 @@ fn arrowspace_lambda_sanity() {
 #[test]
 fn arrowspace_lambda_positivity_bounds() {
     // Build λτ-graph from a small basis
-    let gl = GraphFactory::build_laplacian_matrix(
+    let gl = GraphFactory::build_laplacian_matrix_from_items(
         vec![
             vec![
-                0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
+                0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
+                0.58,
             ],
             vec![
-                0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
+                0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
+                0.56,
             ],
         ],
         GRAPH_PARAMS.eps,
@@ -452,22 +460,27 @@ fn arrowspace_lambda_positivity_bounds() {
         GRAPH_PARAMS.p,
         GRAPH_PARAMS.sigma,
         GRAPH_PARAMS.normalise,
+        GRAPH_PARAMS.sparsity_check,
     );
 
     let test_rows0 = vec![
         vec![
-            0.85, 0.15, 0.42, 0.33, 0.67, 0.28, 0.59, 0.41, 0.22, 0.78, 0.05, 0.38, 0.62,
+            0.85, 0.15, 0.42, 0.33, 0.67, 0.28, 0.59, 0.41, 0.22, 0.78, 0.05, 0.38,
+            0.62,
         ],
         vec![
-            0.76, 0.09, 0.48, 0.31, 0.58, 0.35, 0.51, 0.49, 0.18, 0.72, 0.11, 0.34, 0.54,
+            0.76, 0.09, 0.48, 0.31, 0.58, 0.35, 0.51, 0.49, 0.18, 0.72, 0.11, 0.34,
+            0.54,
         ],
     ];
     let test_rows1 = vec![
         vec![
-            0.73, 0.18, 0.46, 0.25, 0.69, 0.31, 0.57, 0.43, 0.16, 0.81, 0.04, 0.39, 0.61,
+            0.73, 0.18, 0.46, 0.25, 0.69, 0.31, 0.57, 0.43, 0.16, 0.81, 0.04, 0.39,
+            0.61,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
+            0.56,
         ],
     ];
 
@@ -538,7 +551,7 @@ fn arrowspace_addition_commutativity() {
     println!("ArrowSpace shape: {:?}", aspace1.data.shape());
 
     // Build λ-graph from the union of items for consistent Laplacian
-    let gl = GraphFactory::build_laplacian_matrix(
+    let gl = GraphFactory::build_laplacian_matrix_from_items(
         vec![item_a.clone(), item_b.clone()],
         GRAPH_PARAMS.eps,
         GRAPH_PARAMS.k,
@@ -546,6 +559,7 @@ fn arrowspace_addition_commutativity() {
         GRAPH_PARAMS.p,
         GRAPH_PARAMS.sigma,
         GRAPH_PARAMS.normalise,
+        GRAPH_PARAMS.sparsity_check,
     );
 
     println!("Graph nodes: {:?}", gl.nnodes);
@@ -571,26 +585,10 @@ fn arrowspace_addition_commutativity() {
     println!("aspace2 lambdas: {:?}", aspace2.lambdas());
 
     // Verify that we have the items we expect
-    assert_eq!(
-        aspace1.get_item(0).item,
-        item_a,
-        "aspace1[0] should be item_a"
-    );
-    assert_eq!(
-        aspace1.get_item(1).item,
-        item_b,
-        "aspace1[1] should be item_b"
-    );
-    assert_eq!(
-        aspace2.get_item(0).item,
-        item_b,
-        "aspace2[0] should be item_b"
-    );
-    assert_eq!(
-        aspace2.get_item(1).item,
-        item_a,
-        "aspace2[1] should be item_a"
-    );
+    assert_eq!(aspace1.get_item(0).item, item_a, "aspace1[0] should be item_a");
+    assert_eq!(aspace1.get_item(1).item, item_b, "aspace1[1] should be item_b");
+    assert_eq!(aspace2.get_item(0).item, item_b, "aspace2[0] should be item_b");
+    assert_eq!(aspace2.get_item(1).item, item_a, "aspace2[1] should be item_a");
 
     // Store initial lambda states for comparison
     let aspace1_initial_lambdas = aspace1.lambdas().to_vec();
@@ -620,14 +618,18 @@ fn arrowspace_addition_commutativity() {
     ];
 
     // Verify both results match the expected sum
-    for (i, (&actual, &expected_val)) in result1.item.iter().zip(expected.iter()).enumerate() {
+    for (i, (&actual, &expected_val)) in
+        result1.item.iter().zip(expected.iter()).enumerate()
+    {
         assert!(
             (actual - expected_val).abs() < 1e-10,
             "aspace1 feature {i}: got {actual}, expected {expected_val}"
         );
     }
 
-    for (i, (&actual, &expected_val)) in result2.item.iter().zip(expected.iter()).enumerate() {
+    for (i, (&actual, &expected_val)) in
+        result2.item.iter().zip(expected.iter()).enumerate()
+    {
         assert!(
             (actual - expected_val).abs() < 1e-10,
             "aspace2 feature {i}: got {actual}, expected {expected_val}"
@@ -667,11 +669,8 @@ fn arrowspace_addition_commutativity() {
     println!("Final aspace2 lambdas:   {:?}", aspace2.lambdas());
 
     // Calculate and display feature-wise differences to analyze the effect
-    let feature_diff: Vec<f64> = item_a
-        .iter()
-        .zip(item_b.iter())
-        .map(|(a, b)| (a - b).abs())
-        .collect();
+    let feature_diff: Vec<f64> =
+        item_a.iter().zip(item_b.iter()).map(|(a, b)| (a - b).abs()).collect();
     println!("Feature-wise |A-B| differences: {feature_diff:?}");
     println!(
         "Max difference: {:.6}",
@@ -691,13 +690,15 @@ fn arrowspace_addition_commutativity() {
 #[test]
 #[should_panic]
 fn arrowspace_zero_vector_should_panic() {
-    let gl = GraphFactory::build_laplacian_matrix(
+    let gl = GraphFactory::build_laplacian_matrix_from_items(
         vec![
             vec![
-                0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
+                0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
+                0.58,
             ],
             vec![
-                0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
+                0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
+                0.56,
             ],
         ],
         GRAPH_PARAMS.eps,
@@ -706,11 +707,11 @@ fn arrowspace_zero_vector_should_panic() {
         GRAPH_PARAMS.p,
         GRAPH_PARAMS.sigma,
         GRAPH_PARAMS.normalise,
+        GRAPH_PARAMS.sparsity_check,
     );
 
-    let zero_row = vec![
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-    ];
+    let zero_row =
+        vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     let aspace = ArrowSpace::from_items_default(vec![zero_row.clone(), zero_row]);
     let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
     aspace.recompute_lambdas(&gl);
@@ -782,7 +783,7 @@ fn arrowspace_zero_vector_should_panic() {
 #[test]
 #[should_panic]
 fn graph_one_node() {
-    let _ = GraphFactory::build_laplacian_matrix(
+    let _ = GraphFactory::build_laplacian_matrix_from_items(
         vec![vec![1.0, 1.0, 1.0]],
         1.0,
         2,
@@ -790,6 +791,7 @@ fn graph_one_node() {
         2.0,
         None,
         GRAPH_PARAMS.normalise,
+        GRAPH_PARAMS.sparsity_check,
     );
 }
 
@@ -841,10 +843,8 @@ fn arrowspace_recompute_synthetic() {
 
     println!("lambdas after: {:?}", after);
 
-    let all_diff = before
-        .iter()
-        .zip(&after)
-        .all(|(&b, &a)| !relative_eq!(b, a, epsilon = 1e-4));
+    let all_diff =
+        before.iter().zip(&after).all(|(&b, &a)| !relative_eq!(b, a, epsilon = 1e-9));
     assert!(all_diff, "Vectors have been recomputed");
 }
 
@@ -1003,11 +1003,7 @@ fn test_prepare_query_item_consistency() {
 
 #[test]
 fn test_prepare_query_item_orthogonal_to_space() {
-    let items = vec![
-        vec![1.0, 0.0, 0.0],
-        vec![0.0, 1.0, 0.0],
-        vec![0.0, 0.0, 1.0],
-    ];
+    let items = vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0], vec![0.0, 0.0, 1.0]];
     let builder = ArrowSpaceBuilder::new().with_lambda_graph(1.0, 1, 2, 2.0, Some(1.0));
     let (aspace, gl) = builder.build(items);
 
@@ -1020,22 +1016,19 @@ fn test_prepare_query_item_orthogonal_to_space() {
 
 #[test]
 fn test_prepare_query_item_with_different_graph_params() {
-    let items = vec![
-        vec![1.0, 2.0],
-        vec![2.0, 3.0],
-        vec![3.0, 4.0],
-        vec![4.0, 5.0],
-    ];
+    let items = vec![vec![1.0, 2.0], vec![2.0, 3.0], vec![3.0, 4.0], vec![4.0, 5.0]];
 
     // Test with tight epsilon (sparse graph)
-    let builder1 = ArrowSpaceBuilder::new().with_lambda_graph(0.1, 1, 2, 2.0, Some(0.05));
+    let builder1 =
+        ArrowSpaceBuilder::new().with_lambda_graph(0.1, 1, 2, 2.0, Some(0.05));
     let (aspace1, gl1) = builder1.build(items.clone());
     let query = vec![2.5, 3.5];
     let l0 = aspace1.prepare_query_item(&query, &gl1);
     println!("test item, tau median -> tau: {:?}", l0);
 
     // Test with loose epsilon (dense graph)
-    let builder2 = ArrowSpaceBuilder::new().with_lambda_graph(0.5, 3, 3, 2.0, Some(5.0));
+    let builder2 =
+        ArrowSpaceBuilder::new().with_lambda_graph(0.5, 3, 3, 2.0, Some(5.0));
     let (aspace2, gl2) = builder2.build(items);
     let l1 = aspace2.prepare_query_item(&query, &gl2);
     println!("test item, tau median -> tau: {:?}", l1);

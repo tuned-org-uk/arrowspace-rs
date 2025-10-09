@@ -31,6 +31,7 @@
 
 use crate::graph::{GraphLaplacian, GraphParams};
 
+use dashmap::DashMap;
 use smartcore::algorithm::neighbour::cosinepair::CosinePair;
 use smartcore::api::{Transformer, UnsupervisedEstimator};
 use smartcore::linalg::basic::arrays::{Array, Array2};
@@ -40,7 +41,6 @@ use smartcore::preprocessing::numerical::{StandardScaler, StandardScalerParamete
 use log::{debug, info, trace};
 use rayon::prelude::*;
 use sprs::{CsMat, TriMat};
-use std::collections::BTreeMap;
 
 /// Builds a graph Laplacian matrix from a collection of high-dimensional vectors
 ///
@@ -104,6 +104,7 @@ use std::collections::BTreeMap;
 /// p: 2.0, // Quadratic kernel
 /// sigma: Some(0.1), // Kernel bandwidth
 /// normalise: true, // Normalize to unit vectors
+/// sparsity_check: false
 /// };
 ///
 /// let laplacian = build_laplacian_matrix(
@@ -125,17 +126,9 @@ pub fn build_laplacian_matrix(
     n_items: Option<usize>,
 ) -> GraphLaplacian {
     let (d, n) = transposed.shape();
-    assert!(
-        n >= 2 && d >= 2,
-        "items should be at least of shape (2,2): ({},{})",
-        d,
-        n
-    );
+    assert!(n >= 2 && d >= 2, "items should be at least of shape (2,2): ({},{})", d, n);
 
-    info!(
-        "Building Laplacian matrix for {} items with {} features",
-        n, d
-    );
+    info!("Building Laplacian matrix for {} items with {} features", n, d);
     debug!(
         "Graph parameters: eps={}, k={}, p={}, sigma={:?}, normalise={}",
         params.eps, params.k, params.p, params.sigma, params.normalise
@@ -144,7 +137,9 @@ pub fn build_laplacian_matrix(
     // Step 1: Conditional normalization based on params.normalise flag
     let mut items = if params.normalise {
         debug!("Normalizing items to unit norm");
-        let scaler = StandardScaler::fit(&transposed, StandardScalerParameters::default()).unwrap();
+        let scaler =
+            StandardScaler::fit(&transposed, StandardScalerParameters::default())
+                .unwrap();
         let scaled = scaler.transform(&transposed).unwrap();
         trace!("Items normalized successfully");
         scaled
@@ -155,8 +150,10 @@ pub fn build_laplacian_matrix(
 
     let triplets = _main_laplacian(&mut items, params);
 
+    // Last step: finalise results into sparse
     let sparse_matrix: CsMat<f64> = triplets.to_csr();
     let graph_laplacian = GraphLaplacian {
+        init_data: items.transpose(), // store initial data from builder
         matrix: sparse_matrix,
         nnodes: match n_items {
             Some(n_items) => n_items,
@@ -174,7 +171,7 @@ pub fn build_laplacian_matrix(
     graph_laplacian
 }
 
-/// Laplacian main body
+/// Laplacian main function called from the public method
 /// Provide the main steps of computation for Laplacian(items)
 fn _main_laplacian(
     items: &mut DenseMatrix<f64>,
@@ -182,27 +179,77 @@ fn _main_laplacian(
 ) -> sprs::TriMatBase<Vec<usize>, Vec<f64>> {
     let n = items.shape().0;
 
+    let adj_rows = _build_adjacency(items, params, n);
+
+    let sym = _symmetrise_adjancency(adj_rows, n);
+
+    let triplets = _build_sparse_laplacian(sym, n);
+
+    triplets
+}
+
+/// From dense NxF to Adjacency matrix (weighted adjacency list)
+/// From dense NxF to Adjacency matrix (weighted adjacency list) with inline sparsification
+fn _build_adjacency(
+    items: &mut DenseMatrix<f64>,
+    params: &GraphParams,
+    n: usize,
+) -> Vec<Vec<(usize, f64)>> {
     // Step 2: Build CosinePair structure - O(n × d × log n)
     info!("Building CosinePair data structure");
     #[allow(clippy::unnecessary_mut_passed)]
-    let fastpair = CosinePair::new(items).unwrap();
+    let fastpair = CosinePair::with_top_k(items, params.topk + 1).unwrap();
     debug!("CosinePair structure built for {} items", n);
 
-    // Step 3: k-NN queries - O(n × k × d × log n)
+    // Compute node degrees for sparsification scoring**
+    // This is fast: just count neighbors per node from k-NN results
+    info!("Computing degrees for inline sparsification");
+    let degrees: Vec<usize> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            fastpair
+                .query_row_top_k(i, params.topk + 1)
+                .unwrap()
+                .iter()
+                .filter(|(dist, j)| i != *j && *dist <= params.eps)
+                .count()
+        })
+        .collect();
+
+    let avg_degree = degrees.iter().sum::<usize>() as f64 / n as f64;
+    let sparsify = avg_degree > 10.0; // Only sparsify if dense enough
+
+    if sparsify {
+        info!("Inline sparsification enabled (avg degree {:.1})", avg_degree);
+    } else {
+        debug!("Skipping sparsification (avg degree {:.1})", avg_degree);
+    }
+
+    // Step 3: k-NN queries with **inline sparsification** - O(n × k × d × log n)
     info!("Computing k-NN with CosinePair: k={}", params.topk + 1);
     let adj_rows: Vec<Vec<(usize, f64)>> = (0..n)
         .into_par_iter()
         .map(|i| {
-            let item: Vec<f64> = items.get_row(i).iterator(0).copied().collect();
-            let neighbors = &fastpair.query(&item, params.topk + 1).unwrap();
-            neighbors
+            let neighbors = fastpair.query_row_top_k(i, params.topk + 1).unwrap();
+
+            // Collect valid neighbors with weights
+            let mut valid_neighbors: Vec<(usize, f64, f64)> = neighbors
                 .iter()
                 .filter_map(|(distance, j)| {
                     if i != *j && *distance <= params.eps {
-                        let weight =
-                            1.0 / (1.0 + (distance / params.sigma.unwrap_or(1.0)).powf(params.p));
+                        let weight = 1.0
+                            / (1.0
+                                + (distance / params.sigma.unwrap_or(1.0))
+                                    .powf(params.p));
                         if weight > 1e-12 {
-                            Some((*j, weight))
+                            // **INLINE SPARSIFICATION SCORE**
+                            // Score = weight * sqrt(degree_i * degree_j)
+                            let score = if sparsify {
+                                weight * ((degrees[i] * degrees[*j]) as f64).sqrt()
+                            } else {
+                                weight // No scoring overhead if not sparsifying
+                            };
+                            Some((*j, weight, score))
                         } else {
                             None
                         }
@@ -210,221 +257,137 @@ fn _main_laplacian(
                         None
                     }
                 })
-                .collect()
+                .collect();
+
+            // **INLINE SPARSIFICATION: Keep top 50% by score**
+            if sparsify && valid_neighbors.len() > 2 {
+                valid_neighbors.sort_unstable_by(|a, b| {
+                    b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                let keep_count = (valid_neighbors.len() / 2).max(1);
+                valid_neighbors.truncate(keep_count);
+            }
+
+            // Return (neighbor, weight) pairs
+            valid_neighbors.into_iter().map(|(j, w, _)| (j, w)).collect()
         })
         .collect();
 
     debug!("Built adjacency rows for {} items", n);
+    adj_rows
+}
 
+/// Symmetrise weighted Adjacency list
+pub(crate) fn _symmetrise_adjancency(
+    adj_rows: Vec<Vec<(usize, f64)>>,
+    n: usize,
+) -> Vec<Vec<(usize, f64)>> {
     // Step 4: Symmetrise adjacency
     trace!("Symmetrizing adjacency matrix");
 
-    // Use parallel collection first, then sequential symmetrization
+    // Use parallel collection first, then sequential symmetrisation
     let all_edges: Vec<(usize, usize, f64)> = adj_rows
         .par_iter()
         .enumerate()
         .flat_map(|(i, row)| {
             // Convert to owned data for parallel processing
-            row.par_iter()
-                .map(move |&(j, w)| (i, j, w))
-                .collect::<Vec<_>>()
+            row.par_iter().map(move |&(j, w)| (i, j, w)).collect::<Vec<_>>()
         })
         .collect();
 
-    // Sequential symmetrization to avoid race conditions
-    let mut edge_map: std::collections::HashMap<(usize, usize), f64> =
-        std::collections::HashMap::new();
+    // Concurrent edge map using DashMap (lock-free concurrent HashMap)
+    let edge_map: DashMap<(usize, usize), f64> = DashMap::new();
 
-    // Add all edges in both directions
-    for (i, j, w) in all_edges {
-        // Add edge i -> j
+    all_edges.par_iter().for_each(|&(i, j, w)| {
         edge_map.insert((i, j), w);
-        // Add edge j -> i (symmetrization)
         edge_map.insert((j, i), w);
-    }
-
-    // Convert back to adjacency lists
-    let mut sym: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
-    for ((i, j), w) in edge_map {
-        if i != j {
-            // Skip diagonal entries for now
-            sym[i].push((j, w));
-        }
-    }
-
-    // Sort adjacency lists in parallel (this DOES work with rayon)
-    sym.par_iter_mut().for_each(|row| {
-        row.sort_unstable_by_key(|&(j, _)| j);
     });
 
-    // Step 5: Build sparse Laplacian matrix L = D - A using triplet format
-    info!("Converting adjacency to sparse Laplacian matrix");
-    let mut triplets: sprs::TriMatBase<Vec<usize>, Vec<f64>> = TriMat::new((n, n));
-    let mut total_edges = 0;
+    // Symmetrisation and sort during collection
+    let sym: Vec<Vec<(usize, f64)>> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let mut neighbors: Vec<(usize, f64)> = edge_map
+                .iter()
+                .filter_map(|entry| {
+                    let &(src, dst) = entry.key();
+                    let &w = entry.value();
+                    if src == i && src != dst {
+                        Some((dst, w))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
 
-    for (i, s) in sym.iter().enumerate() {
-        let degree: f64 = s.iter().map(|&(_j, w)| w).sum();
-        triplets.add_triplet(i, i, degree);
-
-        for &(j, w) in s {
-            if i != j {
-                triplets.add_triplet(i, j, -w);
-                if i < j {
-                    total_edges += 1;
-                }
-            }
-        }
-    }
-
-    debug!("Laplacian matrix has {} total edges", total_edges);
-
-    triplets
-}
-
-/// Alternative version that builds adjacency first, then converts to Laplacian
-/// Useful for debugging or when you need access to the adjacency matrix
-pub fn build_laplacian_matrix_with_adjacency(
-    items: &[Vec<f64>],
-    params: &GraphParams,
-) -> (GraphLaplacian, CsMat<f64>) {
-    let n_items = items.len();
-    if n_items < 2 {
-        panic!("Matrix too small")
-    }
-
-    info!(
-        "Building Laplacian with adjacency matrix output for {} items",
-        n_items
-    );
-
-    let adjacency_matrix = build_adjacency_matrix(items, params);
-
-    debug!("Converting adjacency to Laplacian matrix");
-    let mut laplacian_triplets = TriMat::new((n_items, n_items));
-
-    for i in 0..n_items {
-        let degree: f64 = adjacency_matrix
-            .outer_view(i)
-            .unwrap()
-            .iter()
-            .map(|(_, &w)| w)
-            .sum();
-        laplacian_triplets.add_triplet(i, i, degree);
-
-        for (j, &weight) in adjacency_matrix.outer_view(i).unwrap().iter() {
-            if i != j {
-                laplacian_triplets.add_triplet(i, j, -weight);
-            }
-        }
-    }
-
-    let laplacian_matrix = laplacian_triplets.to_csr();
-    let graph_laplacian = GraphLaplacian {
-        matrix: laplacian_matrix,
-        nnodes: n_items,
-        graph_params: params.clone(),
-    };
-
-    info!("Successfully built Laplacian with adjacency matrix");
-    (graph_laplacian, adjacency_matrix)
-}
-
-/// Helper function to build just the adjacency matrix
-fn build_adjacency_matrix(items: &[Vec<f64>], params: &GraphParams) -> CsMat<f64> {
-    let n_items = items.len();
-    debug!("Building adjacency matrix for {} items", n_items);
-
-    let norms: Vec<f64> = items
-        .iter()
-        .map(|item| (item.iter().map(|&x| x * x).sum::<f64>()).sqrt())
+            // Sort immediately within this thread
+            neighbors.sort_unstable_by_key(|&(j, _)| j);
+            neighbors
+        })
         .collect();
-    trace!("Precomputed norms for all items");
 
-    let mut adj = vec![BTreeMap::<usize, f64>::new(); n_items];
-    let sigma = params.sigma.unwrap_or_else(|| params.eps.max(1e-12));
-    debug!("Using sigma={} for adjacency computation", sigma);
+    sym
+}
 
-    for i in 0..n_items {
-        let mut candidates: Vec<(usize, f64, f64)> = Vec::new();
-        for j in 0..n_items {
-            if i == j {
-                continue;
-            }
+/// Build sparse Laplacian(Adjacency)
+pub(crate) fn _build_sparse_laplacian(
+    sym: Vec<Vec<(usize, f64)>>,
+    n: usize,
+) -> sprs::TriMatBase<Vec<usize>, Vec<f64>> {
+    info!("Converting adjacency to sparse Laplacian matrix (DashMap batched)");
 
-            let denom = norms[i] * norms[j];
-            let cosine_sim = if denom > 1e-12 {
-                let dot: f64 = items[i]
-                    .iter()
-                    .zip(items[j].iter())
-                    .map(|(a, b)| a * b)
-                    .sum();
-                (dot / denom).clamp(-1.0, 1.0)
-            } else {
-                0.0
-            };
+    let start = std::time::Instant::now();
 
-            let distance = 1.0 - cosine_sim.max(0.0);
-            if distance <= params.eps {
-                let normalized_dist = distance / sigma;
-                let weight = 1.0 / (1.0 + normalized_dist.powf(params.p));
-                if weight > 1e-12 {
-                    candidates.push((j, distance, weight));
+    // Concurrent map for triplets
+    let triplet_map: DashMap<(usize, usize), f64> =
+        DashMap::with_capacity(sym.iter().map(|s| s.len() + 1).sum());
+
+    // Parallel insertion with edge counting
+    let total_edges = sym
+        .par_iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let mut local_edge_count = 0;
+
+            // Batch operations per row
+            let degree: f64 = s.iter().map(|&(_j, w)| w).sum();
+            triplet_map.insert((i, i), degree);
+
+            for &(j, w) in s {
+                if i != j {
+                    triplet_map.insert((i, j), -w);
+                    if i < j {
+                        local_edge_count += 1;
+                    }
                 }
             }
-        }
 
-        candidates.sort_unstable_by(|a, b| {
-            a.1.partial_cmp(&b.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.0.cmp(&b.0))
-        });
+            local_edge_count
+        })
+        .sum::<usize>();
 
-        let results_k: usize = params.topk;
-        if candidates.len() > results_k {
-            candidates.truncate(results_k);
-        }
+    trace!("DashMap population completed in {:?}", start.elapsed());
+    debug!("Total triplets: {}, edges: {}", triplet_map.len(), total_edges);
 
-        if i % 50 == 0 {
-            trace!(
-                "Item {} has {} candidates within eps threshold",
-                i,
-                candidates.len()
-            );
-        }
+    // Convert to sorted vectors for more efficient TriMat insertion
+    let conversion_start = std::time::Instant::now();
+    let mut triplets: Vec<((usize, usize), f64)> = triplet_map.into_iter().collect();
 
-        for (j, _dist, weight) in candidates {
-            adj[i].insert(j, weight);
-        }
+    // Sort by (row, col) for better cache locality during insertion
+    triplets.par_sort_unstable_by_key(|&((i, j), _)| (i, j));
+
+    trace!("Sorted {} triplets in {:?}", triplets.len(), conversion_start.elapsed());
+
+    // Sequential: Build TriMat from sorted triplets
+    let insert_start = std::time::Instant::now();
+    let mut trimat = TriMat::with_capacity((n, n), triplets.len());
+
+    for ((i, j), val) in triplets {
+        trimat.add_triplet(i, j, val);
     }
 
-    trace!("Symmetrizing adjacency matrix");
-    for i in 0..n_items {
-        let keys: Vec<_> = adj[i].keys().copied().collect();
-        for j in keys {
-            let w = *adj[i].get(&j).unwrap_or(&0.0);
-            if w > 1e-12 {
-                let back_entry = adj[j].entry(i).or_insert(0.0);
-                if *back_entry < 1e-12 {
-                    *back_entry = w;
-                }
-            }
-        }
-    }
+    debug!("Inserted triplets in {:?}", insert_start.elapsed());
+    info!("Total Laplacian construction time: {:?}", start.elapsed());
 
-    trace!("Converting to sparse CSR format");
-    let mut triplets = TriMat::new((n_items, n_items));
-    for (i, ad) in adj.iter().enumerate() {
-        for (&j, &weight) in ad.iter() {
-            if i != j && weight > 1e-12 {
-                triplets.add_triplet(i, j, weight);
-            }
-        }
-    }
-
-    let adjacency_matrix = triplets.to_csr();
-    debug!(
-        "Successfully built sparse adjacency matrix with {} non-zeros",
-        adjacency_matrix.nnz()
-    );
-    adjacency_matrix
+    trimat
 }

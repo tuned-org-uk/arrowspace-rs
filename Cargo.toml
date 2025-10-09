@@ -1,6 +1,6 @@
 [package]
 name = "arrowspace"
-version = "0.5.2"
+version = "0.13.1"
 edition = "2024"
 description = "Spectral vector search with taumode (λτ) indexing"
 authors = ["Lorenzo <tunedconsulting@gmail.com>"]
@@ -21,17 +21,20 @@ exclude = [
 
 [dependencies]
 rand = "0.9.2"
-smartcore = "0.4.4"
+smartcore = {git = "https://github.com/tuned-org-uk/smartcore.git", branch = "main"}
 ordered-float = "5.1.0"
 rayon = "1.11.0"
 sprs = "0.11.3"
 approx = "0.5.1"
 log = "0.4.28"
 env_logger = "0.11.8"
+dashmap = "6.1.0"
+rand_chacha = "0.9.0"
+rand_distr = "0.5.1"
 
 [dev-dependencies]
 criterion = "0.7.0"
-smartcore = { version = "0.4.4", features = ["datasets"]}
+smartcore = {git = "https://github.com/tuned-org-uk/smartcore.git", branch = "main", features = ["datasets"]}
 rand_pcg = "0.9.0"
 
 [lib]
