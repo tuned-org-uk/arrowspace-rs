@@ -1,3 +1,5 @@
+Full pre-pring paper at [TechArxiv page](https://www.techrxiv.org/users/685780/articles/1329993-arrowspace-spectral-indexing-of-embeddings-using-taumode-%CE%BB%CF%84). 
+
 
 `ArrowSpace` provides an API to use taumode (`λτ`) that is a single, bounded synthetic score per signal that blends the Rayleigh smoothness energy on a graph with an edgewise dispersion summary; enabling spectra-aware search, range filters, and composable algebra over vector datasets. Operationally, `ArrowSpace` stores dense features as rows over item nodes, computes a Laplacian on items, derives per-row Rayleigh energies, compresses them via a bounded map $E/(E+\tau)$, mixes in a dispersion term, and uses the resulting `λτ` both for similarity and to build a λ-proximity item graph used across the API.[^1][^2][^3][^4]
 

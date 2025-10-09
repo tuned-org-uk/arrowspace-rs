@@ -7,6 +7,8 @@ use crate::tests::GRAPH_PARAMS;
 
 use approx::{assert_relative_eq, relative_eq};
 
+use log::debug;
+
 #[test]
 fn test_build_lambda_graph_basic_sparse() {
     // Prepare a moderate dataset; Iris shown here, but any non-degenerate set works
@@ -25,7 +27,7 @@ fn test_build_lambda_graph_basic_sparse() {
         })
         .collect();
 
-    let gl = GraphFactory::build_laplacian_matrix(
+    let gl = GraphFactory::build_laplacian_matrix_from_items(
         items,
         1e-1,
         10,
@@ -33,6 +35,7 @@ fn test_build_lambda_graph_basic_sparse() {
         GRAPH_PARAMS.p,
         Some(1e-3 * 0.50),
         false,
+        true,
     );
 
     // Expect a square Laplacian of size len_items
@@ -66,11 +69,7 @@ fn test_build_lambda_graph_basic_sparse() {
 
         // If the diagonal was not explicitly stored, it is structurally zero.
         // A proper graph Laplacian should store degrees on the diagonal; assert presence.
-        assert!(
-            found,
-            "Diagonal entry (row {}) should exist in Laplacian storage",
-            i
-        );
+        assert!(found, "Diagonal entry (row {}) should exist in Laplacian storage", i);
         assert!(
             diag.is_finite(),
             "Diagonal at ({},{}) must be finite, got {}",
@@ -93,7 +92,9 @@ fn test_build_lambda_graph_minimum_items() {
     // Test minimum case: 2 items
     let items = vec![vec![1.0, 2.0], vec![3.0, 4.0]];
 
-    let gl = GraphFactory::build_laplacian_matrix(items, 1.0, 6, 3, 2.0, None, true);
+    let gl = GraphFactory::build_laplacian_matrix_from_items(
+        items, 1.0, 6, 3, 2.0, None, true, true,
+    );
     assert_eq!(gl.nnodes, 2);
 }
 
@@ -102,19 +103,26 @@ fn test_build_lambda_graph_minimum_items() {
 fn test_build_lambda_graph_insufficient_items() {
     // Should panic with only 1 item
     let items = vec![vec![1.0, 2.0]];
-    GraphFactory::build_laplacian_matrix(items, 1.0, 6, 3, 2.0, None, true);
+    GraphFactory::build_laplacian_matrix_from_items(
+        items, 1.0, 6, 3, 2.0, None, true, true,
+    );
 }
 
 #[test]
 fn test_build_lambda_graph_scale_invariance() {
     // Test that scaling all items uniformly doesn't affect graph structure
-    let items = vec![
-        vec![1.0, 2.0, 3.0],
-        vec![2.0, 4.0, 6.0],
-        vec![3.0, 6.0, 9.0],
-    ];
+    let items = vec![vec![1.0, 2.0, 3.0], vec![2.0, 4.0, 6.0], vec![3.0, 6.0, 9.0]];
 
-    let gl1 = GraphFactory::build_laplacian_matrix(items.clone(), 0.5, 2, 2, 2.0, None, true);
+    let gl1 = GraphFactory::build_laplacian_matrix_from_items(
+        items.clone(),
+        0.5,
+        2,
+        2,
+        2.0,
+        None,
+        true,
+        true,
+    );
 
     // Scale all items by constant factor
     let scale_factor = 5.7;
@@ -123,7 +131,16 @@ fn test_build_lambda_graph_scale_invariance() {
         .map(|item| item.iter().map(|&x| x * scale_factor).collect())
         .collect();
 
-    let gl2 = GraphFactory::build_laplacian_matrix(items_scaled, 0.5, 2, 2, 2.0, None, true);
+    let gl2 = GraphFactory::build_laplacian_matrix_from_items(
+        items_scaled,
+        0.5,
+        2,
+        2,
+        2.0,
+        None,
+        true,
+        true,
+    );
 
     // Graph structure should be identical
     assert_eq!(gl1.nnodes, gl2.nnodes);
@@ -134,21 +151,15 @@ fn test_build_lambda_graph_scale_invariance() {
 #[test]
 fn test_graph_laplacian_structure_sparse() {
     // Small toy dataset
-    let items = vec![
-        vec![1.0, 2.0, 3.0],
-        vec![2.0, 4.0, 6.0],
-        vec![3.0, 6.0, 9.0],
-    ];
+    let items = vec![vec![1.0, 2.0, 3.0], vec![2.0, 4.0, 6.0], vec![3.0, 6.0, 9.0]];
 
     // Build Laplacian with normalisation=true (undirected graph expected)
-    let gl = GraphFactory::build_laplacian_matrix(items, 1.0, 6, 3, 2.0, None, true);
+    let gl = GraphFactory::build_laplacian_matrix_from_items(
+        items, 1.0, 6, 3, 2.0, None, true, true,
+    );
 
     // Expect square Laplacian
-    assert_eq!(
-        gl.matrix.rows(),
-        gl.matrix.cols(),
-        "Laplacian must be square"
-    );
+    assert_eq!(gl.matrix.rows(), gl.matrix.cols(), "Laplacian must be square");
 
     // Assume CSR; traverse rows and check symmetric counterparts per nonzero
     let csr = &gl.matrix;
@@ -233,6 +244,7 @@ fn test_new_from_items_transpose_verification() {
         p: GRAPH_PARAMS.p,
         sigma: Some(0.1 * 0.50),
         normalise: false,
+        sparsity_check: true,
     };
 
     // This should be treated as 3 items with 4 features each
@@ -240,28 +252,13 @@ fn test_new_from_items_transpose_verification() {
     let laplacian = GraphLaplacian::prepare_from_items(items.clone(), graph_params);
 
     // Verify dimensions after transposition
-    assert_eq!(
-        laplacian.nnodes, 75,
-        "Should have 4 nodes (number of features)"
-    );
-    assert_eq!(
-        laplacian.matrix.shape().0,
-        4,
-        "Matrix rows should be 4 (features)"
-    );
-    assert_eq!(
-        laplacian.matrix.shape().1,
-        4,
-        "Matrix cols should be 3 (items)"
-    );
+    assert_eq!(laplacian.nnodes, 75, "Should have 4 nodes (number of features)");
+    assert_eq!(laplacian.matrix.shape().0, 4, "Matrix rows should be 4 (features)");
+    assert_eq!(laplacian.matrix.shape().1, 4, "Matrix cols should be 3 (items)");
 
     // Verify transposition is correct
     println!("{:?}", *laplacian.matrix.get(0, 0).unwrap());
-    assert!(relative_eq!(
-        *laplacian.matrix.get(0, 0).unwrap(),
-        1.0973,
-        epsilon = 1e-3
-    ));
+    assert!(relative_eq!(*laplacian.matrix.get(0, 0).unwrap(), 1.0973, epsilon = 1e-3));
     assert!(relative_eq!(
         *laplacian.matrix.get(0, 1).unwrap(),
         -0.8596,
@@ -279,11 +276,7 @@ fn test_new_from_items_transpose_verification() {
         -0.8596,
         epsilon = 1e-3
     ));
-    assert!(relative_eq!(
-        *laplacian.matrix.get(1, 1).unwrap(),
-        0.8596,
-        epsilon = 1e-3
-    ));
+    assert!(relative_eq!(*laplacian.matrix.get(1, 1).unwrap(), 0.8596, epsilon = 1e-3));
 
     // Feature 2 across items:
     assert!(relative_eq!(
@@ -291,11 +284,7 @@ fn test_new_from_items_transpose_verification() {
         -0.2377,
         epsilon = 1e-3
     ));
-    assert!(relative_eq!(
-        *laplacian.matrix.get(2, 2).unwrap(),
-        0.9801,
-        epsilon = 1e-3
-    ));
+    assert!(relative_eq!(*laplacian.matrix.get(2, 2).unwrap(), 0.9801, epsilon = 1e-3));
     assert!(relative_eq!(
         *laplacian.matrix.get(2, 3).unwrap(),
         -0.7425,
@@ -308,20 +297,17 @@ fn test_new_from_items_transpose_verification() {
         -0.7425,
         epsilon = 1e-3
     ));
-    assert!(relative_eq!(
-        *laplacian.matrix.get(3, 3).unwrap(),
-        0.7425,
-        epsilon = 1e-3
-    ));
+    assert!(relative_eq!(*laplacian.matrix.get(3, 3).unwrap(), 0.7425, epsilon = 1e-3));
 
-    println!("Transpose verification test passed");
+    debug!("Transpose verification test passed");
 }
 
 #[test]
 fn test_new_from_items_non_square_matrix() {
     // Create a non-square matrix (this should panic)
     let non_square_data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-    let non_square_matrix = DenseMatrix::from_iterator(non_square_data.into_iter(), 2, 3, 0);
+    let non_square_matrix =
+        DenseMatrix::from_iterator(non_square_data.into_iter(), 2, 3, 0);
 
     let graph_params = GraphParams {
         eps: 1.0,
@@ -330,6 +316,7 @@ fn test_new_from_items_non_square_matrix() {
         p: 2.0,
         sigma: Some(0.1),
         normalise: true,
+        sparsity_check: true,
     };
 
     // This should panic because input matrix is not square
@@ -352,6 +339,7 @@ fn test_new_from_items_parameter_preservation() {
         p: 3.5,
         sigma: Some(0.456),
         normalise: true,
+        sparsity_check: true,
     };
 
     let laplacian = GraphLaplacian::prepare_from_items(matrix, original_params.clone());
@@ -362,7 +350,7 @@ fn test_new_from_items_parameter_preservation() {
     assert_eq!(laplacian.graph_params.p, original_params.p);
     assert_eq!(laplacian.graph_params.sigma, original_params.sigma);
 
-    println!("Parameter preservation test passed");
+    debug!("Parameter preservation test passed");
 }
 
 #[test]
@@ -378,6 +366,7 @@ fn test_new_from_items_single_element() {
         p: 1.5,
         sigma: None,
         normalise: true,
+        sparsity_check: true,
     };
 
     let laplacian = GraphLaplacian::prepare_from_items(single_matrix, graph_params);
@@ -391,5 +380,5 @@ fn test_new_from_items_single_element() {
         epsilon = 1e-10
     );
 
-    println!("Single element test passed");
+    debug!("Single element test passed");
 }
