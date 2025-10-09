@@ -98,7 +98,7 @@ dependencies = [
 
 [[package]]
 name = "arrowspace"
-version = "0.13.2"
+version = "0.13.3"
 dependencies = [
  "approx 0.5.1",
  "criterion",
@@ -916,8 +916,9 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "smartcore"
-version = "0.4.3"
-source = "git+https://github.com/tuned-org-uk/smartcore.git?branch=main#c5721a22a925c1e9ea37fad08deec69652668969"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e569eba50db04f51f83ad1ad2186cc1cf88bb68de052177bda165f6cdcf8d81"
 dependencies = [
  "approx 0.5.1",
  "cfg-if",
