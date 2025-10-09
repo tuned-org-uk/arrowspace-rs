@@ -12,6 +12,8 @@ nuanced similarity matching for scientific and structured data.
 
 Run `cargo run --example 01_compare_cosine` for an example about how it compares with cosine similarity.
 
+The Python bindings are [available in this repo](https://github.com/tuned-org-uk/pyarrowspace).
+
 ## Usage
 ```rust
 use arrowspace::builder::ArrowSpaceBuilder;
@@ -37,11 +39,7 @@ let (aspace, _) = ArrowSpaceBuilder::new()
 Add to your `Cargo.toml`:
 ```toml
 [dependencies]
-<<<<<<< HEAD
-arrowspace = "^0.11.0"
-=======
 arrowspace = "^0.13.1"
->>>>>>> 9f19353ad72a5d1f70d645168e9dfac59a5d8e2b
 ```
 
 ### From Source
