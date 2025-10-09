@@ -37,7 +37,7 @@ let (aspace, _) = ArrowSpaceBuilder::new()
 Add to your `Cargo.toml`:
 ```toml
 [dependencies]
-arrowspace = "^0.11.0"
+arrowspace = "^0.13.1"
 ```
 
 ### From Source

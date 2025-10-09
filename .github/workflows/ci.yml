@@ -14,9 +14,7 @@ jobs:
         platform:
           [
             { os: "windows", target: "x86_64-pc-windows-msvc" },
-            { os: "windows", target: "i686-pc-windows-msvc" },
             { os: "ubuntu", target: "x86_64-unknown-linux-gnu" },
-            { os: "ubuntu", target: "i686-unknown-linux-gnu" },
             { os: "macos", target: "aarch64-apple-darwin" },
           ]
     env:
