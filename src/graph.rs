@@ -14,10 +14,10 @@ use log::{debug, info, trace, warn};
 pub struct GraphParams {
     pub eps: f64,             // maximum rectified cosine distance (see `docs/`)
     pub k: usize,             // max number of neighbours for node
-    pub topk: usize, // number of results to be considered for closest neighbors
-    pub p: f64,      // kernel parameter
-    pub sigma: Option<f64>, // tolerance for eps
-    pub normalise: bool, // avoid normalisation as may hinder magnitude information
+    pub topk: usize,          // number of results to be considered for closest neighbors
+    pub p: f64,               // kernel parameter
+    pub sigma: Option<f64>,   // tolerance for eps
+    pub normalise: bool,      // avoid normalisation as may hinder magnitude information
     pub sparsity_check: bool, // check for proper level of sparsity (some datasets works well even if sparse)
 }
 
@@ -64,68 +64,16 @@ pub struct GraphFactory;
 
 impl GraphFactory {
     /// This is a lower level method: use `ArrowSpaceBuilder::build`
-    /// Transpose the items matrix and build a graph Laplacian matrix
-    ///  so to be ready to be used to analyse signal features
-    pub fn build_laplacian_matrix_from_items(
-        items: Vec<Vec<f64>>,        // N×F: N items, each with F features
-        eps: f64,                    // maximum rectified cosine distance (see `docs/`)
-        k: usize,                    // max number of neighbours for node
-        topk: usize, // number of results to be considered for closest neighbors
-        p: f64,      // kernel parameter
-        sigma_override: Option<f64>, // tolerance for eps
-        normalise: bool, // pre-normalisation before laplacian computation
-        sparsity_check: bool, // flag to disable sparsity check (some datasets works well even if sparse)
-    ) -> GraphLaplacian {
-        info!("Building Laplacian matrix for {} items", items.len());
-        debug!(
-            "Laplacian parameters: eps={}, k={}, p={}, sigma={:?}, normalise={}",
-            eps, k, p, sigma_override, normalise
-        );
-
-        let result = crate::laplacian::build_laplacian_matrix(
-            // items are transposed here
-            DenseMatrix::from_2d_vec(&items).unwrap().transpose(),
-            &GraphParams {
-                eps,
-                k,
-                topk,
-                p,
-                sigma: sigma_override,
-                normalise,
-                sparsity_check,
-            },
-            Some(items.len()),
-        );
-
-        if sparsity_check {
-            let sparsity_input = GraphLaplacian::sparsity(&result.matrix);
-            if sparsity_input > 0.95 {
-                panic!("Resulting laplacian matrix is too sparse {:?}", sparsity_input)
-            }
-        }
-        assert!(result.nnodes == items.len());
-
-        info!(
-            "Laplacian matrix built: {}×{} with {} nodes, {} non-zeros",
-            result.matrix.shape().0,
-            result.matrix.shape().1,
-            result.nnodes,
-            result.matrix.nnz()
-        );
-        result
-    }
-
-    /// This is a lower level method: use `ArrowSpaceBuilder::build`
     /// Transpose the resulting matrix from clustering and build a graph Laplacian matrix
     ///  so to be ready to be used to analyse signal features
     pub fn build_laplacian_matrix_from_k_cluster(
-        clustered: DenseMatrix<f64>, // X×F: X centroids of cluisters, each with F features
+        clustered: DenseMatrix<f64>, // X×F: X centroids of clusters, each with F features
         eps: f64,                    // maximum rectified cosine distance (see `docs/`)
         k: usize,                    // max number of neighbours for node
-        topk: usize, // number of results to be considered for closest neighbors
-        p: f64,      // kernel parameter
+        topk: usize,                 // number of results to be considered for closest neighbors
+        p: f64,                      // kernel parameter
         sigma_override: Option<f64>, // tolerance for eps
-        normalise: bool, // pre-normalisation before laplacian computation
+        normalise: bool,             // pre-normalisation before laplacian computation
         sparsity_check: bool, // flag to disable sparsity check (some datasets works well even if sparse)
         n_items: usize,       // items number of the origina raw data
     ) -> GraphLaplacian {
@@ -139,7 +87,7 @@ impl GraphFactory {
         );
         assert!(clustered.shape().0 <= n_items);
 
-        let result = crate::laplacian::build_laplacian_matrix(
+        let result: GraphLaplacian = crate::laplacian::build_laplacian_matrix(
             // items are transposed here
             clustered.transpose(),
             &GraphParams {
@@ -157,7 +105,10 @@ impl GraphFactory {
         if sparsity_check {
             let sparsity_input = GraphLaplacian::sparsity(&result.matrix);
             if sparsity_input > 0.95 {
-                panic!("Resulting laplacian matrix is too sparse {:?}", sparsity_input)
+                panic!(
+                    "Resulting laplacian matrix is too sparse {:?}",
+                    sparsity_input
+                )
             }
         }
         assert!(result.nnodes == n_items);
@@ -201,17 +152,30 @@ impl GraphFactory {
 
         let sparsity_output = GraphLaplacian::sparsity(&aspace.signals);
         println!("sparsity {:?}", sparsity_output);
-        if sparsity_output > 0.95 {
-            panic!("Resulting spectral matrix is too sparse {:?}", sparsity_output)
+        if sparsity_output > 0.95 && graph_laplacian.graph_params.sparsity_check {
+            panic!(
+                "Resulting spectral matrix is too sparse {:?}",
+                sparsity_output
+            )
         }
 
-        assert!(
-            aspace.signals.shape().0 == aspace.nfeatures
-                && aspace.nfeatures == aspace.signals.shape().1,
-            "result should be a FxF matrix"
-        );
+        if aspace.reduced_dim.is_some() {
+            assert!(
+                aspace.signals.shape().0 == aspace.reduced_dim.unwrap()
+                    && aspace.reduced_dim.unwrap() == aspace.signals.shape().1,
+                "result should be a FxF matrix with reduced dimensions F"
+            );
+        } else {
+            assert!(
+                aspace.signals.shape().0 == aspace.signals.shape().1,
+                "result should be a FxF matrix"
+            );
+        }
 
-        info!("Built F×F feature matrix: {}×{}", aspace.nfeatures, aspace.nfeatures);
+        info!(
+            "Built F×F feature matrix: {}×{}",
+            aspace.nfeatures, aspace.nfeatures
+        );
         let stats = {
             let nnz = graph_laplacian.matrix.nnz();
             let total = aspace.nfeatures * aspace.nfeatures;
@@ -245,19 +209,15 @@ impl GraphLaplacian {
     /// Create a new GraphLaplacian from an items matrix (M = NxF)
     /// This is used to create a graph from the transposed matrix
     /// Use `GraphFacotry::build_lambda_graph` for the full computation
-    pub fn prepare_from_items(
-        matrix: DenseMatrix<f64>,
-        graph_params: GraphParams,
-    ) -> Self {
+    pub fn prepare_from_items(matrix: DenseMatrix<f64>, graph_params: GraphParams) -> Self {
         let nnodes = matrix.shape().0;
-        debug!("Preparing GraphLaplacian from items matrix: {} nodes", nnodes);
+        debug!(
+            "Preparing GraphLaplacian from items matrix: {} nodes",
+            nnodes
+        );
         trace!("Transposing matrix for GraphLaplacian");
 
-        build_laplacian_matrix(
-            matrix.transpose(),
-            &graph_params,
-            Some(matrix.shape().0),
-        )
+        build_laplacian_matrix(matrix.transpose(), &graph_params, Some(matrix.shape().0))
     }
 
     /// Get the matrix dimensions as (rows, cols)
@@ -299,7 +259,10 @@ impl GraphLaplacian {
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), &d| {
                 (min.min(d), max.max(d))
             });
-        debug!("Extracted degrees: min={:.6}, max={:.6}", min_degree, max_degree);
+        debug!(
+            "Extracted degrees: min={:.6}, max={:.6}",
+            min_degree, max_degree
+        );
         degrees
     }
 
@@ -359,14 +322,20 @@ impl GraphLaplacian {
             self.nnodes
         );
 
-        trace!("Computing Rayleigh quotient for vector of length {}", vector.len());
+        trace!(
+            "Computing Rayleigh quotient for vector of length {}",
+            vector.len()
+        );
 
         // Compute L * x manually using sprs sparse matrix structure
         let lx = self.multiply_vector(vector);
 
         // Compute x^T * (L * x)
-        let numerator: f64 =
-            vector.iter().zip(lx.iter()).map(|(&xi, &lxi)| xi * lxi).sum();
+        let numerator: f64 = vector
+            .iter()
+            .zip(lx.iter())
+            .map(|(&xi, &lxi)| xi * lxi)
+            .sum();
 
         // Compute x^T * x
         let denominator: f64 = vector.iter().map(|&xi| xi * xi).sum();
@@ -416,7 +385,10 @@ impl GraphLaplacian {
         }
 
         let result_norm = result.iter().map(|&x| x * x).sum::<f64>().sqrt();
-        trace!("Matrix-vector multiplication result norm: {:.6}", result_norm);
+        trace!(
+            "Matrix-vector multiplication result norm: {:.6}",
+            result_norm
+        );
         result
     }
 
@@ -428,9 +400,7 @@ impl GraphLaplacian {
 
         for i in 0..self.nnodes {
             for j in 0..self.nnodes {
-                let diff = (self.matrix.get(i, j).unwrap()
-                    - self.matrix.get(j, i).unwrap())
-                .abs();
+                let diff = (self.matrix.get(i, j).unwrap() - self.matrix.get(j, i).unwrap()).abs();
                 max_asymmetry = max_asymmetry.max(diff);
                 if diff > tolerance {
                     violations += 1;
@@ -448,14 +418,18 @@ impl GraphLaplacian {
 
     /// Verify Laplacian properties: row sums ≈ 0, positive diagonal, symmetric
     pub fn verify_properties(&self, tolerance: f64) -> LaplacianValidation {
-        info!("Verifying Laplacian properties with tolerance {:.2e}", tolerance);
+        info!(
+            "Verifying Laplacian properties with tolerance {:.2e}",
+            tolerance
+        );
         let mut validation = LaplacianValidation::new();
 
         // Check row sums (should be ≈ 0)
         let mut max_row_sum: f64 = 0.0;
         for i in 0..self.nnodes {
-            let row_sum: f64 =
-                (0..self.nnodes).map(|j| self.matrix.get(i, j).unwrap()).sum();
+            let row_sum: f64 = (0..self.nnodes)
+                .map(|j| self.matrix.get(i, j).unwrap())
+                .sum();
             max_row_sum = max_row_sum.max(row_sum.abs());
             if row_sum.abs() > tolerance {
                 validation.row_sum_violations.push((i, row_sum));
@@ -477,9 +451,8 @@ impl GraphLaplacian {
             let mut max_asymmetry: f64 = 0.0;
             for i in 0..self.nnodes {
                 for j in 0..self.nnodes {
-                    let asymmetry = (self.matrix.get(i, j).unwrap()
-                        - self.matrix.get(j, i).unwrap())
-                    .abs();
+                    let asymmetry =
+                        (self.matrix.get(i, j).unwrap() - self.matrix.get(j, i).unwrap()).abs();
                     max_asymmetry = max_asymmetry.max(asymmetry);
                 }
             }
@@ -494,8 +467,14 @@ impl GraphLaplacian {
         debug!("  Valid: {}", validation.is_valid);
         debug!("  Symmetric: {}", validation.is_symmetric);
         debug!("  Max row sum error: {:.2e}", validation.max_row_sum_error);
-        debug!("  Row sum violations: {}", validation.row_sum_violations.len());
-        debug!("  Negative diagonal entries: {}", validation.negative_diagonal.len());
+        debug!(
+            "  Row sum violations: {}",
+            validation.row_sum_violations.len()
+        );
+        debug!(
+            "  Negative diagonal entries: {}",
+            validation.negative_diagonal.len()
+        );
 
         if !validation.is_valid {
             warn!("Laplacian validation failed - matrix may have numerical issues");
