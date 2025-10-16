@@ -1,17 +1,14 @@
-use std::sync::atomic::Ordering;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 // Add logging
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace};
 
-use rayon::prelude::*;
-use smartcore::linalg::basic::arrays::{Array, Array2};
-use smartcore::linalg::basic::matrix::DenseMatrix;
+use smartcore::linalg::basic::arrays::Array;
 
 use crate::clustering::ClusteringHeuristic;
 use crate::core::{ArrowSpace, TAUDEFAULT};
 use crate::graph::{GraphFactory, GraphLaplacian};
 use crate::reduction::{compute_jl_dimension, ImplicitProjection};
-use crate::sampling::{DensityAdaptiveSampler, InlineSampler};
+use crate::sampling::{InlineSampler, SamplerType};
 use crate::taumode::TauMode;
 
 #[derive(Clone, Debug)]
@@ -36,11 +33,11 @@ pub struct ArrowSpaceBuilder {
     lambda_topk: usize,
     lambda_p: f64,
     lambda_sigma: Option<f64>,
-    normalise: bool,
+    normalise: bool, // using normalisation is not relevant for taumode, do not use if are not sure
     sparsity_check: bool,
 
     // activate sampling, default false
-    pub inline_sampling: bool,
+    pub sampling: Option<SamplerType>,
 
     // Synthetic index configuration (used `with_synthesis`)
     synthesis: TauMode, // (tau_mode)
@@ -49,6 +46,8 @@ pub struct ArrowSpaceBuilder {
     cluster_max_clusters: Option<usize>,
     /// Squared L2 threshold for new cluster creation (default 1.0)
     cluster_radius: f64,
+    clustering_seed: Option<u64>,
+    pub(crate) deterministic_clustering: bool,
 
     // dimensionality reduction with random projection (dafault false)
     use_dims_reduction: bool,
@@ -72,11 +71,14 @@ impl Default for ArrowSpaceBuilder {
             lambda_p: 2.0,
             lambda_sigma: None, // means σ := eps inside the builder
             normalise: false,
-            sparsity_check: true,
-            inline_sampling: false,
+            sparsity_check: false,
+            // sampling default
+            sampling: Some(SamplerType::Simple(0.6)),
             // Clustering defaults
             cluster_max_clusters: None, // will be set to nfeatures at build time
             cluster_radius: 1.0,
+            clustering_seed: None,
+            deterministic_clustering: false,
             // dim reduction
             use_dims_reduction: false,
             rp_eps: 0.3,
@@ -160,15 +162,30 @@ impl ArrowSpaceBuilder {
         self
     }
 
-    pub fn with_inline_sampling(mut self, sampling: bool) -> Self {
-        info!("Configuring inline sampling: {:?}", sampling);
-        self.inline_sampling = sampling;
+    pub fn with_inline_sampling(mut self, sampling: Option<SamplerType>) -> Self {
+        let value = if sampling.as_ref().is_none() {
+            "None".to_string()
+        } else {
+            format!("{}", sampling.as_ref().unwrap())
+        };
+        info!("Configuring inline sampling: {}", value);
+        self.sampling = sampling;
         self
     }
 
     pub fn with_dims_reduction(mut self, enable: bool, eps: Option<f64>) -> Self {
         self.use_dims_reduction = enable;
         self.rp_eps = eps.unwrap_or(0.5); // default JL tolerance
+        self
+    }
+
+    /// Set a custom seed for deterministic clustering.
+    /// Enable sequential (deterministic) clustering.
+    /// This ensures reproducible results at the cost of parallelization.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        info!("Setting custom clustering seed: {}", seed);
+        self.clustering_seed = Some(seed);
+        self.deterministic_clustering = true;
         self
     }
 
@@ -229,31 +246,37 @@ impl ArrowSpaceBuilder {
             n_items, n_features
         );
 
-        // ---- Compute optimal K automatically ----
-        let (_, _, intrinsic_dim) = {
-            info!("Auto-computing optimal clustering parameters");
-            let params = self.compute_optimal_k(&rows, n_items, n_features);
-            info!(
-                "Auto K={}, radius={:.6}, intrinsic_dim={}",
-                params.0, params.1, params.2
-            );
-            self.cluster_max_clusters = Some(params.0);
-            self.cluster_radius = params.1;
-            params
+        // Sampler switch
+        let sampler: Arc<Mutex<dyn InlineSampler>> = match self.sampling {
+            Some(SamplerType::Simple(r)) => Arc::new(Mutex::new(SamplerType::new_simple(r))),
+            Some(SamplerType::DensityAdaptive(r)) => {
+                Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
+            }
+            None => Arc::new(Mutex::new(SamplerType::new_simple(0.6))),
         };
+
+        // ---- Compute optimal K automatically ----
+        info!("Auto-computing optimal clustering parameters");
+        let params = self.compute_optimal_k(&rows, n_items, n_features, self.clustering_seed);
+        debug!(
+            "Auto K={}, radius={:.6}, intrinsic_dim={}",
+            params.0, params.1, params.2
+        );
+        // set clustering params
+        self.cluster_max_clusters = Some(params.0);
+        self.cluster_radius = params.1;
 
         info!(
             "Clustering: {} centroids, radius= {}, intrinsic_dim ≈ {}",
             self.cluster_max_clusters.unwrap(),
             self.cluster_radius,
-            intrinsic_dim
+            params.2
         );
 
-        // Initialize sampler
-        let sampler: Mutex<DensityAdaptiveSampler> = Mutex::new(DensityAdaptiveSampler::new(0.5));
-
         // Run incremental clustering
-        let (clustered_dm, assignments, sizes) = self.run_incremental_clustering_with_sampling(
+        // include inline sampling if flag is on
+        let (clustered_dm, assignments, sizes) = crate::clustering::run_incremental_clustering_with_sampling(
+            &self,
             &rows,
             n_features,
             self.cluster_max_clusters.unwrap(),
@@ -376,202 +399,5 @@ impl ArrowSpaceBuilder {
 
         info!("ArrowSpace build completed successfully");
         (aspace, gl)
-    }
-
-    // Clustering and Reduction: methods used to prepare the raw data before
-    //  computing Laplacian.
-
-    /// Scans rows linearly, assigns to nearest centroid if within radius,
-    /// else creates a new cluster up to max_clusters. Outliers beyond cap are skipped.
-    /// Returns (centroids_matrix, assignments, sizes).
-    fn run_incremental_clustering_with_sampling(
-        &self,
-        rows: &[Vec<f64>],
-        nfeatures: usize,
-        max_clusters: usize,
-        radius: f64,
-        sampler: Mutex<DensityAdaptiveSampler>,
-    ) -> (DenseMatrix<f64>, Vec<Option<usize>>, Vec<usize>) {
-        let nrows = rows.len();
-
-        info!("Starting incremental clustering with inline sampling");
-        debug!(
-            "Parameters: max_clusters={}, radius={:.4}",
-            max_clusters, radius
-        );
-
-        // Shared clustering state
-        let centroids = Mutex::new(Vec::<Vec<f64>>::new());
-        let counts = Mutex::new(Vec::<usize>::new());
-        let assignments = Mutex::new(vec![None; nrows]);
-
-        let process_row = |row_idx: usize| {
-            let row = &rows[row_idx];
-
-            // Snapshot current centroids for sampling decision
-            let cent_snap: Vec<Vec<f64>> = {
-                let c = centroids.lock().unwrap();
-                c.clone()
-            };
-
-            // Compute nearest centroid distance for sampling decision
-            let (_best_idx, best_dist_sq) = if cent_snap.is_empty() {
-                (0, f64::INFINITY)
-            } else {
-                Self::nearest_centroid(row, &cent_snap)
-            };
-
-            // Implement sampling
-            let current_cent_count = cent_snap.len();
-
-            if self.inline_sampling {
-                let mut smp = sampler.lock().unwrap();
-                let keep = smp.should_keep(row, best_dist_sq, current_cent_count, max_clusters);
-
-                if !keep {
-                    smp.discarded_count.fetch_add(1, Ordering::Relaxed);
-                    trace!("Row {} discarded by sampler", row_idx);
-                    return; // Skip this row entirely
-                }
-
-                smp.sampled_count.fetch_add(1, Ordering::Relaxed);
-            }
-
-            // Clustering logic
-            if cent_snap.is_empty() {
-                // First centroid
-                let mut c = centroids.lock().unwrap();
-                let mut k = counts.lock().unwrap();
-                let mut a = assignments.lock().unwrap();
-                c.push(row.clone());
-                k.push(1);
-                a[row_idx] = Some(0);
-                return;
-            }
-
-            let current_len = {
-                let c = centroids.lock().unwrap();
-                c.len()
-            };
-
-            // Create new cluster or assign to nearest
-            if current_len < max_clusters && best_dist_sq > radius {
-                let mut c = centroids.lock().unwrap();
-                let mut k = counts.lock().unwrap();
-                let mut a = assignments.lock().unwrap();
-
-                let new_idx = c.len();
-                c.push(row.clone());
-                k.push(1);
-                a[row_idx] = Some(new_idx);
-            } else {
-                if current_len >= max_clusters && best_dist_sq > radius {
-                    // Drop outlier
-                    trace!(
-                        "Dropping outlier row {} with dist²={:.6}",
-                        row_idx,
-                        best_dist_sq
-                    );
-                    return;
-                }
-
-                // Assign to nearest centroid with inline update
-                let mut c = centroids.lock().unwrap();
-                let mut k = counts.lock().unwrap();
-                let mut a = assignments.lock().unwrap();
-
-                // Recompute nearest with current centroids under lock
-                let (best, _best_d) = Self::nearest_centroid(row, &c);
-
-                let k_old = k[best] as f64;
-                let k_new = k_old + 1.0;
-                for j in 0..nfeatures {
-                    let mu = c[best][j];
-                    let delta = row[j] - mu;
-                    c[best][j] = mu + delta / k_new;
-                }
-                k[best] += 1;
-                a[row_idx] = Some(best);
-            }
-        };
-
-        // Process rows in parallel (sampling decisions are thread-safe via state snapshots)
-        (0..nrows).into_par_iter().for_each(process_row);
-
-        let final_centroids = centroids.into_inner().unwrap();
-        let final_counts = counts.into_inner().unwrap();
-        let final_assignments = assignments.into_inner().unwrap();
-
-        // Build output matrix
-        let x_out = &final_centroids.len().max(1);
-        let mut flat = Vec::<f64>::with_capacity(x_out * nfeatures);
-        for c in &final_centroids {
-            flat.extend_from_slice(c);
-        }
-
-        let centroids_dm: DenseMatrix<f64> = if *x_out > 0 && !final_centroids.is_empty() {
-            debug!(
-                "Centroids:  {:?}\n : nitems->{} nfeatures->{}",
-                flat, x_out, nfeatures
-            );
-            DenseMatrix::from_iterator(flat.iter().map(|x| *x), *x_out, nfeatures, 0)
-        } else {
-            warn!("No clusters created; returning zero matrix");
-            let inline_sampling = self.inline_sampling;
-            panic!("No clusters created from data, sampling: {inline_sampling}");
-            #[allow(unreachable_code)]
-            DenseMatrix::from_2d_vec(&vec![vec![0.0 as f64; nfeatures]; *x_out]).unwrap()
-        };
-
-        if self.inline_sampling {
-            let smp = sampler.into_inner().unwrap();
-            let sampled = smp.sampled_count.load(Ordering::Relaxed);
-            let discarded = smp.discarded_count.load(Ordering::Relaxed);
-            let sampling_rate = sampled as f64 / nrows as f64;
-
-            debug!(
-                "Inline sampling complete: {} kept ({:.2}%), {} discarded",
-                sampled,
-                sampling_rate * 100.0,
-                discarded
-            );
-            debug!(
-                "Clustering produced {} centroids from {} rows ({}% sampling)",
-                final_centroids.len(),
-                nrows,
-                sampling_rate * 100.0
-            );
-            #[cfg(not(test))]
-            assert!(
-                sampling_rate > 0.325 && sampling_rate < 0.89,
-                "sampling_rate not in the interval 0.325..0.875 but {sampling_rate}"
-            );
-        } else {
-            debug!(
-                "Clustering produced {} centroids from {} rows (100% sampling)",
-                final_centroids.len(),
-                nrows
-            );
-        }
-
-        (centroids_dm, final_assignments, final_counts)
-    }
-
-    /// Linear-scan nearest centroid helper: returns (index, squared_distance).
-    fn nearest_centroid(row: &[f64], centroids: &[Vec<f64>]) -> (usize, f64) {
-        let mut best_idx = 0;
-        let mut best_dist2 = f64::INFINITY;
-        for (i, c) in centroids.iter().enumerate() {
-            let mut d2 = 0.0;
-            for (a, b) in row.iter().zip(c.iter()) {
-                let diff = a - b;
-                d2 += diff * diff;
-            }
-            if d2 < best_dist2 {
-                best_dist2 = d2;
-                best_idx = i;
-            }
-        }
-        (best_idx, best_dist2)
     }
 }

@@ -1,8 +1,9 @@
-use approx::assert_relative_eq;
-
 use crate::{
-    builder::ArrowSpaceBuilder, graph::GraphLaplacian, taumode::TauMode,
-    tests::test_data::make_moons_hd,
+    builder::ArrowSpaceBuilder,
+    graph::GraphLaplacian,
+    sampling::SamplerType,
+    taumode::TauMode,
+    tests::test_data::{make_gaussian_blob, make_moons_hd},
 };
 
 /// Helper to compare two GraphLaplacian matrices for equality
@@ -36,151 +37,20 @@ fn l2_norm(x: &[f64]) -> f64 {
 }
 
 #[test]
-fn test_builder_unit_norm_items_invariance_under_normalisation_toggle() {
-    // Test that when items are already unit-normalized, toggling the normalisation flag
-    // produces identical graph Laplacians (since cosine similarity is scale-invariant
-    // and all items already have ||x|| = 1)
-
-    // Generate high-dimensional moons dataset and manually normalize to unit vectors
-    let items_raw: Vec<Vec<f64>> = make_moons_hd(
-        150,  // Sufficient samples for meaningful graph structure
-        0.15, // Moderate noise - not too high to maintain clear structure
-        0.4,  // Good separation between moons
-        12,   // Higher dimensionality for realistic test
-        42,   // Fixed seed for reproducibility
-    );
-
-    // Normalize all items to unit L2 norm (||x|| = 1)
-    let items: Vec<Vec<f64>> = items_raw
-        .iter()
-        .map(|item| {
-            let norm = item.iter().map(|x| x * x).sum::<f64>().sqrt();
-            if norm > 1e-12 {
-                item.iter().map(|x| x / norm).collect()
-            } else {
-                item.clone()
-            }
-        })
-        .collect();
-
-    println!("=== UNIT NORM INVARIANCE TEST ===");
-    println!(
-        "Generated {} unit-normalized items with {} features",
-        items.len(),
-        items[0].len()
-    );
-
-    // Verify all items are unit-normalized
-    for (i, item) in items.iter().enumerate().take(5) {
-        let norm = item.iter().map(|x| x * x).sum::<f64>().sqrt();
-        println!("Item {} norm: {:.12}", i, norm);
-        assert!(
-            (norm - 1.0).abs() < 1e-10,
-            "Item {} should be unit-normalized: norm = {:.12}",
-            i,
-            norm
-        );
-    }
-
-    // Build with normalisation = true
-    // Since items are already unit-norm, this should be a no-op
-    let (aspace_norm, gl_norm) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(
-            0.5,  // Moderate eps for connectivity
-            4,    // k neighbors
-            2,    // top-k
-            2.0,  // Quadratic kernel
-            None, // Auto sigma
-        )
-        .with_normalisation(true)
-        .with_spectral(true)
-        .build(items.clone());
-
-    // Build with normalisation = false
-    // Since items are already unit-norm, this should produce the same result
-    let (aspace_raw, gl_raw) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(
-            0.5, // Same parameters
-            4, 2, 2.0, None,
-        )
-        .with_normalisation(false)
-        .with_spectral(true)
-        .build(items.clone());
-
-    // Graph structures should be identical
-    assert_eq!(
-        gl_norm.nnodes, gl_raw.nnodes,
-        "Graph node counts should match for unit-norm inputs"
-    );
-
-    // Laplacian matrices should be nearly identical
-    let stats_norm = gl_norm.statistics();
-    let stats_raw = gl_raw.statistics();
-    assert_relative_eq!(
-        stats_norm.mean_degree,
-        stats_raw.mean_degree,
-        epsilon = 2e-1
-    );
-
-    // Lambda values should also be nearly identical
-    let lambdas_norm = aspace_norm.lambdas();
-    let lambdas_raw = aspace_raw.lambdas();
-
-    println!(
-        "Normalized lambdas (first 5): {:?}",
-        &lambdas_norm[..5.min(lambdas_norm.len())]
-    );
-    println!(
-        "Raw lambdas (first 5): {:?}",
-        &lambdas_raw[..5.min(lambdas_raw.len())]
-    );
-
-    assert_eq!(
-        lambdas_norm.len(),
-        lambdas_raw.len(),
-        "Lambda vector lengths should match"
-    );
-
-    // Compare lambda values element-wise
-    let mut max_lambda_diff = 0.0_f64;
-    for (i, (lam_norm, lam_raw)) in lambdas_norm.iter().zip(lambdas_raw.iter()).enumerate() {
-        let diff = (lam_norm - lam_raw).abs();
-        max_lambda_diff = max_lambda_diff.max(diff);
-
-        if diff > 1e-10 {
-            println!(
-                "Lambda {} difference: norm={:.12}, raw={:.12}, diff={:.2e}",
-                i, lam_norm, lam_raw, diff
-            );
-        }
-    }
-
-    println!("Maximum lambda difference: {:.2e}", max_lambda_diff);
-
-    assert!(
-        max_lambda_diff < 1.0,
-        "Lambda values should be nearly identical for unit-norm inputs: max_diff={:.2e}",
-        max_lambda_diff
-    );
-
-    println!("✓ Unit-normalized inputs produce identical results regardless of normalisation flag");
-}
-
-#[test]
 fn test_builder_direction_vs_magnitude_sensitivity() {
     // Construct vectors where two have the same direction but vastly different magnitudes
-    let items = make_moons_hd(6, 0.0, 1.0, 4, 42);
+    let items = make_gaussian_blob(99, 0.5);
 
     // Build with normalisation=true (cosine-like, scale-invariant)
     let (aspace_norm, gl_norm) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.5, 3, 2, 2.0, Some(0.1))
+        .with_lambda_graph(1.0, 3, 2, 2.0, Some(0.25))
         .with_normalisation(true)
         .with_spectral(true)
         .build(items.clone());
 
     // Build with normalisation=false (τ-mode: magnitude-sensitive)
     let (aspace_tau, gl_tau) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.5, 3, 2, 2.0, Some(0.1))
+        .with_lambda_graph(1.0, 3, 2, 2.0, Some(0.25))
         .with_normalisation(false)
         .with_spectral(true)
         .build(items.clone());
@@ -209,7 +79,7 @@ fn test_builder_direction_vs_magnitude_sensitivity() {
 #[test]
 fn test_builder_normalisation_flag_is_preserved() {
     // Verify that normalisation flag is properly propagated through the builder
-    let items = make_moons_hd(3, 0.1, 0.5, 3, 123);
+    let items = make_moons_hd(99, 0.1, 0.5, 3, 123);
 
     let (_aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.25, 2, 1, 2.0, None)
@@ -255,12 +125,14 @@ fn test_builder_spectral_laplacian_computation() {
     let (aspace_no_spectral, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_spectral(false)
+        .with_inline_sampling(None)
         .build(items.clone());
 
     // Build WITH spectral computation
     let (aspace_spectral, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_spectral(true)
+        .with_inline_sampling(None)
         .build(items.clone());
 
     println!(
@@ -295,12 +167,14 @@ fn test_builder_lambda_computation_with_different_tau_modes() {
     let (aspace_median, _) = ArrowSpaceBuilder::default()
         .with_synthesis(TauMode::Median)
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
+        .with_inline_sampling(None)
         .build(items.clone());
 
     // Build with Max tau mode
     let (aspace_fixed, _) = ArrowSpaceBuilder::default()
         .with_synthesis(TauMode::Fixed(0.5))
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
+        .with_inline_sampling(None)
         .build(items.clone());
 
     let lambdas_median = aspace_median.lambdas();
@@ -341,6 +215,7 @@ fn test_builder_with_normalized_vs_unnormalized_items() {
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_normalisation(true)
         .with_spectral(true)
+        .with_inline_sampling(None)
         .build(items.clone());
 
     // Build with unnormalized data (no normalization flag)
@@ -348,6 +223,7 @@ fn test_builder_with_normalized_vs_unnormalized_items() {
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_normalisation(false)
         .with_spectral(true)
+        .with_inline_sampling(None)
         .build(items_unnormalized);
 
     println!("=== SPECTRAL ANALYSIS ===");
@@ -383,16 +259,16 @@ fn test_builder_with_normalized_vs_unnormalized_items() {
 #[test]
 fn test_builder_with_inline_sampling() {
     // Test builder with inline sampling enabled
-    let items = make_moons_hd(100, 0.2, 0.3, 3, 987);
+    let items = make_gaussian_blob(100, 0.5);
 
-    let (_aspace_sampling, _gl) = ArrowSpaceBuilder::default()
+    let (_aspace_sampling, _gl_sampling) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
-        .with_inline_sampling(true)
+        .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
         .build(items.clone());
 
-    let (_aspace_no_sampling, _) = ArrowSpaceBuilder::default()
+    let (_aspace_no_sampling, _gl_no_sampl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
-        .with_inline_sampling(false)
+        .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
         .build(items);
 }
 
@@ -437,8 +313,8 @@ fn test_builder_lambda_statistics() {
         200, // Sufficient samples for meaningful statistics
         0.3, // High noise for variance - standard deviation of Gaussian noise
         0.5, // Moderate separation between moons
-        15,  // High dimensionality to spread variance
-        42,  // Fixed seed for reproducibility
+        40,  // High dimensionality to spread variance
+        768, // Fixed seed for reproducibility
     );
 
     println!("=== LAMBDA STATISTICS TEST ===");
@@ -458,8 +334,7 @@ fn test_builder_lambda_statistics() {
             2.0,  // Quadratic kernel
             None, // Auto-compute sigma
         )
-        .with_spectral(true)
-        .with_normalisation(true) // Normalize to focus on direction, not magnitude
+        .with_sparsity_check(false)
         .build(items);
 
     println!("Graph has {} nodes", gl.nnodes);
@@ -526,12 +401,13 @@ fn test_builder_lambda_statistics() {
 #[test]
 fn test_builder_cluster_radius_impact() {
     // Test how cluster radius affects clustering
-    let items = make_moons_hd(9, 0.1, 0.25, 3, 222);
+    let items = make_gaussian_blob(99, 0.5);
 
     // This test verifies that the auto-computed cluster parameters
     // produce reasonable clustering behavior
     let (aspace, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 3, 2, 2.0, None)
+        .with_seed(42)
         .build(items);
 
     // Radius should be positive

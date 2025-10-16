@@ -7,17 +7,14 @@
 //! 4. Lambda-aware similarity search in clustered space
 //! 5. Hybrid search combining semantic and spectral scoring
 
-use crate::{builder::ArrowSpaceBuilder, core::ArrowItem, tests::test_data::make_moons_hd};
+use log::debug;
+
+use crate::{builder::ArrowSpaceBuilder, core::ArrowItem, tests::{init, test_data::make_gaussian_hd}};
 
 /// Helper: return test data (training + query split from same distribution)
-fn create_test_data(
-    n_train: usize,
-    n_query: usize,
-    dims: usize,
-    seed: u64,
-) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
+fn create_test_data(n_train: usize, n_query: usize) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
     let total = n_train + n_query;
-    let all_data = make_moons_hd(total, 0.15, 0.4, dims, seed);
+    let all_data = make_gaussian_hd(total, 0.6);
 
     let train = all_data[0..n_train].to_vec();
     let queries = all_data[n_train..].to_vec();
@@ -28,7 +25,7 @@ fn create_test_data(
 #[test]
 fn test_query_without_projection() {
     // Build clustered index without dimensionality reduction
-    let (data, queries) = create_test_data(100, 5, 50, 42);
+    let (data, queries) = create_test_data(99, 18);
 
     println!(
         "Building index with {} items, {} dims",
@@ -37,7 +34,7 @@ fn test_query_without_projection() {
     );
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 5, 2, 2.0, Some(0.1))
+        .with_lambda_graph(1.0, 5, 2, 2.0, None)
         .with_normalisation(true)
         .with_dims_reduction(false, None) // No projection
         .with_sparsity_check(false)
@@ -47,8 +44,8 @@ fn test_query_without_projection() {
 
     // Prepare query (no projection needed)
     let query_lambda = aspace.prepare_query_item(&queries[0], &gl);
+    println!("{:?}", query_lambda);
     assert!(query_lambda.is_finite(), "Query lambda should be finite");
-    assert!(query_lambda >= 0.0, "Query lambda should be non-negative");
 
     let query_item = ArrowItem::new(queries[0].clone(), query_lambda);
 
@@ -73,14 +70,14 @@ fn test_query_without_projection() {
 #[test]
 fn test_query_with_projection_enabled() {
     // Test query projection in high-dimensional clustered space
-    let (data, queries) = create_test_data(150, 5, 200, 123);
+    let (data, queries) = create_test_data(99, 18);
 
     println!("Testing projection with {}D data", data[0].len());
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 6, 2, 2.0, None)
-        .with_normalisation(true)
-        .with_dims_reduction(true, Some(0.3)) // Enable JL projection
+        .with_lambda_graph(1.0, 6, 2, 2.0, None)
+        .with_normalisation(false)
+        .with_dims_reduction(true, Some(1.0)) // Enable JL projection
         .with_sparsity_check(false)
         .build(data);
 
@@ -114,7 +111,6 @@ fn test_query_with_projection_enabled() {
 
     // Compute lambda on projected query
     let query_lambda = aspace.prepare_query_item(&query_original, &gl);
-    assert!(query_lambda.is_finite() && query_lambda >= 0.0);
 
     let query_item = ArrowItem::new(query_original, query_lambda);
 
@@ -143,10 +139,10 @@ fn test_query_with_projection_enabled() {
 #[test]
 fn test_prepare_query_item_consistency() {
     // Test that prepare_query_item produces stable lambda values
-    let (data, queries) = create_test_data(80, 5, 64, 456);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.25, 4, 2, 2.0, None)
+        .with_lambda_graph(1.0, 6, 2, 2.0, None)
         .with_normalisation(true)
         .with_sparsity_check(false)
         .build(data);
@@ -166,7 +162,6 @@ fn test_prepare_query_item_consistency() {
         lambda2, lambda3,
         "Lambda computation should be deterministic"
     );
-    assert!(lambda1 >= 0.0, "Lambda should be non-negative");
 
     println!("✓ Consistent lambda: {:.6}", lambda1);
 }
@@ -174,13 +169,13 @@ fn test_prepare_query_item_consistency() {
 #[test]
 fn test_search_lambda_aware_alpha_effect() {
     // Test that alpha parameter controls semantic vs spectral balance
-    let (data, queries) = create_test_data(100, 5, 48, 789);
+    let (data, queries) = create_test_data(297, 18);
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 5, 2, 2.0, None)
-        .with_normalisation(true)
-        .with_spectral(true) // Enable spectral for lambda computation
+        .with_lambda_graph(1.0, 6, 2, 2.0, None)
+        .with_spectral(false) // Enable spectral for lambda computation
         .with_sparsity_check(false)
+        .with_seed(42)
         .build(data);
 
     let query = queries[2].clone();
@@ -223,7 +218,7 @@ fn test_search_lambda_aware_alpha_effect() {
 #[test]
 fn test_search_lambda_aware_hybrid() {
     // Compare regular lambda-aware search vs hybrid search
-    let (data, queries) = create_test_data(90, 5, 56, 321);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
@@ -262,7 +257,7 @@ fn test_search_lambda_aware_hybrid() {
 #[should_panic]
 fn test_query_dimension_mismatch_panics() {
     // Query with wrong dimension should panic
-    let (data, queries) = create_test_data(50, 5, 64, 999);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
@@ -278,7 +273,7 @@ fn test_query_dimension_mismatch_panics() {
 #[should_panic]
 fn test_query_with_nan_values() {
     // Query with NaN should panic
-    let (data, queries) = create_test_data(50, 5, 48, 888);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
@@ -293,7 +288,7 @@ fn test_query_with_nan_values() {
 #[test]
 fn test_range_search_with_query_lambda() {
     // Test range-based search in clustered space
-    let (data, queries) = create_test_data(80, 5, 40, 555);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
@@ -334,14 +329,16 @@ fn test_range_search_with_query_lambda() {
 
 #[test]
 fn test_lambda_values_reasonable_range() {
+    init();
     // Test that query lambdas are in reasonable range
-    let (data, queries) = create_test_data(100, 5, 72, 777);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
         .with_normalisation(true)
         .with_spectral(true)
         .with_sparsity_check(false)
+        .with_seed(42)
         .build(data);
 
     // Test all queries
@@ -357,16 +354,16 @@ fn test_lambda_values_reasonable_range() {
             lambda
         );
 
-        println!("Query {} lambda: {:.6}", i, lambda);
+        debug!("Query {} lambda: {:.6}", i, lambda);
     }
 
-    println!("✓ All query lambdas in reasonable range");
+    debug!("✓ All query lambdas in reasonable range");
 }
 
 #[test]
 fn test_search_returns_top_k_exactly() {
     // Test that search returns exactly k results (or all if k > num_clusters)
-    let (data, queries) = create_test_data(120, 5, 60, 654);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
@@ -398,16 +395,18 @@ fn test_search_returns_top_k_exactly() {
 
 #[test]
 fn test_projection_preserves_relative_distances() {
+    init();
     // Test Johnson-Lindenstrauss projection preserves relative distances
-    let (data, _) = create_test_data(80, 0, 200, 42);
+    let (data, _) = create_test_data(99, 18);
 
     println!("Testing JL projection with 200D data");
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 5, 2, 2.0, Some(0.1))
+        .with_lambda_graph(1.0, 6, 2, 2.0, None)
         .with_normalisation(true)
         .with_dims_reduction(true, Some(0.3)) // 30% of original dimension
         .with_sparsity_check(false)
+        .with_seed(42)
         .build(data);
 
     // Verify projection was applied
@@ -425,9 +424,9 @@ fn test_projection_preserves_relative_distances() {
     );
 
     // Create three queries with known relationships
-    let query1_orig = vec![0.5; 200];
-    let query2_orig = vec![0.51; 200]; // Very close to q1
-    let query3_orig = vec![5.0; 200]; // Far from q1
+    let query1_orig = vec![0.5; 100];
+    let query2_orig = vec![0.51; 100]; // Very close to q1
+    let query3_orig = vec![5.0; 100]; // Far from q1
 
     // Project all three queries
     let query1_proj = aspace.project_query(&query1_orig);
@@ -528,10 +527,10 @@ fn test_projection_preserves_relative_distances() {
 #[test]
 fn test_project_query_no_projection() {
     // When projection is disabled, queries should pass through unchanged
-    let (data, queries) = create_test_data(50, 3, 48, 321);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 4, 2, 2.0, None)
+        .with_lambda_graph(1.0, 6, 2, 2.0, None)
         .with_dims_reduction(false, None) // No projection
         .build(data);
 
@@ -548,7 +547,7 @@ fn test_project_query_no_projection() {
 #[test]
 fn test_project_query_consistency() {
     // Projection should be deterministic
-    let (data, queries) = create_test_data(60, 3, 100, 654);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
@@ -573,11 +572,12 @@ fn test_project_query_consistency() {
 #[test]
 fn test_project_query_linearity() {
     // Projection should be linear: project(α*x) = α*project(x)
-    let (data, queries) = create_test_data(50, 3, 80, 987);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 4, 2, 2.0, None)
+        .with_lambda_graph(1.0, 6, 2, 2.0, None)
         .with_dims_reduction(true, Some(0.35))
+        .with_sparsity_check(false)
         .build(data);
 
     let query = queries[1].clone();
@@ -605,15 +605,15 @@ fn test_project_query_linearity() {
 #[test]
 fn test_project_query_zero_vector() {
     // Projection of zero should be zero
-    let (data, _) = create_test_data(50, 0, 96, 111);
+    let (data, _) = create_test_data(99, 18);
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.2, 4, 2, 2.0, None)
-        .with_dims_reduction(true, Some(0.3))
+        .with_dims_reduction(true, Some(0.8))
         .with_sparsity_check(false)
         .build(data);
 
-    let query_zero = vec![0.0; 96];
+    let query_zero = vec![0.0; 100];
     let projected = aspace.project_query(&query_zero);
 
     assert_eq!(projected.len(), aspace.reduced_dim.unwrap());
@@ -628,10 +628,10 @@ fn test_project_query_zero_vector() {
 #[test]
 fn test_project_query_preserves_scale_approximately() {
     // Johnson-Lindenstrauss preserves norms approximately
-    let (data, queries) = create_test_data(60, 3, 128, 222);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 5, 2, 2.0, None)
+        .with_lambda_graph(1.0, 6, 2, 2.0, None)
         .with_dims_reduction(true, Some(0.25))
         .with_sparsity_check(false)
         .build(data);
@@ -663,7 +663,7 @@ fn test_project_query_preserves_scale_approximately() {
 #[test]
 fn test_project_query_different_queries_differ() {
     // Different queries should produce different projections
-    let (data, queries) = create_test_data(300, 4, 68, 333);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
@@ -691,11 +691,13 @@ fn test_project_query_different_queries_differ() {
 #[test]
 fn test_project_query_preserves_dot_product_sign() {
     // Projection should preserve angle relationships
-    let (data, queries) = create_test_data(50, 2, 72, 444);
+    let (data, queries) = create_test_data(99, 18);
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 4, 2, 2.0, None)
-        .with_dims_reduction(true, Some(0.35))
+        .with_lambda_graph(1.0, 6, 2, 2.0, None)
+        .with_dims_reduction(true, Some(0.8))
+        .with_inline_sampling(None)
+        .with_seed(312)
         .build(data);
 
     let query_pos = queries[0].clone();

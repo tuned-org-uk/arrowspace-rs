@@ -1,4 +1,4 @@
-/// Copyright [2025] Mec-iS, tuned.org.uk
+/// Copyright (2025) Mec-iS, tuned.org.uk
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
 //    You may obtain a copy of the License at
@@ -31,7 +31,7 @@ pub fn init() {
     INIT.call_once(|| {
         // Read RUST_LOG env variable, default to "info" if not set
         let env = env_logger::Env::default().default_filter_or("info");
-        
+
         // don't panic if called multiple times across binaries
         let _ = env_logger::Builder::from_env(env)
             .is_test(true) // nicer formatting for tests

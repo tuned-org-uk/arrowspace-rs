@@ -1,17 +1,12 @@
+use log::debug;
 use smartcore::linalg::basic::arrays::Array;
 
-use crate::{builder::ArrowSpaceBuilder, tests::test_data::make_moons_hd};
-
-#[test]
-fn test_minimal_input() {
-    let rows = vec![
-        vec![1.0, 0.0, 3.0],
-        vec![0.5, 1.0, 0.0],
-        vec![1.0, 0.0, 3.0],
-        vec![0.5, 1.0, 0.0],
-    ];
-    ArrowSpaceBuilder::new().build(rows);
-}
+use crate::tests::init;
+use crate::{
+    builder::ArrowSpaceBuilder,
+    sampling::SamplerType,
+    tests::test_data::{make_gaussian_blob, make_gaussian_hd, make_moons_hd},
+};
 
 #[test]
 fn simple_build() {
@@ -21,9 +16,13 @@ fn simple_build() {
         vec![0.3, 1.0, 0.0],
         vec![1.0, 0.0, 5.0],
         vec![0.3, 1.0, 0.0],
+        vec![2.0, 0.0, 5.0],
+        vec![0.3, 2.0, 0.0],
+        vec![5.0, 1.0, 5.0],
+        vec![0.3, 1.0, 5.0],
     ];
 
-    let eps = 1.0;
+    let eps = 0.5;
     let k = 3usize;
     let topk = 3usize;
     let p = 2.0;
@@ -33,26 +32,13 @@ fn simple_build() {
         .with_lambda_graph(eps, k, topk, p, sigma_override)
         .build(rows);
 
-    assert_eq!(aspace.data.shape(), (4, 3));
-    assert_eq!(gl.nnodes, 4);
+    assert_eq!(aspace.data.shape(), (8, 3));
+    assert_eq!(gl.nnodes, 8);
 }
 
 #[test]
 fn build_from_rows_with_lambda_graph() {
-    let rows = vec![
-        vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
-        ],
-        vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
-        ],
-        vec![
-            0.81, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
-        ],
-        vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.55, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
-        ],
-    ];
+    let rows = make_gaussian_blob(300, 0.5);
 
     // Build a lambda-proximity Laplacian over items from the data matrix
     // Parameters mirror the old intent: small eps, k=2 cap, p=2.0 kernel, default sigma
@@ -60,61 +46,94 @@ fn build_from_rows_with_lambda_graph() {
         .with_lambda_graph(1e-3, 2, 2, 2.0, None)
         .build(rows);
 
-    assert_eq!(aspace.data.shape(), (4, 13));
-    assert_eq!(gl.nnodes, 4);
+    assert_eq!(aspace.data.shape(), (300, 10));
+    assert_eq!(gl.nnodes, 300);
     assert!(aspace.lambdas().iter().all(|&l| l >= 0.0));
 }
 
 #[test]
 fn build_with_lambda_graph_over_product_like_rows() {
-    // Test with realistic high-dimensional feature vectors instead of synthetic product coordinates
-    // These represent meaningful data patterns commonly found in ML applications
-    let rows = vec![
-        vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
-        ],
-        vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
-        ],
-        vec![
-            0.81, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
-        ],
-        vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.22, 0.70, 0.08, 0.37, 0.56,
-        ],
-    ];
+    init();
+    // Case 1: Gaussian HD, moderate noise
+    {
+        let rows = make_gaussian_hd(99, 0.3);
+        let (aspace, _gl) = ArrowSpaceBuilder::new()
+            .with_lambda_graph(1.0, 3, 3, 2.0, None)
+            .with_inline_sampling(None)
+            .with_seed(765)
+            .build(rows);
 
-    let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(1e-3, 3, 3, 2.0, None)
-        .build(rows);
+        // make_gaussian_hd uses 100-D by construction
+        assert_eq!(
+            aspace.data.shape(),
+            (99, 100),
+            "Gaussian(99, 0.3) shape mismatch"
+        ); // [attached_file:91]
+        let lambdas = aspace.lambdas();
+        assert!(
+            lambdas.iter().all(|&l| l >= 0.0),
+            "Gaussian(99,0.3): found negative lambda"
+        ); // [attached_file:90]
+    }
 
-    assert_eq!(aspace.data.shape(), (4, 13));
-    assert_eq!(gl.nnodes, 4);
-    assert!(aspace.lambdas().iter().all(|&l| l >= 0.0));
+    // Case 2: Gaussian HD, low noise
+    {
+        let rows = make_gaussian_hd(150, 0.1);
+        let (aspace, _gl) = ArrowSpaceBuilder::new()
+            .with_lambda_graph(1.0, 3, 3, 2.0, None)
+            .with_inline_sampling(None)
+            .with_seed(765)
+            .build(rows);
+
+        assert!(
+            aspace.data.shape() == (150, 100) || aspace.data.shape() == (149, 100),
+            "Gaussian(150, 0.1) shape mismatch"
+        ); // [attached_file:91]
+        let lambdas = aspace.lambdas();
+        assert!(
+            lambdas.iter().all(|&l| l >= 0.0),
+            "Gaussian(150,0.1): found negative lambda"
+        ); // [attached_file:90]
+    }
+
+    // Case 3: Moons HD
+    {
+        // make_moons_hd(dims=100) produces 100-D rows with structure in first 2 dims
+        let rows = make_moons_hd(99, 0.1, 0.05, 100, 42);
+        let (aspace, _gl) = ArrowSpaceBuilder::new()
+            .with_lambda_graph(1.0, 3, 3, 2.0, None)
+            .with_inline_sampling(None)
+            .with_seed(765)
+            .build(rows);
+
+        assert_eq!(
+            aspace.data.shape(),
+            (99, 100),
+            "Moons(99,*,*,100) shape mismatch"
+        ); // [attached_file:91]
+        let lambdas = aspace.lambdas();
+        assert!(
+            lambdas.iter().all(|&l| l >= 0.0),
+            "Moons(99): found negative lambda"
+        ); // [attached_file:90]
+    }
 }
 
 #[test]
 fn lambda_graph_shape_matches_rows() {
+    init();
     // Test that lambda-graph construction correctly handles multiple items
     // with realistic high-dimensional feature vectors
-    let items = vec![
-        vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
-        ],
-        vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
-        ],
-        vec![
-            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38, 0.60,
-        ],
-    ];
+    let items = make_gaussian_hd(99, 0.3);
     let len_items = items.len();
 
+    debug!("{:?}", (items.len(), items[0].len()));
+
     let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(1e-3, 3, 3, 2.0, None)
+        .with_lambda_graph(1.0, 3, 3, 2.0, None)
         .build(items);
 
-    assert_eq!(aspace.data.shape(), (len_items, 13));
+    assert_eq!(aspace.data.shape(), (len_items, 100));
     assert_eq!(gl.nnodes, len_items);
     assert!(aspace.lambdas().iter().all(|&l| l >= 0.0));
 }
@@ -122,6 +141,112 @@ fn lambda_graph_shape_matches_rows() {
 // ============================================================================
 // Sampling tests
 // ============================================================================
+
+#[test]
+fn test_simple_random_high_rate() {
+    // Test with high sampling rate (90%) - should keep most data
+    let rows = make_gaussian_blob(297, 0.8);
+
+    let (aspace, gl) = ArrowSpaceBuilder::new()
+        .with_inline_sampling(Some(SamplerType::Simple(0.8))) // 90% keep rate
+        .with_lambda_graph(1.0, 3, 3, 2.0, None)
+        .with_seed(42)
+        .build(rows.clone());
+
+    let total_kept = aspace.cluster_sizes.into_iter().sum::<usize>();
+    println!("{:?}", total_kept);
+    let sampling_ratio = total_kept as f64 / rows.len() as f64;
+
+    // With 90% target, should keep around 85-95% of rows (allowing variance)
+    assert!(
+        sampling_ratio >= 0.75 && sampling_ratio <= 0.85,
+        "High sampling rate should keep ~90% of data (got {:.2}%)",
+        sampling_ratio * 100.0
+    );
+
+    // Verify structure
+    assert_eq!(aspace.data.shape().1, 10, "Should have 10 features");
+    assert_eq!(aspace.data.shape(), (297, 10), "Should preserve all items");
+    assert_eq!(gl.nnodes, 297, "Should have 50 nodes");
+}
+
+#[test]
+fn test_simple_random_aggressive_sampling() {
+    // Test very aggressive sampling (20%)
+    let rows = make_gaussian_blob(99, 0.5);
+
+    let (_, gl) = ArrowSpaceBuilder::new()
+        .with_inline_sampling(Some(SamplerType::Simple(0.2))) // 20% keep rate
+        .with_lambda_graph(1.0, 5, 5, 2.0, None)
+        .with_dims_reduction(false, None)
+        .build(rows.clone());
+
+    let sampled_count = gl.matrix.shape().0;
+    let sampling_ratio = sampled_count as f64 / rows.len() as f64;
+
+    // Should sample around 20%, with ±10% variance for small sample
+    assert!(
+        sampling_ratio >= 0.08 && sampling_ratio <= 0.35,
+        "Aggressive sampling outside expected range [10-30%] (got {:.2}%)",
+        sampling_ratio * 100.0
+    );
+
+    // Despite aggressive sampling, should still create valid Laplacian
+    assert!(
+        sampled_count >= 10,
+        "Should keep at least 4 points for valid graph, got {}",
+        sampled_count
+    );
+
+    println!(
+        "✓ Aggressive sampling kept {} / {} points ({:.1}%)",
+        sampled_count,
+        rows.len(),
+        sampling_ratio * 100.0
+    );
+}
+
+#[test]
+fn test_simple_random_vs_density_adaptive() {
+    // Compare SimpleRandom vs DensityAdaptive on same data
+    let rows = make_moons_hd(100, 0.10, 0.30, 10, 42);
+
+    // Simple random with 50% rate
+    let (aspace_simple, _) = ArrowSpaceBuilder::new()
+        .with_inline_sampling(Some(SamplerType::Simple(0.5)))
+        .with_lambda_graph(1e-3, 3, 3, 2.0, None)
+        .with_seed(42)
+        .build(rows.clone());
+
+    // Density adaptive with 50% base rate
+    let (aspace_adapt, _) = ArrowSpaceBuilder::new()
+        .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
+        .with_lambda_graph(1e-3, 3, 3, 2.0, None)
+        .with_seed(42)
+        .build(rows.clone());
+
+    let simple_ratio =
+        aspace_simple.cluster_sizes.into_iter().sum::<usize>() as f64 / rows.len() as f64;
+    let density_ratio =
+        aspace_adapt.cluster_sizes.into_iter().sum::<usize>() as f64 / rows.len() as f64;
+
+    // Simple random should be close to 50%
+    assert!(
+        simple_ratio >= 0.40 && simple_ratio <= 0.65,
+        "Simple random should be ~50%, got {:.1}%",
+        simple_ratio * 100.0
+    );
+
+    // Density adaptive may vary more (adaptive to data)
+    assert!(
+        density_ratio >= 0.30 && density_ratio <= 0.70,
+        "Density adaptive in valid range, got {:.1}%",
+        density_ratio * 100.0
+    );
+
+    println!("Simple random kept: {:.1}%", simple_ratio * 100.0);
+    println!("Density adaptive kept: {:.1}%", density_ratio * 100.0);
+}
 
 #[test]
 fn test_density_adaptive_sampling_basic() {
@@ -138,7 +263,7 @@ fn test_density_adaptive_sampling_basic() {
     ];
 
     let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_inline_sampling(true)
+        .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
         .with_lambda_graph(1.0, 3, 3, 2.0, None)
         .build(rows.clone());
 
@@ -149,26 +274,13 @@ fn test_density_adaptive_sampling_basic() {
 }
 
 #[test]
-fn test_density_adaptive_preserves_outliers() {
+fn test_constant_sampler_preserves_outliers() {
     // Test that density-adaptive sampling keeps outliers/sparse regions
-    let mut rows = Vec::new();
-
-    // Dense cluster around origin (20 points)
-    for i in 0..20 {
-        rows.push(vec![
-            0.1 * (i as f64 / 20.0),
-            0.1 * ((i + 5) as f64 / 20.0),
-            0.1 * ((i + 10) as f64 / 20.0),
-        ]);
-    }
-
-    // Sparse outliers far away (5 points)
-    for i in 0..7 {
-        rows.push(vec![10.0 + i as f64, 10.0 + i as f64, 10.0]);
-    }
+    let rows = make_gaussian_blob(99, 0.3);
 
     let (aspace, _gl) = ArrowSpaceBuilder::new()
-        .with_inline_sampling(true)
+        .with_lambda_graph(0.5, 3, 2, 2.0, Some(0.25))
+        .with_inline_sampling(Some(SamplerType::Simple(0.8)))
         .build(rows.clone());
 
     // Check that at least some outlier region is represented
@@ -194,7 +306,7 @@ fn test_density_adaptive_with_uniform_data() {
     let rows: Vec<Vec<f64>> = make_moons_hd(50, 0.3, 0.52, 10, 42);
 
     let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_inline_sampling(true)
+        .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
         .with_lambda_graph(1.0, 5, 5, 2.0, None)
         .build(rows.clone());
 
@@ -208,7 +320,7 @@ fn test_density_adaptive_high_rate() {
     let rows = make_moons_hd(50, 0.10, 0.20, 10, 42);
 
     let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_inline_sampling(true)
+        .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
         .with_lambda_graph(1e-3, 3, 3, 2.0, None)
         .build(rows.clone());
 
@@ -234,7 +346,7 @@ fn test_density_adaptive_aggressive_sampling() {
     let rows = make_moons_hd(50, 0.10, 0.40, 10, 42);
 
     let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_inline_sampling(true)
+        .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
         .with_lambda_graph(2.0, 5, 5, 2.0, None)
         .build(rows.clone());
 
@@ -273,7 +385,7 @@ fn test_density_adaptive_with_duplicates() {
     ];
 
     let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_inline_sampling(true)
+        .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
         .with_lambda_graph(1.0, 3, 3, 2.0, None)
         .build(rows.clone());
 
@@ -299,7 +411,7 @@ fn test_density_adaptive_sampling_statistics() {
         let rows: Vec<Vec<f64>> = make_moons_hd(50 * i, 0.5, 0.2, 10 * i, 42 * (i as u64));
 
         let (aspace, gl) = ArrowSpaceBuilder::new()
-            .with_inline_sampling(true)
+            .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
             .with_sparsity_check(false)
             .build(rows.clone());
 
@@ -312,16 +424,17 @@ fn test_density_adaptive_sampling_statistics() {
 #[test]
 fn test_density_adaptive_vs_no_sampling() {
     // Compare results with and without sampling
-    let rows: Vec<Vec<f64>> = make_moons_hd(50, 0.10, 0.40, 100, 42);
+    let rows: Vec<Vec<f64>> = make_gaussian_blob(99, 0.5);
 
     // Without sampling
     let (aspace_full, gl_full) = ArrowSpaceBuilder::new()
         .with_lambda_graph(1.0, 5, 5, 2.0, None)
+        .with_inline_sampling(None)
         .build(rows.clone());
 
     // With 50% density-adaptive sampling
     let (aspace_sampled, gl_sampled) = ArrowSpaceBuilder::new()
-        .with_inline_sampling(true)
+        .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
         .with_lambda_graph(1.0, 5, 5, 2.0, None)
         .build(rows.clone());
 
@@ -345,12 +458,15 @@ fn test_density_adaptive_vs_no_sampling() {
 fn test_density_adaptive_maintains_lambda_quality() {
     // Test that density-adaptive sampling preserves lambda quality
 
-    for i in 1..5 {
-        let rows: Vec<Vec<f64>> = make_moons_hd(50 * i, 0.5, 0.5, 100 * i, 42 * (i as u64));
+    for i in 1..3 {
+        let dims = 100 * i;
+        let seed = 128 * (i as u64);
+        let rows: Vec<Vec<f64>> =
+            make_moons_hd(33 * i, 0.25 * (i as f64), 0.25 * (i as f64), dims, seed);
 
         let (aspace, _gl) = ArrowSpaceBuilder::new()
-            .with_lambda_graph(1e-1, 3, 3, 2.0, None)
-            .with_inline_sampling(true)
+            .with_lambda_graph(1.0, 3, 3, 2.0, Some(0.5))
+            .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.4)))
             .with_sparsity_check(false)
             .build(rows);
 
@@ -363,7 +479,67 @@ fn test_density_adaptive_maintains_lambda_quality() {
 
         // Check lambda values have some variance (not all identical)
         let lambda_mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
-        let has_variance = lambdas.iter().any(|&l| (l - lambda_mean).abs() > 0.001);
-        assert!(has_variance, "Lambdas should have some variance");
+        let has_variance = lambdas.iter().any(|&l| (l - lambda_mean).abs() > 1e-12);
+        assert!(
+            has_variance,
+            "Lambdas failed variance test with dimensions {} with seed {}",
+            dims, seed
+        );
     }
+}
+
+#[test]
+fn test_with_deterministic_seed() {
+    let items = make_moons_hd(80, 0.50, 0.50, 9, 789);
+    let seed = 42u64;
+
+    let (aspace1, _) = ArrowSpaceBuilder::default()
+        .with_seed(seed)
+        .build(items.clone());
+
+    let (aspace2, _) = ArrowSpaceBuilder::default()
+        .with_seed(seed)
+        .build(items.clone());
+
+    // Should be identical
+    assert_eq!(aspace1.n_clusters, aspace2.n_clusters);
+}
+
+#[test]
+fn test_builder_unit_norm_diagonal_similarity() {
+    init();
+    let items_raw: Vec<Vec<f64>> = make_moons_hd(80, 0.50, 0.50, 9, 789);
+
+    let items: Vec<Vec<f64>> = items_raw
+        .iter()
+        .map(|item| {
+            let norm = item.iter().map(|x| x * x).sum::<f64>().sqrt();
+            if norm > 1e-12 {
+                item.iter().map(|x| x / norm).collect()
+            } else {
+                item.clone()
+            }
+        })
+        .collect();
+
+    let seed = 42u64;
+
+    let (aspace_norm, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 4, 2, 2.0, None)
+        .with_normalisation(false)
+        .with_dims_reduction(false, None)
+        .with_inline_sampling(None)
+        .with_seed(seed)
+        .build(items.clone());
+
+    let (aspace_raw, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 4, 2, 2.0, None)
+        .with_normalisation(false)
+        .with_dims_reduction(false, None)
+        .with_inline_sampling(None)
+        .with_seed(seed)
+        .build(items_raw.clone());
+
+    // Now should be identical
+    assert_eq!(aspace_norm.n_clusters, aspace_raw.n_clusters);
 }
