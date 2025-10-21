@@ -59,9 +59,9 @@
 //! use arrowspace::graph::{build_laplacian_knn, LaplacianMode};
 //!
 //! let laplacian = build_laplacian_knn(
-//!     &centroids, 
-//!     k, 
-//!     sigma, 
+//!     &centroids,
+//!     k,
+//!     sigma,
 //!     LaplacianMode::Symmetric
 //! );
 //! ```
@@ -231,7 +231,7 @@ impl GraphFactory {
         .matrix;
 
         let sparsity_output = GraphLaplacian::sparsity(&aspace.signals);
-        println!("sparsity {:?}", sparsity_output);
+        debug!("sparsity {:?}", sparsity_output);
         if sparsity_output > 0.95 && graph_laplacian.graph_params.sparsity_check {
             panic!(
                 "Resulting spectral matrix is too sparse {:?}",
