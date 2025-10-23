@@ -34,7 +34,7 @@ use crate::graph::{GraphLaplacian, GraphParams};
 use dashmap::DashMap;
 use smartcore::algorithm::neighbour::cosinepair::CosinePair;
 use smartcore::api::{Transformer, UnsupervisedEstimator};
-use smartcore::linalg::basic::arrays::{Array, Array2};
+use smartcore::linalg::basic::arrays::Array;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 use smartcore::preprocessing::numerical::{StandardScaler, StandardScalerParameters};
 
@@ -159,7 +159,7 @@ pub fn build_laplacian_matrix(
     // Last step: finalise results into sparse
     let sparse_matrix: CsMat<f64> = triplets.to_csr();
     let graph_laplacian = GraphLaplacian {
-        init_data: items.transpose(), // store initial data from builder
+        init_data: items, // store initial data from builder, XxF transposed 
         matrix: sparse_matrix,
         nnodes: match n_items {
             Some(n_items) => n_items,

@@ -1,4 +1,4 @@
-//! Arrow and ArrowSpace: enhanced with search-specific zero-copy operations.
+//! ArrowSpace: enhanced with search-specific zero-copy operations.
 //!
 //! This module provides two core abstractions for working with row-major numeric
 //! data in search/graph contexts:
@@ -496,14 +496,6 @@ impl ArrowSpace {
             projection_matrix: None,
             reduced_dim: None,
         }
-    }
-
-    /// Returns a Vec<Vec<...>> from data for external usage
-    #[inline]
-    pub fn data_to_vec(&self) -> Vec<Vec<f64>> {
-        (0..self.data.shape().0)
-            .map(|row_idx| self.data.get_row(row_idx).iterator(0).copied().collect())
-            .collect()
     }
 
     /// Project query vector to reduced space if projection was used during indexing

@@ -147,7 +147,7 @@ impl GraphFactory {
     /// Transpose the resulting matrix from clustering and build a graph Laplacian matrix
     ///  so to be ready to be used to analyse signal features
     pub fn build_laplacian_matrix_from_k_cluster(
-        clustered: DenseMatrix<f64>, // X×F: X centroids of clusters, each with F features
+        clustered: &DenseMatrix<f64>, // X×F: X centroids of clusters, each with F features
         eps: f64,                    // maximum rectified cosine distance (see `docs/`)
         k: usize,                    // max number of neighbours for node
         topk: usize,                 // number of results to be considered for closest neighbors
@@ -210,9 +210,9 @@ impl GraphFactory {
     /// * `aspace` - The data from the ArrowSpace data  
     /// * `graph_laplacian` - A graph laplacian generated with the `ArrowSpace`
     pub fn build_spectral_laplacian(
-        mut aspace: ArrowSpace,
+        aspace: &mut ArrowSpace,
         graph_laplacian: &GraphLaplacian,
-    ) -> ArrowSpace {
+    ) {
         info!("Building F×F spectral feature matrix");
         debug!(
             "ArrowSpace dimensions: {} features, {} items",
@@ -267,8 +267,6 @@ impl GraphFactory {
             stats.0,
             stats.1 * 100.0
         );
-
-        aspace
     }
 }
 
@@ -282,7 +280,7 @@ fn sparse_to_dense(sparse: &CsMat<f64>) -> DenseMatrix<f64> {
         }
     }
 
-    DenseMatrix::new(rows, cols, data, false).unwrap()
+    DenseMatrix::<f64>::from_iterator(data.iter().copied(), rows, cols, 1)
 }
 
 impl GraphLaplacian {
@@ -451,6 +449,8 @@ impl GraphLaplacian {
             x.len()
         );
 
+        trace!("multiplying x {:?} {:?}", x, self.matrix);
+
         // Initialize result vector
         let mut result = vec![0.0; self.nnodes];
 
@@ -480,7 +480,7 @@ impl GraphLaplacian {
 
         for i in 0..self.nnodes {
             for j in 0..self.nnodes {
-                let diff = (self.matrix.get(i, j).unwrap() - self.matrix.get(j, i).unwrap()).abs();
+                let diff = (self.matrix.get(i, j).unwrap_or(&0.0) - self.matrix.get(j, i).unwrap_or(&0.0)).abs();
                 max_asymmetry = max_asymmetry.max(diff);
                 if diff > tolerance {
                     violations += 1;
