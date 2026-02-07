@@ -148,7 +148,9 @@ pub fn load_metadata(
     path: impl AsRef<Path>,
     name_id: &str,
 ) -> Result<ArrowSpaceMetadata, StorageError> {
-    let metadata_path = path.as_ref().join(format!("{}_metadata.json", name_id));
+    let metadata_path = path
+        .as_ref()
+        .join(format!("{}-raw_input_metadata.json", name_id));
 
     info!("loading from {:?}", metadata_path);
     let json = std::fs::read_to_string(&metadata_path)

@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "arrowspace"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "approx 0.5.1",
  "arrow",
