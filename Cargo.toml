@@ -34,7 +34,7 @@ approx = "0.5.1"
 log = "0.4.28"
 env_logger = "0.11.8"
 dashmap = "6.1.0"
-rand_chacha = "0.9.0"
+rand_chacha = "0.10.0"
 rand_distr = "0.5.1"
 
 # storage feature
