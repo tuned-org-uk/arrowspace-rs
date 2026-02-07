@@ -2,6 +2,7 @@ use arrow::{
     array::{Float64Array, RecordBatch, StringArray, UInt64Array},
     datatypes::{DataType, Field, Schema},
 };
+use log::info;
 use parquet::{
     arrow::{ArrowWriter, arrow_reader::ParquetRecordBatchReaderBuilder},
     basic::Compression,
@@ -149,9 +150,11 @@ pub fn load_metadata(
 ) -> Result<ArrowSpaceMetadata, StorageError> {
     let metadata_path = path.as_ref().join(format!("{}_metadata.json", name_id));
 
+    info!("loading from {:?}", metadata_path);
     let json = std::fs::read_to_string(&metadata_path)
         .map_err(|e| StorageError::Io(format!("Failed to read metadata: {}", e)))?;
 
+    info!("loading from {:?}", json);
     let metadata: ArrowSpaceMetadata = serde_json::from_str(&json)
         .map_err(|e| StorageError::Invalid(format!("Failed to parse metadata: {}", e)))?;
 
@@ -818,15 +821,16 @@ pub fn load_lambda(path: impl AsRef<Path>) -> Result<Vec<f64>, StorageError> {
         let batch = batch_result.map_err(|e| StorageError::Parquet(e.to_string()))?;
 
         if lambdas.is_empty() {
-             // Try to pre-allocate based on n_values from the first batch
-             if let Some(n_values_col) = batch.column_by_name("n_values")
-                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>()) 
-             {
-                 if !n_values_col.is_empty() {
+            // Try to pre-allocate based on n_values from the first batch
+            if let Some(n_values_col) = batch
+                .column_by_name("n_values")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+            {
+                if !n_values_col.is_empty() {
                     let n_values = n_values_col.value(0) as usize;
                     lambdas.reserve(n_values);
-                 }
-             }
+                }
+            }
         }
 
         // Extract lambda values
@@ -1143,6 +1147,10 @@ mod tests {
 
         let loaded = load_lambda(path).unwrap();
 
-        assert_eq!(loaded.len(), n_values, "Loaded lambda vector length mismatch");
+        assert_eq!(
+            loaded.len(),
+            n_values,
+            "Loaded lambda vector length mismatch"
+        );
     }
 }
