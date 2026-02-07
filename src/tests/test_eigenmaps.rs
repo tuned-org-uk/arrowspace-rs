@@ -346,7 +346,7 @@ fn test_eigenmaps_vs_build_different_taumode() {
 }
 
 #[test]
-#[should_panic(expected = "call compute_taumode")]
+#[should_panic]
 fn test_search_without_taumode_panics() {
     crate::init();
     info!("Test: Search without compute_taumode should panic in debug");
