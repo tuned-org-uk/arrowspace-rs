@@ -39,4 +39,4 @@ jobs:
       - name: Stable Build without features
         run: cargo build --target ${{ matrix.platform.target }}
       - name: Tests
-        run: cargo test --all-features
+        run: cargo test --release --all-features
