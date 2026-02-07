@@ -62,6 +62,8 @@ pub trait ClusteringHeuristic {
     /// `ClusteredOutput` containing centroids (X × F'), enriched ArrowSpace, and dimensions.
     fn start_clustering(&mut self, rows: Vec<Vec<f64>>) -> ClusteredOutput;
 
+    fn start_clustering_dim_reduce(&mut self, rows: Vec<Vec<f64>>) -> ClusteredOutput;
+
     /// `start_clustering` but for `DenseMatrix`
     fn start_clustering_dense(
         builder: &mut ArrowSpaceBuilder,

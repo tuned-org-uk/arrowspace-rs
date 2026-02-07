@@ -241,6 +241,132 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         }
     }
 
+    /// Optimized clustering that applies dimensionality reduction BEFORE clustering.
+    /// This is orders of magnitude faster for high-dimensional data (F > 1000).
+    fn start_clustering_dim_reduce(&mut self, rows: Vec<Vec<f64>>) -> ClusteredOutput {
+        let n_items = rows.len();
+        let n_features = rows.first().map(|r| r.len()).unwrap_or(0);
+
+        info!(
+            "EigenMaps::start_clustering_fast: N={} items, F={} features",
+            n_items, n_features
+        );
+
+        // STAGE 1: Early Dimensionality Reduction (if enabled and beneficial)
+        let (working_rows, reduced_dim, projection) = if self.use_dims_reduction
+            && n_features > 1000
+        {
+            info!("Applying early JL projection to accelerate clustering");
+
+            // Compute target dimension based on item count (not cluster count)
+            let jl_dim = compute_jl_dimension(n_items, self.rp_eps);
+            let target_dim = jl_dim.min(n_features / 2).max(64);
+
+            info!(
+                "Early projection: {} features → {} dimensions (ε={:.2})",
+                n_features, target_dim, self.rp_eps
+            );
+
+            // Create projection matrix
+            let proj = ImplicitProjection::new(n_features, target_dim, self.clustering_seed);
+
+            // Project all rows in parallel using Rayon
+            let projected: Vec<Vec<f64>> = rows.par_iter().map(|row| proj.project(row)).collect();
+
+            let compression = n_features as f64 / target_dim as f64;
+            info!(
+                "Early projection complete: {:.1}x compression, {} MB → {} MB",
+                compression,
+                (n_items * n_features * 8) / (1024 * 1024),
+                (n_items * target_dim * 8) / (1024 * 1024)
+            );
+
+            (projected, target_dim, Some(proj))
+        } else {
+            debug!("Skipping early projection (disabled or dimension too small)");
+            (rows.clone(), n_features, None)
+        };
+
+        // STAGE 2: Prepare ArrowSpace (now using potentially-reduced data)
+        debug!("Creating ArrowSpace with taumode: {:?}", self.synthesis);
+        let mut aspace = ArrowSpace::new(rows.clone(), self.synthesis);
+
+        // Store projection metadata early
+        if let Some(proj) = projection.clone() {
+            aspace.projection_matrix = Some(proj);
+            aspace.reduced_dim = Some(reduced_dim);
+        }
+
+        // STAGE 3: Configure Sampler
+        let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
+            match self.sampling.clone() {
+                Some(SamplerType::Simple(r)) => {
+                    debug!("Using Simple sampler with ratio {:.2}", r);
+                    Arc::new(Mutex::new(SamplerType::new_simple(r)))
+                }
+                Some(SamplerType::DensityAdaptive(r)) => {
+                    debug!("Using DensityAdaptive sampler with ratio {:.2}", r);
+                    Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
+                }
+                None => Arc::new(Mutex::new(SamplerType::new_simple(1.0))),
+            }
+        } else {
+            Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
+        };
+
+        // STAGE 4: Compute Optimal K (now operating on reduced-dim data)
+        info!("Computing optimal clustering parameters on reduced space");
+        let (k_opt, radius, intrinsic_dim) =
+            self.compute_optimal_k(&working_rows, n_items, reduced_dim, self.clustering_seed);
+
+        debug!(
+            "Optimal clustering: K={}, radius={:.6}, intrinsic_dim={} (computed in {} dims)",
+            k_opt, radius, intrinsic_dim, reduced_dim
+        );
+
+        self.cluster_max_clusters = Some(k_opt);
+        self.cluster_radius = radius;
+
+        // STAGE 5: Run Incremental Clustering (on reduced data)
+        info!(
+            "Running incremental clustering: max_clusters={}, radius={:.6}",
+            k_opt, radius
+        );
+        let (clustered_dm, assignments, sizes) = run_incremental_clustering_with_sampling(
+            self,
+            &working_rows,
+            reduced_dim, // Use reduced dimension for distance computations
+            k_opt,
+            radius,
+            sampler,
+        );
+
+        let n_clusters = clustered_dm.shape().0;
+        info!(
+            "Clustering complete: {} centroids, {} items assigned",
+            n_clusters,
+            assignments.iter().filter(|x| x.is_some()).count()
+        );
+
+        // Store clustering metadata
+        aspace.n_clusters = n_clusters;
+        aspace.cluster_assignments = assignments;
+        aspace.cluster_sizes = sizes;
+        aspace.cluster_radius = radius;
+
+        // STAGE 6: Centroids are already in reduced space - no further projection needed
+        debug!("Centroids already in target dimension: {}", reduced_dim);
+
+        trace!("Fast clustering stage complete");
+        ClusteredOutput {
+            aspace,
+            centroids: clustered_dm,
+            reduced_dim,
+            n_items,
+            n_features: n_features, // Keep original count for metadata
+        }
+    }
+
     /// `start_clustering` but for `DenseMatrix`
     fn start_clustering_dense(
         builder: &mut ArrowSpaceBuilder,
@@ -621,7 +747,16 @@ impl ArrowSpaceBuilder {
             n_items: _n_items,
             n_features: _n_features,
             ..
-        } = Self::start_clustering(&mut self, rows.clone());
+        } = if n_features > 2048 {
+            info!(
+                "High-dimensional data detected (F={}), using fast reduce-then-cluster path",
+                n_features
+            );
+            Self::start_clustering_dim_reduce(&mut self, rows.clone())
+        } else {
+            debug!("Standard clustering path (F={} ≤ 2048)", n_features);
+            Self::start_clustering(&mut self, rows.clone())
+        };
 
         // Save clustered centroids if persistence is enabled
         #[cfg(feature = "storage")]

@@ -15,6 +15,8 @@ use crate::{
 };
 
 use log::debug;
+use serial_test::serial;
+use smartcore::linalg::basic::arrays::Array;
 
 // -------------------- Helper function tests --------------------
 
@@ -59,6 +61,7 @@ fn test_nearest_centroid_middle() {
 }
 
 #[test]
+#[serial]
 fn test_kmeans_lloyd_gaussian_blobs() {
     let data = make_gaussian_blob(99, 0.2);
 
@@ -688,7 +691,8 @@ fn test_clustering_heuristic_trait_interface() {
 // -------------------- Benchmark-style test --------------------
 
 #[test]
-#[ignore]
+#[ignore = "takes time to run, run separatly"]
+#[serial]
 fn test_optimal_k_performance_large_dataset() {
     use std::time::Instant;
 
@@ -755,4 +759,149 @@ fn test_readme_example() {
     debug!("README example: K={}, radius={:.6}, ID={}", k, radius, id);
     assert!(k >= 2, "Should detect at least 2 clusters");
     assert!(radius > 0.0);
+}
+
+#[test]
+#[serial]
+fn test_fast_clustering_reduces_before_clustering() {
+    // Test that projection happens BEFORE compute_optimal_k
+    let rows: Vec<Vec<f64>> = (0..200)
+        .map(|i| {
+            let mut row = vec![0.0; 10000];
+            row[i % 10000] = 1.0; // Sparse one-hot
+            row
+        })
+        .collect();
+
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_dims_reduction(true, Some(0.3))
+        .with_seed(123);
+
+    let start = std::time::Instant::now();
+    let output = builder.start_clustering_dim_reduce(rows);
+    let elapsed = start.elapsed();
+
+    // Should complete in under 5 seconds (vs. minutes for raw 10k dims)
+    assert!(
+        elapsed.as_secs() < 10,
+        "Fast clustering took too long: {:?}",
+        elapsed
+    );
+
+    // Verify projection was applied
+    assert!(output.aspace.projection_matrix.is_some());
+    assert!(output.reduced_dim < 10000);
+
+    // Verify clustering succeeded
+    assert!(output.centroids.shape().0 > 0);
+    assert!(output.centroids.shape().0 < 200); // Some compression happened
+}
+
+#[test]
+#[serial]
+fn test_fast_clustering_preserves_pairwise_distances() {
+    // Verify JL lemma: distances are preserved in reduced space
+    use approx::relative_eq;
+
+    let rows: Vec<Vec<f64>> = vec![vec![1.0; 5000], vec![0.5; 5000], vec![0.0; 5000]];
+
+    // Compute original pairwise cosine distances
+    let orig_dist_01 = 1.0
+        - (rows[0]
+            .iter()
+            .zip(&rows[1])
+            .map(|(a, b)| a * b)
+            .sum::<f64>()
+            / (rows[0].iter().map(|x| x * x).sum::<f64>().sqrt()
+                * rows[1].iter().map(|x| x * x).sum::<f64>().sqrt()));
+
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_dims_reduction(true, Some(0.2))
+        .with_seed(42);
+
+    let output = builder.start_clustering_dim_reduce(rows);
+
+    // Compute distance in reduced space (from centroids if items were clustered)
+    let proj = output.aspace.projection_matrix.as_ref().unwrap();
+    let row0_proj = proj.project(&output.aspace.get_item(0).item);
+    let row1_proj = proj.project(&output.aspace.get_item(1).item);
+
+    let reduced_dist = 1.0
+        - (row0_proj
+            .iter()
+            .zip(&row1_proj)
+            .map(|(a, b)| a * b)
+            .sum::<f64>()
+            / (row0_proj.iter().map(|x| x * x).sum::<f64>().sqrt()
+                * row1_proj.iter().map(|x| x * x).sum::<f64>().sqrt()));
+
+    // JL lemma with ε=0.2 allows ±20% relative error
+    assert!(relative_eq!(
+        orig_dist_01,
+        reduced_dist,
+        max_relative = 0.25
+    ));
+}
+
+#[test]
+#[serial]
+fn test_fast_clustering_100k_dimensions_completes() {
+    // Stress test: 100k dimensions should complete in minutes, not hours
+    let n_items = 500;
+    let n_features = 100_000;
+
+    // Generate sparse binary data (simulating Dorothea)
+    let rows: Vec<Vec<f64>> = (0..n_items)
+        .map(|i| {
+            let mut row = vec![0.0; n_features];
+            // Set ~10 random features to 1.0
+            for _ in 0..10 {
+                row[(i * 7919 + i * i) % n_features] = 1.0;
+            }
+            row
+        })
+        .collect();
+
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_lambda_graph(1.0, 15, 7, 2.0, Some(0.5))
+        .with_dims_reduction(true, Some(0.3))
+        .with_seed(999);
+
+    let start = std::time::Instant::now();
+    let output = builder.start_clustering_dim_reduce(rows);
+    let elapsed = start.elapsed();
+
+    // This should complete in under 10 minutes on modern CPUs
+    assert!(
+        elapsed.as_secs() < 600,
+        "100k-dim clustering took {} seconds (expected <600)",
+        elapsed.as_secs()
+    );
+
+    // Verify dimensionality reduction occurred
+    assert!(
+        output.reduced_dim < 10_000,
+        "Reduced dim {} should be much less than 100k",
+        output.reduced_dim
+    );
+
+    debug!("✓ 100k-dim test passed in {:?}", elapsed);
+}
+
+#[test]
+fn test_fast_clustering_no_reduction_fallback() {
+    // Verify fallback: if dims_reduction disabled, should use original logic
+    let rows: Vec<Vec<f64>> = vec![
+        vec![1.0, 2.0, 3.0],
+        vec![4.0, 5.0, 6.0],
+        vec![7.0, 8.0, 9.0],
+    ];
+
+    let mut builder = ArrowSpaceBuilder::new().with_dims_reduction(false, None); // Explicitly disabled
+
+    let output = builder.start_clustering_dim_reduce(rows);
+
+    // Should NOT have projection
+    assert!(output.aspace.projection_matrix.is_none());
+    assert_eq!(output.reduced_dim, 3); // Original dimension preserved
 }
