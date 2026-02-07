@@ -721,6 +721,7 @@ fn test_optimal_k_performance_large_dataset() {
 // -------------------- Regression tests --------------------
 
 #[test]
+#[serial]
 fn test_consistent_results_with_seed() {
     let rows = vec![
         vec![0.0, 0.0],

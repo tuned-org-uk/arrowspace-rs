@@ -1,5 +1,6 @@
 use approx::relative_eq;
 use log::{debug, info};
+use serial_test::serial;
 use smartcore::linalg::basic::arrays::Array;
 
 use crate::tests::init;
@@ -423,6 +424,7 @@ fn test_density_adaptive_with_duplicates() {
 }
 
 #[test]
+#[serial]
 fn test_density_adaptive_sampling_statistics() {
     // Test statistical properties over multiple runs
 
