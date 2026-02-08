@@ -4,10 +4,10 @@ use crate::taumode::TauMode;
 use crate::{
     core::ArrowSpace,
     graph::{GraphLaplacian, GraphParams},
+    sorted_index::SortedLambdas,
     storage::parquet::{
         FileInfo, save_dense_matrix, save_lambda, save_metadata, save_sparse_matrix,
     },
-    // taumode::TauMode,
 };
 use approx::assert_relative_eq;
 use approx::relative_eq;
@@ -19,7 +19,7 @@ use tempfile::TempDir;
 
 /// Helper: Create test data and save to storage including mock JSON metadata
 fn setup_test_storage(storage_dir: &Path, dataset_name: &str) -> (usize, usize, Vec<f64>) {
-    // Create test data: 50 items × 10 features
+    // Create test data: 50 items × 100 features
     let nitems = 50;
     let nfeatures = 100; // Increased to trigger reduction logic in tests if needed
     let reduced_dim = 64;
@@ -57,6 +57,7 @@ fn setup_test_storage(storage_dir: &Path, dataset_name: &str) -> (usize, usize, 
         None,
     )
     .unwrap();
+
     save_lambda(
         &lambdas,
         storage_dir,
@@ -64,6 +65,7 @@ fn setup_test_storage(storage_dir: &Path, dataset_name: &str) -> (usize, usize, 
         None,
     )
     .unwrap();
+
     save_sparse_matrix(
         &gl_matrix,
         storage_dir,
@@ -71,6 +73,7 @@ fn setup_test_storage(storage_dir: &Path, dataset_name: &str) -> (usize, usize, 
         None,
     )
     .unwrap();
+
     save_dense_matrix(
         &data_matrix,
         storage_dir,
@@ -79,8 +82,7 @@ fn setup_test_storage(storage_dir: &Path, dataset_name: &str) -> (usize, usize, 
     )
     .unwrap();
 
-    // 2. Create Mock Metadata
-    // Using ArrowSpaceMetadata to match the structure expected by load_metadata
+    // 2. Create Mock Builder Metadata (for backward compatibility)
     let mut metadata = ArrowSpaceMetadata::new(dataset_name).with_dimensions(nitems, nfeatures);
 
     // Mock the builder_config HashMap
@@ -108,14 +110,49 @@ fn setup_test_storage(storage_dir: &Path, dataset_name: &str) -> (usize, usize, 
             filename: format!("{}-raw_input.parquet", dataset_name),
             file_type: "dense".to_string(),
             rows: nitems,
-            cols: reduced_dim, // This simulates the reduced dimension search
+            cols: reduced_dim,
             nnz: None,
             size_bytes: Some(1024),
         },
     );
 
-    // 3. Save JSON Metadata
+    // 3. Save Builder Metadata (creates {dataset_name}_metadata.json)
     save_metadata(&metadata, storage_dir, dataset_name).unwrap();
+
+    // 4. Create ArrowSpace and save its metadata
+    let min_lambdas = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+    let max_lambdas = lambdas.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+
+    let mut aspace = ArrowSpace {
+        nfeatures,
+        nitems,
+        data: data_matrix.clone(),
+        signals: sprs::CsMat::zero((0, 0)),
+        lambdas: lambdas.clone(),
+        lambdas_sorted: SortedLambdas::new(),
+        min_lambdas,
+        max_lambdas,
+        range_lambdas: max_lambdas - min_lambdas,
+        taumode: TauMode::Median,
+        n_clusters: 3,
+        cluster_assignments: vec![],
+        cluster_sizes: vec![],
+        cluster_radius: 1.78,
+        // Setup projection to test dimensionality reduction restoration
+        projection_matrix: Some(ImplicitProjection::new(nfeatures, reduced_dim, Some(seed))),
+        reduced_dim: Some(reduced_dim),
+        extra_reduced_dim: false,
+        centroid_map: None,
+        sub_centroids: None,
+        subcentroid_lambdas: None,
+        item_norms: None,
+    };
+
+    aspace.build_lambdas_sorted();
+
+    // 5. Save ArrowSpace-specific metadata (creates {dataset_name}-arrowspace_metadata.json)
+    save_arrowspace(&aspace, storage_dir, dataset_name)
+        .expect("Failed to save arrowspace metadata");
 
     (nitems, nfeatures, lambdas)
 }
@@ -393,10 +430,13 @@ fn test_save_arrowspace_metadata_basic() {
     save_arrowspace(&aspace, temp_dir.path(), name_id).expect("Failed to save arrowspace metadata");
 
     // 3. Verify file existence
-    let file_path = temp_dir.path().join("arrowspace_metadata.json");
+    let file_path = temp_dir
+        .path()
+        .join(format!("{}-arrowspace_metadata.json", name_id));
     assert!(
         file_path.exists(),
-        "Metadata file should exist at arrowspace_metadata.json"
+        "Metadata file should exist at {}",
+        file_path.display()
     );
 
     // 4. Verify content matches ArrowSpace configuration
@@ -430,9 +470,15 @@ fn test_save_arrowspace_metadata_with_projection() {
     ));
     aspace.reduced_dim = Some(reduced_dim);
 
-    save_arrowspace(&aspace, temp_dir.path(), "proj_meta").expect("Failed to save");
+    let name_id = String::from("proj_meta");
+    save_arrowspace(&aspace, temp_dir.path(), &name_id).expect("Failed to save");
 
-    let content = fs::read_to_string(temp_dir.path().join("arrowspace_metadata.json")).unwrap();
+    let content = fs::read_to_string(
+        temp_dir
+            .path()
+            .join(format!("{}-arrowspace_metadata.json", name_id)),
+    )
+    .unwrap();
     let parsed: HashMap<String, ConfigValue> = serde_json::from_str(&content).unwrap();
 
     // Verify projection fields
@@ -457,16 +503,73 @@ fn test_save_arrowspace_overwrite_protection() {
 
     // First save
     save_arrowspace(&aspace, temp_dir.path(), "v1").unwrap();
-    let meta_path = temp_dir.path().join("arrowspace_metadata.json");
+    let meta_path = temp_dir.path().join("v1-arrowspace_metadata.json");
     let mtime_v1 = fs::metadata(&meta_path).unwrap().modified().unwrap();
 
     // Second save (should overwrite)
     std::thread::sleep(std::time::Duration::from_millis(10));
-    save_arrowspace(&aspace, temp_dir.path(), "v2").unwrap();
+    save_arrowspace(&aspace, temp_dir.path(), "v1").unwrap();
     let mtime_v2 = fs::metadata(&meta_path).unwrap().modified().unwrap();
 
     assert!(
         mtime_v2 > mtime_v1,
         "Metadata file should have been updated/overwritten"
     );
+}
+
+#[test]
+fn test_arrowspace_save_and_load_roundtrip() {
+    let temp_dir = TempDir::new().unwrap();
+    let dataset_name = "roundtrip_test";
+
+    // 1. Create original ArrowSpace with projection
+    let mut original = ArrowSpace::default();
+    original.nitems = 100;
+    original.nfeatures = 500;
+    original.projection_matrix = Some(ImplicitProjection::new(500, 64, Some(999)));
+    original.reduced_dim = Some(64);
+    original.taumode = TauMode::Fixed(0.75);
+    original.min_lambdas = 0.1;
+    original.max_lambdas = 0.9;
+    original.range_lambdas = 0.8;
+
+    // Setup dummy data/lambdas for save
+    let data = DenseMatrix::from_2d_vec(&vec![vec![1.0; 500]; 100]).unwrap();
+    let lambdas = vec![0.5; 100];
+    original.data = data.clone();
+    original.lambdas = lambdas.clone();
+
+    // 2. Save everything
+    save_arrowspace(&original, temp_dir.path(), dataset_name).unwrap();
+    save_dense_matrix(
+        &data,
+        temp_dir.path(),
+        &format!("{}-raw_input", dataset_name),
+        None,
+    )
+    .unwrap();
+    save_lambda(
+        &lambdas,
+        temp_dir.path(),
+        &format!("{}-lambdas", dataset_name),
+        None,
+    )
+    .unwrap();
+
+    // 3. Load back
+    let loaded = ArrowSpace::new_from_storage(temp_dir.path(), dataset_name).unwrap();
+
+    // 4. Verify
+    assert_eq!(loaded.nitems, original.nitems);
+    assert_eq!(loaded.nfeatures, original.nfeatures);
+    assert_eq!(loaded.reduced_dim, Some(64));
+    assert!(loaded.projection_matrix.is_some());
+
+    let proj = loaded.projection_matrix.as_ref().unwrap();
+    assert_eq!(proj.original_dim, 500);
+    assert_eq!(proj.reduced_dim, 64);
+    assert_eq!(proj.seed, 999);
+
+    assert_eq!(loaded.taumode, TauMode::Fixed(0.75));
+    assert_relative_eq!(loaded.min_lambdas, 0.1, epsilon = 1e-10);
 }
