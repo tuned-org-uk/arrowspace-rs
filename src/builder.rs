@@ -747,7 +747,7 @@ impl ArrowSpaceBuilder {
             n_items: _n_items,
             n_features: _n_features,
             ..
-        } = if n_features > 2048 {
+        } = if n_features > 2048 && self.use_dims_reduction {
             info!(
                 "High-dimensional data detected (F={}), using fast reduce-then-cluster path",
                 n_features

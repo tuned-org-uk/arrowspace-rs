@@ -1,6 +1,6 @@
 [package]
 name = "arrowspace"
-version = "0.25.10"
+version = "0.25.11"
 edition = "2024"
 description = "Graph-based vector search with taumode (λτ) indexing"
 authors = ["Lorenzo <tunedconsulting@gmail.com>"]
