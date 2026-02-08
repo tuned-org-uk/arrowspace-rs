@@ -10,8 +10,6 @@ mod test_energy_search;
 mod test_graph_factory;
 mod test_laplacian;
 mod test_laplacian_unnormalised;
-#[cfg(all(test, feature = "storage"))]
-mod test_load_from_storage;
 mod test_motives;
 mod test_querying_proj;
 mod test_reduction;

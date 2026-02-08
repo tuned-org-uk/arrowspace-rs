@@ -19,6 +19,7 @@ use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
 // Import from your builder module
 use crate::{
     builder::{ArrowSpaceBuilder, ConfigValue},
+    core::ArrowSpace,
     storage::StorageError,
 };
 
@@ -148,9 +149,7 @@ pub fn load_metadata(
     path: impl AsRef<Path>,
     name_id: &str,
 ) -> Result<ArrowSpaceMetadata, StorageError> {
-    let metadata_path = path
-        .as_ref()
-        .join(format!("{}-raw_input_metadata.json", name_id));
+    let metadata_path = path.as_ref().join(format!("{}_metadata.json", name_id));
 
     info!("loading from {:?}", metadata_path);
     let json = std::fs::read_to_string(&metadata_path)
@@ -161,6 +160,25 @@ pub fn load_metadata(
         .map_err(|e| StorageError::Invalid(format!("Failed to parse metadata: {}", e)))?;
 
     Ok(metadata)
+}
+
+/// Save arrowspace metadata to JSON file
+pub fn save_arrowspace(
+    aspace: &ArrowSpace,
+    path: impl AsRef<Path>,
+    name_id: &str,
+) -> Result<(), StorageError> {
+    let arrowspace_path = path
+        .as_ref()
+        .join(format!("{}-arrowspace_metadata.json", name_id));
+
+    let json = serde_json::to_string_pretty(&aspace.arrowspace_config_typed())
+        .map_err(|e| StorageError::Invalid(format!("Failed to serialize metadata: {}", e)))?;
+
+    std::fs::write(&arrowspace_path, json)
+        .map_err(|e| StorageError::Io(format!("Failed to write metadata: {}", e)))?;
+
+    Ok(())
 }
 
 // ============================================================================

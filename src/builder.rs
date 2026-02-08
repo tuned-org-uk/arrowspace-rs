@@ -876,7 +876,18 @@ impl ArrowSpaceBuilder {
         {
             if let Some((ref name, ref path)) = self.persistence {
                 use crate::storage::StorageError;
-                use crate::storage::parquet::save_lambda_with_builder;
+                use crate::storage::parquet::{save_arrowspace, save_lambda_with_builder};
+
+                // save the metadata needed for search operations
+                let stored = save_arrowspace(&aspace, path.clone(), &name);
+
+                match stored {
+                    Ok(_) => debug!("{}-arrowspace saved", name),
+                    Err(StorageError::Parquet(err)) => {
+                        panic!("saving failed for {}-arrowspace {}", name, err)
+                    }
+                    _ => panic!("Error with {:?}", stored),
+                };
 
                 let saved: Result<(), StorageError> = save_lambda_with_builder(
                     &aspace.lambdas,
