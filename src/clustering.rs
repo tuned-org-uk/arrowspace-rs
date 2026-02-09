@@ -65,10 +65,7 @@ pub trait ClusteringHeuristic {
     fn start_clustering_dim_reduce(&mut self, rows: Vec<Vec<f64>>) -> ClusteredOutput;
 
     /// `start_clustering` but for `DenseMatrix`
-    fn start_clustering_dense(
-        builder: &mut ArrowSpaceBuilder,
-        rows: DenseMatrix<f64>,
-    ) -> ClusteredOutput;
+    fn start_clustering_dense(&mut self, rows: DenseMatrix<f64>) -> ClusteredOutput;
 
     /// Compute optimal number of clusters K, squared-distance threshold radius,
     /// and estimated intrinsic dimension from NxF data matrix.

@@ -8,7 +8,7 @@
 
 use crate::graph::GraphLaplacian;
 use crate::{core::ArrowSpace, reduction::ImplicitProjection};
-use log::{debug, info, trace};
+use log::{info, trace};
 use rayon::prelude::*;
 use sprs::CsMat;
 use std::fmt;
@@ -137,10 +137,10 @@ impl TauMode {
         // Determine graph source, cannot use signals in the subcentroid space or when signals are off
         let using_signals = aspace.signals.shape() != (0, 0);
         let graph = if using_signals {
-            debug!("compute_taumode_lambdas_parallel: YES signals");
+            trace!("compute_taumode_lambdas_parallel: YES signals");
             &aspace.signals
         } else {
-            debug!("compute_taumode_lambdas_parallel: NO signals");
+            trace!("compute_taumode_lambdas_parallel: NO signals");
             &gl.matrix
         };
         let (graph_rows, graph_cols) = graph.shape();

@@ -82,7 +82,6 @@ pub struct ArrowSpaceBuilder {
 
     /// dimensionality reduction with random projection (dafault false)
     pub(crate) use_dims_reduction: bool,
-    pub(crate) extra_dims_reduction: bool,
     pub(crate) rp_eps: f64,
 
     // persistence directory
@@ -118,7 +117,6 @@ impl Default for ArrowSpaceBuilder {
             deterministic_clustering: false,
             // dim reduction
             use_dims_reduction: false,
-            extra_dims_reduction: false,
             rp_eps: 0.3,
             // persistence directory
             persistence: None,
@@ -162,16 +160,40 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         };
 
         // Auto-compute optimal clustering parameters via heuristic
-        info!("Computing optimal clustering parameters");
-        let (k_opt, radius, intrinsic_dim) =
-            self.compute_optimal_k(&rows, n_items, n_features, self.clustering_seed);
-        debug!(
-            "Optimal clustering: K={}, radius={:.6}, intrinsic_dim={}",
-            k_opt, radius, intrinsic_dim
-        );
+        info!("Computing clustering parameters (heuristic or manual override)");
 
-        self.cluster_max_clusters = Some(k_opt);
-        self.cluster_radius = radius;
+        // Determine if we should run heuristics or use manual overrides
+        let use_manual_k = self.cluster_max_clusters.is_some();
+
+        // Run heuristic ONLY if we need any computed values
+        let (k_opt, radius, _) = if use_manual_k {
+            // User set K manually - respect it and use manual radius if set
+            let manual_k = self.cluster_max_clusters.unwrap();
+            let manual_radius = self.cluster_radius; // Use current value (default 1.0 or user-set)
+
+            info!(
+                "Using manual override: K={}, radius={:.6}",
+                manual_k, manual_radius
+            );
+
+            // Intrinsic dim is just for logging in manual mode
+            (manual_k, manual_radius, 0)
+        } else {
+            // Full heuristic path
+            let (h_k, h_r, h_id) =
+                self.compute_optimal_k(&rows, n_items, n_features, self.clustering_seed);
+
+            debug!(
+                "Heuristic clustering: K={}, radius={:.6}, intrinsic_dim={}",
+                h_k, h_r, h_id
+            );
+
+            // Update builder state
+            self.cluster_max_clusters = Some(h_k);
+            self.cluster_radius = h_r;
+
+            (h_k, h_r, h_id)
+        };
 
         // Run incremental clustering with sampling
         info!(
@@ -315,13 +337,33 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         };
 
         // STAGE 4: Compute Optimal K (now operating on reduced-dim data)
-        info!("Computing optimal clustering parameters on reduced space");
-        let (k_opt, radius, intrinsic_dim) =
-            self.compute_optimal_k(&working_rows, n_items, reduced_dim, self.clustering_seed);
+        // Auto-compute optimal clustering parameters via heuristic
+        info!("Computing optimal clustering parameters");
+        let (k_opt, radius, intrinsic_dim) = if self.cluster_max_clusters.is_none() {
+            let (k_opt, radius, intrinsic_dim) =
+                self.compute_optimal_k(&working_rows, n_items, reduced_dim, self.clustering_seed);
+            debug!("Heuristic K={}, radius={:.4}", k_opt, radius);
+            self.cluster_max_clusters = Some(k_opt);
+            self.cluster_radius = radius;
+            (k_opt, radius, Some(intrinsic_dim))
+        } else {
+            info!(
+                "Using manual override (no intrinsic dimensions): K={:?}, radius={:.4}",
+                self.cluster_max_clusters, self.cluster_radius
+            );
+            (
+                self.cluster_max_clusters.clone().unwrap(),
+                self.cluster_radius,
+                None,
+            )
+        };
 
         debug!(
             "Optimal clustering: K={}, radius={:.6}, intrinsic_dim={} (computed in {} dims)",
-            k_opt, radius, intrinsic_dim, reduced_dim
+            k_opt,
+            radius,
+            intrinsic_dim.as_ref().unwrap(),
+            reduced_dim
         );
 
         self.cluster_max_clusters = Some(k_opt);
@@ -368,10 +410,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
     }
 
     /// `start_clustering` but for `DenseMatrix`
-    fn start_clustering_dense(
-        builder: &mut ArrowSpaceBuilder,
-        rows: DenseMatrix<f64>,
-    ) -> ClusteredOutput {
+    fn start_clustering_dense(&mut self, rows: DenseMatrix<f64>) -> ClusteredOutput {
         let n_items = rows.shape().0;
         let n_features = rows.shape().1;
 
@@ -381,12 +420,12 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         );
 
         // Prepare base ArrowSpace with the builder's taumode (will be used in compute_taumode)
-        debug!("Creating ArrowSpace with taumode: {:?}", builder.synthesis);
-        let mut aspace = ArrowSpace::new_from_dense(rows.clone(), builder.synthesis);
+        debug!("Creating ArrowSpace with taumode: {:?}", self.synthesis);
+        let mut aspace = ArrowSpace::new_from_dense(rows.clone(), self.synthesis);
 
         // Configure inline sampler matching builder policy
         let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
-            match builder.sampling.clone() {
+            match self.sampling.clone() {
                 Some(SamplerType::Simple(r)) => {
                     debug!("Using Simple sampler with ratio {:.2}", r);
                     Arc::new(Mutex::new(SamplerType::new_simple(r)))
@@ -406,23 +445,51 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         };
 
         // Auto-compute optimal clustering parameters via heuristic
-        info!("Computing optimal clustering parameters");
+        info!("Computing clustering parameters (heuristic or manual override)");
         let compute: Vec<Vec<f64>> = (0..n_items)
             .map(|i| rows.get_row(i).iterator(0).copied().collect())
             .collect();
-        let (k_opt, radius, intrinsic_dim) = builder.compute_optimal_k(
-            &compute.clone(),
-            n_items,
-            n_features,
-            builder.clustering_seed,
-        );
+
+        // Determine if we should run heuristics or use manual overrides
+        let use_manual_k = self.cluster_max_clusters.is_some();
+
+        // Run heuristic ONLY if we need any computed values
+        let (k_opt, radius, intrinsic_dim) = if use_manual_k {
+            // User set K manually - respect it and use manual radius if set
+            let manual_k = self.cluster_max_clusters.unwrap();
+            let manual_radius = self.cluster_radius; // Use current value (default 1.0 or user-set)
+
+            info!(
+                "Using manual override: K={}, radius={:.6}",
+                manual_k, manual_radius
+            );
+
+            // Intrinsic dim is just for logging in manual mode
+            (manual_k, manual_radius, 0)
+        } else {
+            // Full heuristic path
+            let (h_k, h_r, h_id) =
+                self.compute_optimal_k(&compute, n_items, n_features, self.clustering_seed);
+
+            debug!(
+                "Heuristic clustering: K={}, radius={:.6}, intrinsic_dim={}",
+                h_k, h_r, h_id
+            );
+
+            // Update builder state
+            self.cluster_max_clusters = Some(h_k);
+            self.cluster_radius = h_r;
+
+            (h_k, h_r, h_id)
+        };
+
         debug!(
             "Optimal clustering: K={}, radius={:.6}, intrinsic_dim={}",
             k_opt, radius, intrinsic_dim
         );
 
-        builder.cluster_max_clusters = Some(k_opt);
-        builder.cluster_radius = radius;
+        self.cluster_max_clusters = Some(k_opt);
+        self.cluster_radius = radius;
 
         // Run incremental clustering with sampling
         info!(
@@ -430,7 +497,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
             k_opt, radius
         );
         let (clustered_dm, assignments, sizes) = run_incremental_clustering_with_sampling(
-            builder, &compute, n_features, k_opt, radius, sampler,
+            self, &compute, n_features, k_opt, radius, sampler,
         );
 
         let n_clusters = clustered_dm.shape().0;
@@ -447,17 +514,17 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         aspace.cluster_radius = radius;
 
         // Optional JL projection for high-dimensional datasets
-        let (centroids, reduced_dim) = if builder.use_dims_reduction && n_features > 64 {
-            let jl_dim = compute_jl_dimension(n_clusters, builder.rp_eps);
+        let (centroids, reduced_dim) = if self.use_dims_reduction && n_features > 64 {
+            let jl_dim = compute_jl_dimension(n_clusters, self.rp_eps);
             let target_dim = jl_dim.min(n_features / 2);
 
             if target_dim < n_features && target_dim > clustered_dm.shape().0 {
                 info!(
                     "Applying JL projection: {} features → {} dimensions (ε={:.2})",
-                    n_features, target_dim, builder.rp_eps
+                    n_features, target_dim, self.rp_eps
                 );
                 let implicit_proj =
-                    ImplicitProjection::new(n_features, target_dim, builder.clustering_seed);
+                    ImplicitProjection::new(n_features, target_dim, self.clustering_seed);
                 let projected = crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
 
                 aspace.projection_matrix = Some(implicit_proj.clone());
@@ -616,16 +683,6 @@ impl ArrowSpaceBuilder {
         self
     }
 
-    /// Enable extra-dimensionality reduction after clustering (energymaps only, optional)
-    pub fn with_extra_dims_reduction(mut self, enable: bool) -> Self {
-        assert!(
-            self.use_dims_reduction,
-            "extra dims reduction needs base reduction"
-        );
-        self.extra_dims_reduction = enable;
-        self
-    }
-
     /// Set a custom seed for deterministic clustering.
     /// Enable sequential (deterministic) clustering.
     /// This ensures reproducible results at the cost of parallelization.
@@ -633,6 +690,43 @@ impl ArrowSpaceBuilder {
         info!("Setting custom clustering seed: {}", seed);
         self.clustering_seed = Some(seed);
         self.deterministic_clustering = true;
+        self
+    }
+
+    /// Set the maximum number of clusters manually.
+    ///
+    /// If set, this overrides the automatic heuristic calculation.
+    /// Use this when you want to force a specific topology richness.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let builder = ArrowSpaceBuilder::new()
+    ///     .with_cluster_max_clusters(150)  // Force 150 centroids
+    ///     .with_cluster_radius(0.85);      // With tight radius
+    /// ```
+    pub fn with_cluster_max_clusters(mut self, max_clusters: usize) -> Self {
+        info!("Setting manual cluster_max_clusters: {}", max_clusters);
+        self.cluster_max_clusters = Some(max_clusters);
+        self
+    }
+
+    /// Set the cluster radius (squared L2 threshold) manually.
+    ///
+    /// Lower values create tighter, more numerous clusters.
+    /// Default is 1.0.
+    ///
+    /// # Arguments
+    /// * `radius` - Squared L2 distance threshold for cluster creation.
+    ///              Typical range: [0.5, 2.0]
+    ///
+    /// # Example
+    /// ```ignore
+    /// let builder = ArrowSpaceBuilder::new()
+    ///     .with_cluster_radius(0.85);  // Tighter clusters
+    /// ```
+    pub fn with_cluster_radius(mut self, radius: f64) -> Self {
+        info!("Setting manual cluster_radius: {:.4}", radius);
+        self.cluster_radius = radius;
         self
     }
 
@@ -1080,57 +1174,6 @@ impl ArrowSpaceBuilder {
 
                 assert_eq!(sub_centroids.shape().1, centroids.shape().1);
 
-                // Step 5: apply EXTRA JL dimensionality reduction (optional `with_extra_dims_reduction`)
-                let (n_subcentroids, current_features) = sub_centroids.shape();
-                let (sub_centroids, reduced_dim) = if self.use_dims_reduction
-                    && self.extra_dims_reduction
-                    && current_features > 10001
-                {
-                    info!("Apply EXTRA JL dimensionality reduction");
-                    use crate::reduction::{
-                        ImplicitProjection, compute_jl_dimension, project_matrix,
-                    };
-
-                    let jl_dim = compute_jl_dimension(n_subcentroids, self.rp_eps);
-                    let target_dim = jl_dim.min(current_features / 2);
-
-                    if target_dim < current_features {
-                        info!(
-                            "Applying JL projection to sub_centroids: {} features → {} dimensions (ε={:.2})",
-                            current_features, target_dim, self.rp_eps
-                        );
-
-                        let implicit_proj = ImplicitProjection::new(
-                            current_features,
-                            target_dim,
-                            self.clustering_seed,
-                        );
-                        let projected = project_matrix(&sub_centroids, &implicit_proj);
-
-                        info!(
-                            "Sub_centroids projection complete: {:.1}x compression",
-                            current_features as f64 / target_dim as f64
-                        );
-
-                        (projected, target_dim)
-                    } else {
-                        debug!(
-                            "JL target dimension {} >= current {}, skipping projection",
-                            target_dim, current_features
-                        );
-                        (sub_centroids, current_features)
-                    }
-                } else {
-                    (sub_centroids, current_features)
-                };
-
-                info!(
-                    "Energy graph: {:?} centroids → {:?} sub_centroids (reduced_dim={})",
-                    centroids.shape(),
-                    sub_centroids.shape(),
-                    reduced_dim
-                );
-
                 // Step 6: Build Laplacian on sub_centroids using energy dispersion
                 let (gl_energy, _, _) =
                     self.build_energy_laplacian(&sub_centroids, energy_params.as_ref().unwrap());
@@ -1558,10 +1601,6 @@ impl ArrowSpaceBuilder {
         config.insert(
             "use_dims_reduction".to_string(),
             ConfigValue::Bool(self.use_dims_reduction),
-        );
-        config.insert(
-            "extra_dims_reduction".to_string(),
-            ConfigValue::Bool(self.extra_dims_reduction),
         );
         config.insert("rp_eps".to_string(), ConfigValue::F64(self.rp_eps));
 

@@ -15,6 +15,7 @@ use crate::{
 };
 
 use log::debug;
+use rand::Rng;
 use serial_test::serial;
 use smartcore::linalg::basic::arrays::Array;
 
@@ -905,4 +906,270 @@ fn test_fast_clustering_no_reduction_fallback() {
     // Should NOT have projection
     assert!(output.aspace.projection_matrix.is_none());
     assert_eq!(output.reduced_dim, 3); // Original dimension preserved
+}
+
+use crate::taumode::TauMode;
+
+/// Test that with_cluster_max_clusters correctly overrides the automatic heuristic
+#[test]
+fn test_with_cluster_max_clusters_override() {
+    // Create a synthetic dataset: 500 items × 50 features
+    let n_items = 500;
+    let n_features = 50;
+    let mut rng = rand::rng();
+
+    let rows: Vec<Vec<f64>> = (0..n_items)
+        .map(|_| {
+            (0..n_features)
+                .map(|_| rng.random_range(0.0..1.0))
+                .collect()
+        })
+        .collect();
+
+    // Build 1: Let heuristic decide K (should be ~20-30 for N=500)
+    let builder_auto = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.5, 10, 5, 2.0, None)
+        .with_synthesis(TauMode::Median);
+
+    let (aspace_auto, _gl_auto) = builder_auto.build(rows.clone());
+    let k_auto = aspace_auto.n_clusters;
+
+    // Build 2: Force K=100 (much richer topology)
+    let builder_manual = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.5, 10, 5, 2.0, None)
+        .with_synthesis(TauMode::Median)
+        .with_cluster_max_clusters(100) // Force manual override
+        .with_cluster_radius(0.8);
+
+    let (aspace_manual, _gl_manual) = builder_manual.build(rows.clone());
+    let k_manual = aspace_manual.n_clusters;
+
+    // Assertions
+    println!("Automatic K: {}, Manual K: {}", k_auto, k_manual);
+
+    assert!(
+        k_auto < 50,
+        "Heuristic should produce modest cluster count (got {})",
+        k_auto
+    );
+
+    assert_eq!(
+        k_manual, 100,
+        "Manual override should produce exactly 100 clusters (got {})",
+        k_manual
+    );
+
+    // Verify lambda spread is reasonable
+    let lambda_range_auto = aspace_auto
+        .lambdas()
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max)
+        - aspace_auto
+            .lambdas()
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+
+    let lambda_range_manual = aspace_manual
+        .lambdas()
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max)
+        - aspace_manual
+            .lambdas()
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+
+    println!(
+        "Lambda range - Auto: {:.6}, Manual: {:.6}",
+        lambda_range_auto, lambda_range_manual
+    );
+
+    // Both should have reasonable lambda spread (normalized to [0,1])
+    assert!(
+        lambda_range_manual > 0.5,
+        "Manual topology should have good lambda spread"
+    );
+
+    // Verify cluster metadata matches
+    assert_eq!(
+        aspace_auto.n_clusters, k_auto,
+        "Cluster metadata should match (auto)"
+    );
+
+    assert_eq!(
+        aspace_manual.n_clusters, k_manual,
+        "Cluster metadata should match (manual)"
+    );
+}
+
+/// Test that with_cluster_radius affects clustering tightness
+#[test]
+fn test_with_cluster_radius_tightness() {
+    // Create clustered synthetic data with clear structure
+    let n_clusters_true = 5;
+    let points_per_cluster = 50;
+    let n_features = 20;
+
+    let mut rows: Vec<Vec<f64>> = Vec::new();
+    let mut rng = rand::rng();
+
+    // Generate 5 well-separated clusters
+    for cluster_id in 0..n_clusters_true {
+        let center: Vec<f64> = (0..n_features)
+            .map(|_| (cluster_id as f64) * 5.0 + rng.random_range(-0.2..0.2))
+            .collect();
+
+        for _ in 0..points_per_cluster {
+            let point: Vec<f64> = center
+                .iter()
+                .map(|&c| c + rng.random_range(-0.3..0.3)) // Tight variance
+                .collect();
+            rows.push(point);
+        }
+    }
+
+    // Build 1: Force LOOSE radius AND K
+    let builder_loose = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.5, 10, 5, 2.0, None)
+        .with_cluster_max_clusters(10) // Allow up to 10
+        .with_cluster_radius(50.0) // Very large radius
+        .with_synthesis(TauMode::Median);
+
+    let (aspace_loose, _) = builder_loose.build(rows.clone());
+    let k_loose = aspace_loose.n_clusters;
+
+    // Build 2: Force TIGHT radius AND K
+    let builder_tight = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.5, 10, 5, 2.0, None)
+        .with_cluster_max_clusters(15) // Allow up to 15
+        .with_cluster_radius(2.0) // Small radius
+        .with_synthesis(TauMode::Median);
+
+    let (aspace_tight, _) = builder_tight.build(rows.clone());
+    let k_tight = aspace_tight.n_clusters;
+
+    println!("Loose radius K: {}, Tight radius K: {}", k_loose, k_tight);
+
+    // Tight radius should produce MORE clusters
+    assert!(
+        k_tight >= k_loose,
+        "Tighter radius should produce more clusters (tight={}, loose={})",
+        k_tight,
+        k_loose
+    );
+
+    // With tight radius and 5 true clusters, we should get at least 5
+    assert!(
+        k_tight >= 5,
+        "Tight radius should discover at least 5 clusters (got {})",
+        k_tight
+    );
+
+    // Verify stored radius matches configuration
+    assert!(
+        (aspace_loose.cluster_radius - 50.0).abs() < 0.1,
+        "Stored radius should match builder config (expected 50.0, got {})",
+        aspace_loose.cluster_radius
+    );
+
+    assert!(
+        (aspace_tight.cluster_radius - 2.0).abs() < 0.1,
+        "Stored radius should match builder config (expected 2.0, got {})",
+        aspace_tight.cluster_radius
+    );
+
+    println!(
+        "Verified radius storage: loose={:.1}, tight={:.1}",
+        aspace_loose.cluster_radius, aspace_tight.cluster_radius
+    );
+}
+
+/// Integration test: Combined manual K + tight radius for high-res topology
+#[test]
+fn test_dense_mesh_topology() {
+    // Simulate a high-dimensional scenario (like Dorothea after projection)
+    let n_items = 200;
+    let n_features = 100;
+    let mut rng = rand::rng();
+
+    let rows: Vec<Vec<f64>> = (0..n_items)
+        .map(|_| {
+            (0..n_features)
+                .map(|_| rng.random_range(0.0..1.0))
+                .collect()
+        })
+        .collect();
+
+    // Configure "Dense Mesh" strategy: many clusters + tight radius
+    let target_k = 50; // ~25% of dataset size
+    let tight_radius = 0.7;
+
+    let builder = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.5, 10, 5, 2.0, None)
+        .with_cluster_max_clusters(target_k)
+        .with_cluster_radius(tight_radius)
+        .with_dims_reduction(true, Some(0.2)) // High-fidelity projection
+        .with_synthesis(TauMode::Median);
+
+    let (aspace, _gl) = builder.build(rows);
+
+    // Verify configuration was respected
+    assert_eq!(
+        aspace.n_clusters, target_k,
+        "Should respect manual cluster count"
+    );
+
+    assert!(
+        (aspace.cluster_radius - tight_radius).abs() < 0.01,
+        "Should store configured radius (expected {}, got {})",
+        tight_radius,
+        aspace.cluster_radius
+    );
+
+    // Verify rich topology properties
+    let lambda_spread = aspace
+        .lambdas()
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max)
+        - aspace
+            .lambdas()
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+
+    println!(
+        "Dense mesh: {} clusters, lambda spread: {:.6}",
+        aspace.n_clusters, lambda_spread
+    );
+
+    assert!(
+        lambda_spread > 0.5,
+        "Rich topology should produce good lambda spread (got {:.6})",
+        lambda_spread
+    );
+
+    // Check for minimal zeroed lambdas (normalized min will be 0.0, that's OK)
+    // Count how many are VERY close to zero (< 1e-6 unnormalized)
+    let near_zero_count = aspace
+        .lambdas()
+        .iter()
+        .filter(|&&l| l < 0.01) // Less than 1% of range
+        .count();
+
+    // With 200 items and 50 clusters, expect very few near-minimum
+    assert!(
+        near_zero_count < 5,
+        "Dense mesh should minimize clustered lambdas at minimum (found {})",
+        near_zero_count
+    );
+
+    println!(
+        "Lambdas near zero: {} ({:.1}%)",
+        near_zero_count,
+        (near_zero_count as f64 / aspace.nitems as f64) * 100.0
+    );
 }

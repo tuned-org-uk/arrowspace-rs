@@ -1175,54 +1175,6 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
 
         assert_eq!(sub_centroids.shape().1, centroids.shape().1);
 
-        // Step 5: apply EXTRA JL dimensionality reduction on sub-centroids (optional `with_extra_dims_reduction`)
-        let (n_subcentroids, current_features) = sub_centroids.shape();
-        let (sub_centroids, reduced_dim) = if self.use_dims_reduction
-            && self.extra_dims_reduction
-            && current_features > 64
-        {
-            info!("Apply EXTRA JL dimensionality reduction");
-            use crate::reduction::{ImplicitProjection, compute_jl_dimension, project_matrix};
-
-            let jl_dim = compute_jl_dimension(n_subcentroids, self.rp_eps);
-            let target_dim = jl_dim.min(current_features / 2);
-
-            if target_dim < current_features {
-                info!(
-                    "Applying JL projection to sub_centroids: {} features → {} dimensions (ε={:.2})",
-                    current_features, target_dim, self.rp_eps
-                );
-
-                let implicit_proj =
-                    ImplicitProjection::new(current_features, target_dim, self.clustering_seed);
-                let projected = project_matrix(&sub_centroids, &implicit_proj);
-                aspace.extra_reduced_dim = true;
-                self.extra_dims_reduction = true;
-
-                info!(
-                    "Sub_centroids projection complete: {:.1}x compression",
-                    current_features as f64 / target_dim as f64
-                );
-
-                (projected, target_dim)
-            } else {
-                debug!(
-                    "JL target dimension {} >= current {}, skipping projection",
-                    target_dim, current_features
-                );
-                (sub_centroids, current_features)
-            }
-        } else {
-            (sub_centroids, current_features)
-        };
-
-        info!(
-            "Energy graph: {:?} centroids → {:?} sub_centroids (reduced_dim={})",
-            centroids.shape(),
-            sub_centroids.shape(),
-            reduced_dim
-        );
-
         // Step 6: Build Laplacian on sub_centroids using energy dispersion
         let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids, &energy_params);
 
