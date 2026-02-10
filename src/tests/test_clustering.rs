@@ -176,7 +176,7 @@ fn test_intrinsic_dimension_small_n() {
 fn test_step1_bounds_small_dataset() {
     let rows = vec![vec![1.0]; 10];
     let builder = ArrowSpaceBuilder::new();
-    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 10, 1, 42);
+    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 10, 1, None, 42);
 
     debug!("step 1 bounds (N=10, F=1): [{}, {}]", k_min, k_max);
     assert!(k_min >= 2, "k_min should be at least 2");
@@ -188,7 +188,7 @@ fn test_step1_bounds_small_dataset() {
 fn test_step1_bounds_large_n_small_f() {
     let rows = vec![vec![0.0; 5]; 1000];
     let builder = ArrowSpaceBuilder::new();
-    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 1000, 5, 42);
+    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 1000, 5, None, 42);
 
     debug!("step 1 bounds (N=1000, F=5): [{}, {}]", k_min, k_max);
     assert!(k_min <= k_max);
@@ -199,7 +199,7 @@ fn test_step1_bounds_large_n_small_f() {
 fn test_step1_bounds_high_dimensional() {
     let rows = vec![vec![0.0; 100]; 50];
     let builder = ArrowSpaceBuilder::new();
-    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 50, 100, 42);
+    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 50, 100, None, 42);
 
     debug!("step 1 bounds (N=50, F=100): [{}, {}]", k_min, k_max);
     assert!(k_min >= 2);
@@ -438,7 +438,7 @@ fn test_optimal_k_heuristic_synthetic_three_clusters() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 3, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 3, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 3-cluster synthetic",
@@ -476,7 +476,7 @@ fn test_optimal_k_heuristic_spherical_clusters() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 4 spherical clusters",
@@ -508,7 +508,7 @@ fn test_optimal_k_heuristic_high_dimensional_random() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 8, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 8, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 8D random",
@@ -530,7 +530,7 @@ fn test_optimal_k_heuristic_small_n() {
     ];
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, None, 42);
 
     debug!("Optimal K={}, radius={:.6}, ID={} for N=4", k, radius, id);
     assert!(k >= 2, "K should be at least 2");
@@ -542,7 +542,7 @@ fn test_optimal_k_heuristic_small_n() {
 fn test_optimal_k_heuristic_degenerate_identical() {
     let rows = vec![vec![3.0, 4.0]; 100];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, 42);
+    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, None, 42);
 
     debug!("Optimal K={}, radius={:.6} for identical points", k, radius);
     assert!(k >= 2, "K should be at least 2 even for degenerate data");
@@ -557,7 +557,7 @@ fn test_optimal_k_heuristic_single_feature() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 100, 1, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 100, 1, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 1D uniform",
@@ -574,7 +574,7 @@ fn test_optimal_k_heuristic_single_feature() {
 fn test_optimal_k_minimum_viable_dataset() {
     let rows = vec![vec![0.0, 0.0], vec![1.0, 1.0]];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 2, 2, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 2, 2, None, 42);
 
     debug!("Optimal K={}, radius={:.6}, ID={} for N=2", k, radius, id);
     assert!(k >= 2, "K should be at least 2");
@@ -585,7 +585,7 @@ fn test_optimal_k_minimum_viable_dataset() {
 fn test_optimal_k_very_high_dimensional() {
     let rows = vec![vec![0.0; 1000]; 20];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 20, 1000, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 20, 1000, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for N=20, F=1000",
@@ -604,7 +604,7 @@ fn test_optimal_k_mixed_scale_features() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, 42);
+    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6} for mixed-scale features",
@@ -681,7 +681,7 @@ fn test_clustering_heuristic_trait_interface() {
     ];
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, None, 42);
 
     debug!("Trait interface: K={}, radius={:.6}, ID={}", k, radius, id);
     assert!(k >= 2);
@@ -709,7 +709,7 @@ fn test_optimal_k_performance_large_dataset() {
 
     let builder = ArrowSpaceBuilder::new();
     let start = Instant::now();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 4, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 4, None, 42);
     let elapsed = start.elapsed();
 
     debug!(
@@ -732,8 +732,8 @@ fn test_consistent_results_with_seed() {
     ];
 
     let builder = ArrowSpaceBuilder::new();
-    let (k1, radius_1, id1) = builder.compute_optimal_k(&rows, 4, 2, 42);
-    let (k2, radius_2, id2) = builder.compute_optimal_k(&rows, 4, 2, 42);
+    let (k1, radius_1, id1) = builder.compute_optimal_k(&rows, 4, 2, None, 42);
+    let (k2, radius_2, id2) = builder.compute_optimal_k(&rows, 4, 2, None, 42);
 
     assert_eq!(k1, k2, "K should be consistent");
     assert!(
@@ -756,7 +756,7 @@ fn test_readme_example() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, None, 42);
 
     debug!("README example: K={}, radius={:.6}, ID={}", k, radius, id);
     assert!(k >= 2, "Should detect at least 2 clusters");
@@ -1173,5 +1173,172 @@ fn test_dense_mesh_topology() {
         "Lambdas near zero: {} ({:.1}%)",
         near_zero_count,
         (near_zero_count as f64 / aspace.nitems as f64) * 100.0
+    );
+}
+
+// Helper to generate synthetic data with controlled properties
+fn generate_test_data(n: usize, f: usize, seed: u64) -> Vec<Vec<f64>> {
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    // Just random noise - 100x faster!
+    (0..n)
+        .map(|_| (0..f).map(|_| rng.random_range(-1.0..1.0)).collect())
+        .collect()
+}
+
+#[test]
+fn test_step1_bounds_with_projection_basic() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = generate_test_data(1000, 100000, 50);
+    let n = rows.len();
+    let f = rows[0].len();
+    let effective_dim = Some(500); // Projected from 100K to 500D
+
+    let (k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+
+    // Assertions
+    assert_eq!(k_min, 10, "k_min should be sqrt(1000/10) = 10");
+
+    // k_max should be min of [500*2=1000, 1000/10=100, 5*id_est, sqrt(1000)≈31]
+    // Expected: min(1000, 100, 5*id_est, 31) where id_est ≈ 50
+    // So: min(1000, 100, 250, 31) = 31
+    assert!(k_max <= 100, "k_max should be ≤ 100 (10% of data)");
+    assert!(k_max >= k_min + 1, "k_max should be > k_min");
+    assert!(k_max <= n / 2, "k_max should be ≤ n/2 = 500");
+
+    println!(
+        "✓ Basic projection: k_min={}, k_max={}, id_est={}",
+        k_min, k_max, id_est
+    );
+}
+
+#[test]
+#[serial]
+fn test_step1_bounds_projection_dominates_over_ambient() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = generate_test_data(1000, 100000, 50);
+    let n = rows.len();
+    let f = rows[0].len();
+
+    // Without projection: should cap f at 1000
+    let (_, k_max_no_proj, _) = builder.step1_bounds(&rows, n, f, None, 42);
+
+    // With projection to 500D
+    let (_, k_max_with_proj, _) = builder.step1_bounds(&rows, n, f, Some(500), 42);
+
+    // Both should be bounded similarly (both use reasonable dims)
+    // But with_proj uses 500*2=1000, no_proj uses min(f,1000)=1000
+    // So candidates are nearly identical
+    assert_eq!(
+        k_max_no_proj, k_max_with_proj,
+        "Projected and capped-ambient should give same k_max"
+    );
+
+    println!(
+        "✓ Projection vs capped ambient: no_proj={}, with_proj={}",
+        k_max_no_proj, k_max_with_proj
+    );
+}
+
+#[test]
+#[serial]
+fn test_step1_bounds_small_effective_dim() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = generate_test_data(10000, 10000, 20);
+    let n = rows.len();
+    let f = rows[0].len();
+    let effective_dim = Some(100); // Aggressive projection to 100D
+
+    let (k_min, k_max, _id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+
+    // k_max candidates: [100*2=200, 10000/10=1000, 5*id_est, sqrt(10000)=100]
+    // Expected: min(200, 1000, ~100, 100) ≈ 100
+    assert!(k_max >= 100, "k_max should be at least sqrt(n) = 100");
+    assert!(k_max <= 200, "k_max should be ≤ 2*effective_dim = 200");
+
+    println!(
+        "✓ Small effective_dim=100: k_min={}, k_max={}",
+        k_min, k_max
+    );
+}
+
+#[test]
+#[serial]
+fn test_step1_bounds_effective_dim_smaller_than_id() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = generate_test_data(2000, 5000, 80);
+    let n = rows.len();
+    let f = rows[0].len();
+    let effective_dim = Some(50); // Projected to LESS than intrinsic dim
+
+    let (_k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+
+    // This tests over-compression: effective_dim < id_est
+    // k_max candidates: [50*2=100, 2000/10=200, 5*id_est≈400, sqrt(2000)≈44]
+    // Expected: min(100, 200, 400, 44) ≈ 44
+
+    println!(
+        "✓ Effective_dim < id_est: effective={}, id_est={}, k_max={}",
+        effective_dim.unwrap(),
+        id_est,
+        k_max
+    );
+
+    // Over-compression should still work but k_max may be limited by sqrt(n)
+    assert!(k_max <= 100, "k_max limited by min of candidates");
+}
+
+#[test]
+#[serial]
+fn test_step1_bounds_effective_dim_equals_intrinsic() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = generate_test_data(1000, 5000, 60);
+    let n = rows.len();
+    let f = rows[0].len();
+
+    // Assume intrinsic dim ≈ 60, project to 120 (2× intrinsic)
+    let effective_dim = Some(120);
+
+    let (_k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+
+    // k_max candidates: [120*2=240, 1000/10=100, 5*id_est≈300, sqrt(1000)≈31]
+    // Expected: min(240, 100, 300, 31) = 31
+
+    println!(
+        "✓ Effective_dim ≈ 2×id_est: effective={}, id_est={}, k_max={}",
+        effective_dim.unwrap(),
+        id_est,
+        k_max
+    );
+
+    assert!(k_max <= 100, "k_max should be bounded by n/10");
+}
+
+#[test]
+#[serial]
+fn test_step1_bounds_tiny_dataset_with_projection() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = generate_test_data(50, 10000, 10);
+    let n = rows.len();
+    let f = rows[0].len();
+    let effective_dim = Some(100);
+
+    let (k_min, k_max, _id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+
+    // For tiny n=50:
+    // k_min = max(sqrt(50/10), 2) = max(2.23, 2) ≈ 2
+    // k_max candidates: [100*2=200, 50/10=5, 5*id_est, sqrt(50)≈7]
+    // min(200, 5, ~50, 7) = 5
+    // But clamped to [k_min+1, n/2] = [3, 25]
+
+    assert_eq!(k_min, 3, "k_min should be 3 for tiny datasets");
+    assert!(k_max <= 25, "k_max should be ≤ n/2 = 25");
+    assert!(k_max >= k_min + 1, "k_max should be > k_min");
+
+    println!(
+        "✓ Tiny dataset with projection: k_min={}, k_max={}",
+        k_min, k_max
     );
 }

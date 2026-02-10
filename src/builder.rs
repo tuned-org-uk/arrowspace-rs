@@ -188,6 +188,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                 &rows,
                 n_items,
                 n_features,
+                None,
                 self.clustering_seed.as_ref().unwrap().clone(),
             );
 
@@ -355,7 +356,8 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
             let (k_opt, radius, intrinsic_dim) = self.compute_optimal_k(
                 &working_rows,
                 n_items,
-                reduced_dim,
+                n_features,
+                Some(reduced_dim),
                 self.clustering_seed.as_ref().unwrap().clone(),
             );
             debug!("Heuristic K={}, radius={:.4}", k_opt, radius);
@@ -491,6 +493,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                 &compute,
                 n_items,
                 n_features,
+                None,
                 self.clustering_seed.as_ref().unwrap().clone(),
             );
 

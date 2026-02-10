@@ -70,7 +70,8 @@ pub trait ClusteringHeuristic {
         &self,
         rows: &[Vec<f64>],
         n: usize,
-        f: usize,
+        f: usize,                   // original number of dimensions (`n_features`)
+        effective_f: Option<usize>, // projected number of dimensions (if projection already happened)
         base_seed: u64,
     ) -> (usize, f64, usize)
     where
@@ -78,7 +79,7 @@ pub trait ClusteringHeuristic {
     {
         info!("Computing optimal K for clustering: N={}, F={}", n, f);
 
-        let (k_min, k_max, id_est) = self.step1_bounds(rows, n, f, base_seed);
+        let (k_min, k_max, id_est) = self.step1_bounds(rows, n, f, effective_f, base_seed);
 
         let sample_size = n.min(1000);
         let sample_indices: Vec<usize> = if n > sample_size {
@@ -107,21 +108,33 @@ pub trait ClusteringHeuristic {
         &self,
         rows: &[Vec<f64>],
         n: usize,
-        f: usize,
+        f: usize,                     // original number of dimensions (`n_features`)
+        effective_dim: Option<usize>, // projected number of dimensions (if projection already happened)
         base_seed: u64,
     ) -> (usize, usize, usize) {
         let id_est = self.estimate_intrinsic_dimension(rows, n, f, base_seed);
-        debug!("Intrinsic dimension estimate: {}", id_est);
 
         let k_min = ((n as f64 / 10.0).sqrt().ceil() as usize).max(2);
 
-        let k_max_candidates = [f, n / 10, 5 * id_est, (n as f64).powf(0.5) as usize];
+        // Determine which dimension to use for K bounds
+        let dim_for_bounds = effective_dim.unwrap_or_else(|| {
+            // No projection: cap at 1000 to prevent high-D explosion
+            f.min(1000)
+        });
+
+        // Unified k_max computation (same for both paths)
+        let k_max_candidates = [
+            dim_for_bounds * 2,            // 2× effective dimension
+            n / 10,                        // 10% of data
+            5 * id_est,                    // 5× intrinsic dimension
+            (n as f64).powf(0.5) as usize, // sqrt(n)
+        ];
 
         let k_max = k_max_candidates
             .iter()
             .copied()
             .min()
-            .unwrap_or(f)
+            .unwrap_or(k_min + 1) // CRITICAL: don't fall back to f!
             .max(k_min + 1)
             .min(n / 2);
 
