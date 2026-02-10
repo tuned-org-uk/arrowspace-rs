@@ -27,9 +27,6 @@ use crate::builder::ArrowSpaceBuilder;
 use crate::core::ArrowSpace;
 use crate::sampling::InlineSampler;
 
-/// Fixed seed for deterministic clustering
-const CLUSTERING_SEED: u64 = 128;
-
 /// Output of the clustering stage: centroids, projected dimensions, and metadata-enriched ArrowSpace.
 #[derive(Clone, Debug)]
 pub struct ClusteredOutput {
@@ -74,14 +71,12 @@ pub trait ClusteringHeuristic {
         rows: &[Vec<f64>],
         n: usize,
         f: usize,
-        seed_override: Option<u64>,
+        base_seed: u64,
     ) -> (usize, f64, usize)
     where
         Self: Sync,
     {
         info!("Computing optimal K for clustering: N={}, F={}", n, f);
-
-        let base_seed = seed_override.unwrap_or(CLUSTERING_SEED);
 
         let (k_min, k_max, id_est) = self.step1_bounds(rows, n, f, base_seed);
 

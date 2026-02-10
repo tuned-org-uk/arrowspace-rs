@@ -438,7 +438,7 @@ fn test_optimal_k_heuristic_synthetic_three_clusters() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 3, Some(42));
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 3, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 3-cluster synthetic",
@@ -476,7 +476,7 @@ fn test_optimal_k_heuristic_spherical_clusters() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, Some(42));
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 4 spherical clusters",
@@ -508,7 +508,7 @@ fn test_optimal_k_heuristic_high_dimensional_random() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 8, Some(42));
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 8, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 8D random",
@@ -530,7 +530,7 @@ fn test_optimal_k_heuristic_small_n() {
     ];
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, Some(42));
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, 42);
 
     debug!("Optimal K={}, radius={:.6}, ID={} for N=4", k, radius, id);
     assert!(k >= 2, "K should be at least 2");
@@ -542,7 +542,7 @@ fn test_optimal_k_heuristic_small_n() {
 fn test_optimal_k_heuristic_degenerate_identical() {
     let rows = vec![vec![3.0, 4.0]; 100];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, Some(42));
+    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, 42);
 
     debug!("Optimal K={}, radius={:.6} for identical points", k, radius);
     assert!(k >= 2, "K should be at least 2 even for degenerate data");
@@ -557,7 +557,7 @@ fn test_optimal_k_heuristic_single_feature() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 100, 1, Some(42));
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 100, 1, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 1D uniform",
@@ -574,7 +574,7 @@ fn test_optimal_k_heuristic_single_feature() {
 fn test_optimal_k_minimum_viable_dataset() {
     let rows = vec![vec![0.0, 0.0], vec![1.0, 1.0]];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 2, 2, Some(42));
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 2, 2, 42);
 
     debug!("Optimal K={}, radius={:.6}, ID={} for N=2", k, radius, id);
     assert!(k >= 2, "K should be at least 2");
@@ -585,7 +585,7 @@ fn test_optimal_k_minimum_viable_dataset() {
 fn test_optimal_k_very_high_dimensional() {
     let rows = vec![vec![0.0; 1000]; 20];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 20, 1000, Some(42));
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 20, 1000, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for N=20, F=1000",
@@ -604,7 +604,7 @@ fn test_optimal_k_mixed_scale_features() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, Some(42));
+    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, 42);
 
     debug!(
         "Optimal K={}, radius={:.6} for mixed-scale features",
@@ -681,7 +681,7 @@ fn test_clustering_heuristic_trait_interface() {
     ];
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, Some(42));
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, 42);
 
     debug!("Trait interface: K={}, radius={:.6}, ID={}", k, radius, id);
     assert!(k >= 2);
@@ -709,7 +709,7 @@ fn test_optimal_k_performance_large_dataset() {
 
     let builder = ArrowSpaceBuilder::new();
     let start = Instant::now();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 4, Some(42));
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 4, 42);
     let elapsed = start.elapsed();
 
     debug!(
@@ -732,8 +732,8 @@ fn test_consistent_results_with_seed() {
     ];
 
     let builder = ArrowSpaceBuilder::new();
-    let (k1, radius_1, id1) = builder.compute_optimal_k(&rows, 4, 2, Some(42));
-    let (k2, radius_2, id2) = builder.compute_optimal_k(&rows, 4, 2, Some(42));
+    let (k1, radius_1, id1) = builder.compute_optimal_k(&rows, 4, 2, 42);
+    let (k2, radius_2, id2) = builder.compute_optimal_k(&rows, 4, 2, 42);
 
     assert_eq!(k1, k2, "K should be consistent");
     assert!(
@@ -756,7 +756,7 @@ fn test_readme_example() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, Some(42));
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, 42);
 
     debug!("README example: K={}, radius={:.6}, ID={}", k, radius, id);
     assert!(k >= 2, "Should detect at least 2 clusters");
@@ -899,7 +899,9 @@ fn test_fast_clustering_no_reduction_fallback() {
         vec![7.0, 8.0, 9.0],
     ];
 
-    let mut builder = ArrowSpaceBuilder::new().with_dims_reduction(false, None); // Explicitly disabled
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_seed(42)
+        .with_dims_reduction(false, None); // Explicitly disabled
 
     let output = builder.start_clustering_dim_reduce(rows);
 
