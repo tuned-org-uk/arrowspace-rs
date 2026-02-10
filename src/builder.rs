@@ -219,7 +219,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
 
         // Optional JL projection for high-dimensional datasets
         let (centroids, reduced_dim) = if self.use_dims_reduction && n_features > 64 {
-            let jl_dim = compute_jl_dimension(n_clusters, self.rp_eps);
+            let jl_dim = compute_jl_dimension(n_clusters, n_features, self.rp_eps);
             let target_dim = jl_dim.min(n_features / 2);
 
             if target_dim < n_features && target_dim > clustered_dm.shape().0 {
@@ -281,7 +281,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
             info!("Applying early JL projection to accelerate clustering");
 
             // Compute target dimension based on item count (not cluster count)
-            let jl_dim = compute_jl_dimension(n_items, self.rp_eps);
+            let jl_dim = compute_jl_dimension(n_items, n_features, self.rp_eps);
             let target_dim = jl_dim.min(n_features / 2).max(64);
 
             info!(
@@ -515,7 +515,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
 
         // Optional JL projection for high-dimensional datasets
         let (centroids, reduced_dim) = if self.use_dims_reduction && n_features > 64 {
-            let jl_dim = compute_jl_dimension(n_clusters, self.rp_eps);
+            let jl_dim = compute_jl_dimension(n_clusters, n_features, self.rp_eps);
             let target_dim = jl_dim.min(n_features / 2);
 
             if target_dim < n_features && target_dim > clustered_dm.shape().0 {

@@ -123,19 +123,53 @@ use smartcore::linalg::basic::{
 ///
 /// For n points and tolerance ε, need r = O(log(n) / ε²) dimensions
 /// to preserve pairwise distances within (1±ε) with high probability.
-pub fn compute_jl_dimension(n_points: usize, epsilon: f64) -> usize {
+pub fn compute_jl_dimension(n_points: usize, original_dim: usize, epsilon: f64) -> usize {
+    // 1. Preserve low dimensions exactly
+    if original_dim < 32 {
+        debug!(
+            "Original dimension {} < 32, skipping reduction",
+            original_dim
+        );
+        return original_dim;
+    }
+
     debug!(
-        "Computing JL optimal dimensions for n_points {:?}",
-        n_points
+        "Computing JL optimal dimensions for n_points {}, original_dim {}",
+        n_points, original_dim
     );
+
     let log_n = (n_points as f64).ln();
     let eps_sq = epsilon.powf(2.0);
 
-    // Standard JL: r ≥ 8 * log(n) / ε²
-    let jl_dim = (8.0 * log_n / eps_sq).ceil() as usize;
+    // Standard JL lower bound: r ≥ 8 * log(n) / ε²
+    let jl_bound = (8.0 * log_n / eps_sq).ceil() as usize;
 
-    // Practical bounds: min 32, don't exceed half original dimension
-    jl_dim.max(32)
+    // 2. Very high dimensions: adaptive buffer based on compression severity
+    if original_dim > 2048 {
+        let compression_ratio = original_dim as f64 / jl_bound as f64;
+
+        let buffer_factor = if compression_ratio < 10.0 {
+            1.2
+        } else if compression_ratio < 100.0 {
+            1.5
+        } else {
+            2.0
+        };
+
+        let buffered_dim = (jl_bound as f64 * buffer_factor).ceil() as usize;
+        let result = buffered_dim.clamp(32, original_dim);
+
+        debug!(
+            "High-D projection: {}D → {}D (compression {:.1}x, buffer {:.1}x)",
+            original_dim, result, compression_ratio, buffer_factor
+        );
+        return result;
+    }
+
+    // 3. Standard case: use JL bound with bounds checking
+    let result = jl_bound.clamp(32, original_dim);
+    debug!("Standard JL projection: {}D → {}D", original_dim, result);
+    result
 }
 
 /// Helper: Project matrix using ImplicitProjection
