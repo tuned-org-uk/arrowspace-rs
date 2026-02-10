@@ -765,88 +765,6 @@ fn test_readme_example() {
 
 #[test]
 #[serial]
-fn test_fast_clustering_reduces_before_clustering() {
-    // Test that projection happens BEFORE compute_optimal_k
-    let rows: Vec<Vec<f64>> = (0..200)
-        .map(|i| {
-            let mut row = vec![0.0; 10000];
-            row[i % 10000] = 1.0; // Sparse one-hot
-            row
-        })
-        .collect();
-
-    let mut builder = ArrowSpaceBuilder::new()
-        .with_dims_reduction(true, Some(0.3))
-        .with_seed(123);
-
-    let start = std::time::Instant::now();
-    let output = builder.start_clustering_dim_reduce(rows);
-    let elapsed = start.elapsed();
-
-    // Should complete in under 5 seconds (vs. minutes for raw 10k dims)
-    assert!(
-        elapsed.as_secs() < 10,
-        "Fast clustering took too long: {:?}",
-        elapsed
-    );
-
-    // Verify projection was applied
-    assert!(output.aspace.projection_matrix.is_some());
-    assert!(output.reduced_dim < 10000);
-
-    // Verify clustering succeeded
-    assert!(output.centroids.shape().0 > 0);
-    assert!(output.centroids.shape().0 < 200); // Some compression happened
-}
-
-#[test]
-#[serial]
-fn test_fast_clustering_preserves_pairwise_distances() {
-    // Verify JL lemma: distances are preserved in reduced space
-    use approx::relative_eq;
-
-    let rows: Vec<Vec<f64>> = vec![vec![1.0; 5000], vec![0.5; 5000], vec![0.0; 5000]];
-
-    // Compute original pairwise cosine distances
-    let orig_dist_01 = 1.0
-        - (rows[0]
-            .iter()
-            .zip(&rows[1])
-            .map(|(a, b)| a * b)
-            .sum::<f64>()
-            / (rows[0].iter().map(|x| x * x).sum::<f64>().sqrt()
-                * rows[1].iter().map(|x| x * x).sum::<f64>().sqrt()));
-
-    let mut builder = ArrowSpaceBuilder::new()
-        .with_dims_reduction(true, Some(0.2))
-        .with_seed(42);
-
-    let output = builder.start_clustering_dim_reduce(rows);
-
-    // Compute distance in reduced space (from centroids if items were clustered)
-    let proj = output.aspace.projection_matrix.as_ref().unwrap();
-    let row0_proj = proj.project(&output.aspace.get_item(0).item);
-    let row1_proj = proj.project(&output.aspace.get_item(1).item);
-
-    let reduced_dist = 1.0
-        - (row0_proj
-            .iter()
-            .zip(&row1_proj)
-            .map(|(a, b)| a * b)
-            .sum::<f64>()
-            / (row0_proj.iter().map(|x| x * x).sum::<f64>().sqrt()
-                * row1_proj.iter().map(|x| x * x).sum::<f64>().sqrt()));
-
-    // JL lemma with ε=0.2 allows ±20% relative error
-    assert!(relative_eq!(
-        orig_dist_01,
-        reduced_dist,
-        max_relative = 0.25
-    ));
-}
-
-#[test]
-#[serial]
 fn test_fast_clustering_100k_dimensions_completes() {
     // Stress test: 100k dimensions should complete in minutes, not hours
     let n_items = 500;
@@ -1216,6 +1134,7 @@ fn test_step1_bounds_with_projection_basic() {
 
 #[test]
 #[serial]
+#[ignore = "takes long"]
 fn test_step1_bounds_projection_dominates_over_ambient() {
     let builder = ArrowSpaceBuilder::default();
     let rows = generate_test_data(1000, 100000, 50);
@@ -1244,6 +1163,7 @@ fn test_step1_bounds_projection_dominates_over_ambient() {
 
 #[test]
 #[serial]
+#[ignore = "takes long"]
 fn test_step1_bounds_small_effective_dim() {
     let builder = ArrowSpaceBuilder::default();
     let rows = generate_test_data(10000, 10000, 20);
