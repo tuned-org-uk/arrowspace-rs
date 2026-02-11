@@ -12,6 +12,7 @@
 //!   Incremental clustering with optimal K heuristics for `ArrowSpace`.
 //!
 //! **DETERMINISTIC**: All random operations use fixed seed 128 for reproducibility.
+pub mod surface;
 
 use std::sync::{Arc, Mutex};
 
@@ -960,4 +961,27 @@ pub(crate) fn nearest_centroid(row: &[f64], centroids: &[Vec<f64>]) -> (usize, f
         }
     }
     (best_idx, best_dist2)
+}
+
+use kalman_centroids::KalmanClusterer;
+
+pub(crate) fn run_kalman_clustering(
+    rows: &[Vec<f64>],
+    max_k: usize,
+) -> (DenseMatrix<f64>, Vec<Option<usize>>, Vec<usize>) {
+    let n_items = rows.len();
+
+    let mut clusterer = KalmanClusterer::new(max_k, n_items);
+    clusterer.fit(rows);
+
+    // centroids as DenseMatrix (means)
+    let centroids_dm: DenseMatrix<f64> = clusterer.export_centroids();
+
+    // per-item centroid assignment (Option<usize>)
+    let assignments: Vec<Option<usize>> = clusterer.assignments;
+
+    // cluster sizes: use centroid.count (or derive from assignments)
+    let sizes: Vec<usize> = clusterer.centroids.iter().map(|c| c.count).collect();
+
+    (centroids_dm, assignments, sizes)
 }
