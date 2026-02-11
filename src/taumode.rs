@@ -145,7 +145,7 @@ impl TauMode {
         };
         let (graph_rows, graph_cols) = graph.shape();
         let graph_nnz = graph.nnz();
-        let sparsity = (graph_nnz as f64) / ((graph_rows * graph_cols) as f64);
+        let sparsity = 1.0 - ((graph_nnz as f64) / ((graph_rows * graph_cols) as f64));
 
         info!(
             "║   Graph Source:    {:<40} ║",

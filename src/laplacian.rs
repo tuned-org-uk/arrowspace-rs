@@ -172,8 +172,8 @@ pub fn build_laplacian_matrix(
 
     info!(
         "Successfully built sparse Laplacian matrix ({}x{}) with {} non-zeros",
-        n,
-        n,
+        graph_laplacian.matrix.shape().0,
+        graph_laplacian.matrix.shape().1,
         graph_laplacian.matrix.nnz()
     );
     graph_laplacian
