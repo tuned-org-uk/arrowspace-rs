@@ -375,6 +375,7 @@ dependencies = [
  "csv",
  "dashmap",
  "env_logger",
+ "kalman_clustering",
  "log",
  "ordered-float 5.1.0",
  "parquet",
@@ -970,6 +971,19 @@ checksum = "8c942ebf8e95485ca0d52d97da7c5a2c387d0e7f0ba4c35e93bfcaee045955b3"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kalman_clustering"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d880925ac2e51c85b2f998cd287e68475b0904036d8da8d50623dd33e4f38876"
+dependencies = [
+ "dashmap",
+ "env_logger",
+ "log",
+ "rayon",
+ "smartcore",
 ]
 
 [[package]]

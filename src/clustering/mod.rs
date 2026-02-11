@@ -963,7 +963,7 @@ pub(crate) fn nearest_centroid(row: &[f64], centroids: &[Vec<f64>]) -> (usize, f
     (best_idx, best_dist2)
 }
 
-use kalman_centroids::KalmanClusterer;
+use kalman_clustering::KalmanClusterer;
 
 pub(crate) fn run_kalman_clustering(
     rows: &[Vec<f64>],

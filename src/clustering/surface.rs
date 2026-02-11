@@ -1,4 +1,7 @@
-use kalman_centroids::KalmanClusterer;
+use kalman_clustering::KalmanClusterer;
+use smartcore::algorithm::neighbour::cosinepair::CosinePair;
+use smartcore::linalg::basic::arrays::Array;
+use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
 // Helper to bundle the output of the new clustering stage
@@ -62,7 +65,6 @@ pub(crate) fn compute_surface_order(
 
     // 2. Build Sparse Centroid Graph (Rectified Cosine)
     // We reuse the existing CosinePair infrastructure
-    use smartcore::algorithm::neighbour::cosine_pair::CosinePair;
     let topk = (k_order * 2).max(16);
     let index = CosinePair::with_top_k(centroids, topk).unwrap();
 
@@ -89,7 +91,7 @@ pub(crate) fn compute_surface_order(
     // Note: CosinePair queries return distances.
     // We strictly filter by `eps` to match Laplacian logic.
     let root_neighbors = index.query_row_top_k(root_idx, topk).unwrap();
-    for (neigh_idx, dist_d) in root_neighbors {
+    for (dist_d, neigh_idx) in root_neighbors {
         if neigh_idx != root_idx && dist_d <= eps {
             let surface_cost = dist_d * (thickness[root_idx] + thickness[neigh_idx]) / 2.0;
             // FloatOrd wrapper needed for BinaryHeap
@@ -113,7 +115,7 @@ pub(crate) fn compute_surface_order(
 
         // Add child's neighbors
         let neighbors = index.query_row_top_k(child, topk).unwrap();
-        for (next_idx, dist_d) in neighbors {
+        for (dist_d, next_idx) in neighbors {
             if !visited[next_idx] && next_idx != child && dist_d <= eps {
                 let surface_cost = dist_d * (thickness[child] + thickness[next_idx]) / 2.0;
                 pq.push(std::cmp::Reverse(OrderedFloat(
@@ -156,7 +158,7 @@ pub(crate) fn compute_surface_order(
                 .unwrap() // Descending thickness
                 .then_with(|| {
                     // Break tie with raw distance from current node
-                    let dist_a = index.query_dist(curr, a);
+                    let dist_a = index.closest_pair(curr, a);
                     let dist_b = index.query_dist(curr, b);
                     dist_a.partial_cmp(&dist_b).unwrap()
                 })
@@ -195,4 +197,20 @@ impl Ord for OrderedFloat {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.partial_cmp(other).unwrap()
     }
+}
+
+// Helper to compute rectified cosine distance for tie-breaking
+fn get_cosine_dist(index: &CosinePair<f64, DenseMatrix<f64>>, i: usize, j: usize) -> f64 {
+    let row_i = index.samples.get_row(i);
+    let row_j = index.samples.get_row(j);
+
+    // Manual dot product (assuming unit vectors if normalized, otherwise include norms)
+    let dot: f64 = row_i
+        .iterator(0)
+        .zip(row_j.iterator(0))
+        .map(|(a, b)| a * b)
+        .sum();
+
+    // Rectified cosine distance consistent with laplacian.rs
+    1.0 - (dot / (norm_i * norm_j)).max(0.0).min(1.0)
 }
