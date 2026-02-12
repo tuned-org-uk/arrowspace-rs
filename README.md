@@ -1,16 +1,120 @@
-# surfface: Graph Wiring for any vector space
+# arrowspace
 
-(`/ˈsɝː.ffɪs/`) Enabling graph application at scale from any embeddings or from any generic vector space.
+[![DOI](https://joss.theoj.org/papers/10.21105/joss.09002/status.svg)](https://doi.org/10.21105/joss.09002)
 
-Inspired by [surface wiring of physical networks](https://www.nature.com/articles/s41586-025-09784-4) and [dark matter structural patterns as spotted by JWST](https://www.nature.com/articles/s41550-025-02763-9).
+**Spectral vector search and analysis using dipersion models**
 
-🚧🚧🚧
-Based on previous work done at [`arrowspace`](https://github.com/tuned-org-uk/arrowspace-rs), this library pushes forward the idea that natural processes have developed incredibly effective search mechanisms that can be ported into software to make AI systems more interpretable, managable and safer via observability and supervision. `arrowspace` started as a quest (for an AI Memory Layer) to give to current AI systems some structural metadata (semantic network) using *spectral information* so to provide guardrails for context management in narrow-/domain-tasked LLMs. *Graph Wiring* is the next phase in which the quest is to provide learning capabilities based on surface minimisation to improve search, leveraging current physical models; so that evolution of AI systems can be tracked as a learning process itself via a new generation of tools built for this purpose.
+`arrowspace` is a database for vectors supported by a graph representation and a key-value store. The main use-cases targeted are: **AI search capabilities as advanced vector similarity, graph characterisation analysis and search, indexing of high-dimensional vectors**. Design principles described in [this article](https://www.tuned.org.uk/posts/010_game_changer_unifying_vectors_and_features_graphs).
 
-If you are interested in practical applications for you or your company: for an overview of potential products in the field of MLops and data engineering see this [presentation for a database based on `arrowspace`](https://docs.google.com/presentation/d/1Mtz-_85qpVROnp4U2VrnlSHn0266Z1yc_HfjUtfxYLs).
+A complete DevLog for this package is available [here](https://www.tuned.org.uk/blog).
 
-If you are curious about the ideation of *Graph Wiring*: there is the [complete devlog](https://www.tuned.org.uk/blog).
+`ArrowSpace` is the data structure that encapsulates the use of `λτ` (lambda-tau) indexing; a novel scoring method that mixes Rayleigh and Laplacian scoring (see [`RESEARCH.md`](./RESEARCH.md)) for building vector-search-friendly lookup tables with built-in spectral-awareness. This allows better managing of datasets where spectral characteristics are most relevant. It pairs dense, row‑major arrays with per‑row spectral scores (`λτ`) derived from a Rayleigh-Laplacian score built over items, enabling lambda‑aware similarity, range queries, and composable operations like superposition and element‑wise multiplication over rows. It has been designed to work on datasets where spectral characteristics can be leveraged to find matches that are usually ranked lower by commonly used distance metrics.
 
-If you are really curious about how this quest started: [a blogpost from 2021 analysing growth in fungal network](https://economyoftime.net/image-processing-1-contours-and-areas-c50a586c6675) and a [paper on the cybernetics of working with intuition graphs](https://www.techrxiv.org/users/685780/articles/679427-cybernetics-interfaces-and-networks-intuitions-as-a-toolbox).
+Run `cargo run --example 01_compare_cosine` for an example about how it compares with cosine similarity.
 
-🚧🚧🚧
+The Python bindings are [available in this repo](https://github.com/tuned-org-uk/pyarrowspace).
+
+## Usage
+```rust
+use arrowspace::builder::ArrowSpaceBuilder;
+
+// Simple example that works immediately
+let vectors = vec![
+    vec![1.0, 2.0, 3.0],
+    vec![2.0, 3.0, 1.0],
+    vec![3.0, 1.0, 2.0],
+];
+
+let (aspace, _) = ArrowSpaceBuilder::new()
+    .build(vectors);
+```
+
+### Requirements
+
+- Rust 1.90+ (edition 2024)
+
+## Installation
+
+### As a Library Dependency
+Add to your `Cargo.toml`:
+```toml
+[dependencies]
+arrowspace = "^0.22.0"
+```
+
+### From Source
+```bash
+git clone https://github.com/Mec-iS/arrowspace-rs
+cd arrowspace-rs
+cargo build --release
+```
+
+### Running Examples
+```bash
+cargo run --example 01_compare_cosine
+cargo run --example 02_proteins_lookup
+```
+
+### Running Tests
+```bash
+export RUST_TEST_NOCAPTURE=1
+cargo test --all-features
+```
+
+### Run Bench
+```
+$ cargo bench
+```
+
+### Minimal usage
+
+Construct an `ArrowSpace` from rows and compute a synthetic index `λτ` used in similarities search (spectral search):
+
+- Build λτ‑graph from data (preferred path):
+    - Use `ArrowSpaceBuilder::new().build(items)` to get an `ArrowSpace` and its Laplacian+Tau mode; the builder will compute per‑row synthetic indices immediately.
+    - Use `ArrowSpaceBuilder::new().with_lambda_graph(...).build(items)` to get an `ArrowSpace` and its Laplacian+Tau mode by specifying the parameters for the graph where the Laplacian is computed.
+    - Use `ArrowSpaceBuilder::new().with_lambdas(...).with_synthesis(...).build(items)` to get an `ArrowSpace` and its Laplacian+Tau indices by specifying which lambdas values to use.
+- Search the space:
+```rust
+use arrowSpace::builder::ArrowSpaceBuilder;
+use arrowSpace::core::ArrowItem;
+
+// define the search parameters: alpha=1.0 is equivalent to cosine similarity
+let alpha = 0.7;
+let beta = 0.3;
+
+// Build ArrowSpace from item vectors
+let items = vec![
+    vec![1.0, 2.0, 3.0],  // Item 1
+    vec![2.0, 3.0, 1.0],  // Item 2
+    vec![3.0, 1.0, 2.0],  // Item 3
+];
+
+let (aspace, graph) = ArrowSpaceBuilder::new()
+    // setting the right eps is critical to avoid zeroed lambdas
+    // check `tests` and `examples` for extensive examples
+    .with_lambda_graph(0.5, 3, 2.0, sigma: 0.25)
+    .build(items);
+
+// prepare query vector
+let query = aspace.prepare_query_item(vec![1.5, 2.5, 2.0], &graph);
+// search the space
+let results = aspace.search_lambda_aware(&query, 1, alpha);
+println!("{:?}", results);
+
+```
+
+## Main Features (spectral graph construction and search)
+
+- Data structure for vector search:
+    - Lambda+Tau graph from data (default): builds a Laplacian over items from the row matrix, then computes per‑row synthetic λτ using laplacian + TauMode (see paper) with Median policy by default; override via `with_synthesis(alpha, mode)` to change α or τ policy.
+    - Direct lambda ε‑graph (lower‑level): constructs a Laplacian from a vector of λ values with ε thresholding and k‑capping, union‑symmetrized CSR; use when supplying external λ instead of synthetic.
+    - (optional) Hypergraph overlays: build Laplacians from hyperedges (clique expansion, normalized variant) and overlay “boosts” to strengthen pairs; for prebuilt/hypergraph paths, synthetic λ is opt‑in via with_synthesis.
+    - (optional) Ensembles: parameterized variants (k adjust, radius/ε expand, hypergraph transforms) for graph experimentation while reusing the same data matrix; synthetic λ is computed per chosen base when enabled.
+- Examples:
+    - End‑to‑end examples: protein‑like lookup with λ‑band range query using a ZSET‑style index; showcases for hypergraph, λ‑graph, and synthetic laplacian + TauMode flows.
+    - Extensive tests spanning `ArrowSpace` algebra, Rayleigh properties, lambda scale‑invariance, superposition bounds, λ‑graph symmetry and k‑capping semantics, hypergraph correctness, diffusion/random‑walk simulations, fractal integrations, and synthetic λ via Median/Mean/Percentile τ policies.
+
+## Key concepts
+
+See [paper](./paper.md)
