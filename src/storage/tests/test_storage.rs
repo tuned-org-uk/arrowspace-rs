@@ -1,6 +1,6 @@
 use crate::builder::{ArrowSpaceBuilder, ConfigValue};
 use crate::sampling::SamplerType;
-use crate::taumode::TauMode;
+use crate::search::taumode::TauMode;
 use approx::assert_relative_eq;
 use smartcore::linalg::basic::arrays::{Array, Array2};
 use smartcore::linalg::basic::matrix::DenseMatrix;

@@ -13,7 +13,6 @@ mod test_laplacian_unnormalised;
 mod test_motives;
 mod test_querying_proj;
 mod test_reduction;
-mod test_sparsification;
 mod test_taumode;
 
 use std::sync::Once;

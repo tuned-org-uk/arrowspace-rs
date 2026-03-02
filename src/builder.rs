@@ -25,7 +25,7 @@ use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::graph::GraphLaplacian;
 use crate::reduction::{ImplicitProjection, compute_jl_dimension};
 use crate::sampling::{InlineSampler, SamplerType};
-use crate::taumode::TauMode;
+use crate::search::taumode::TauMode;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Pipeline {

@@ -1,8 +1,8 @@
-use crate::builder::ArrowSpaceBuilder;
-use crate::subgraphs::sg_from_centroids::recluster_centroids;
-use crate::subgraphs::{
+use crate::analysis::subgraphs::sg_from_centroids::recluster_centroids;
+use crate::analysis::subgraphs::{
     CentroidGraphParams, MotiveConfig, SubgraphConfig, SubgraphsCentroid, SubgraphsMotive,
 };
+use crate::builder::ArrowSpaceBuilder;
 use crate::tests::test_data::make_gaussian_cliques_multi;
 
 use log::debug;

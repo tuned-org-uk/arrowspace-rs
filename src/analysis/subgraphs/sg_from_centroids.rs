@@ -10,12 +10,12 @@ use log::info;
 use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
+use crate::analysis::subgraphs::{
+    CentroidGraphParams, CentroidHierarchy, CentroidNode, Subgraph, SubgraphsCentroid,
+};
 use crate::core::ArrowSpace;
 use crate::graph::{GraphLaplacian, GraphParams};
 use crate::laplacian::build_laplacian_matrix;
-use crate::subgraphs::{
-    CentroidGraphParams, CentroidHierarchy, CentroidNode, Subgraph, SubgraphsCentroid,
-};
 
 impl SubgraphsCentroid for GraphLaplacian {
     fn spot_subg_centroids(

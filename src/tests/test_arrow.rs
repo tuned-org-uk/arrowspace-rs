@@ -5,7 +5,7 @@ use crate::{
     builder::ArrowSpaceBuilder,
     graph::GraphLaplacian,
     sampling::SamplerType,
-    taumode::TauMode,
+    search::taumode::TauMode,
     tests::test_data::{make_gaussian_blob, make_gaussian_hd, make_moons_hd},
 };
 

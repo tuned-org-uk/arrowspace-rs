@@ -964,7 +964,7 @@ pub(crate) fn nearest_centroid(row: &[f64], centroids: &[Vec<f64>]) -> (usize, f
 
 use kalman_clustering::KalmanClusterer;
 
-pub(crate) fn run_kalman_clustering(
+pub(crate) fn _run_kalman_clustering(
     rows: &[Vec<f64>],
     max_k: usize,
 ) -> (DenseMatrix<f64>, Vec<Option<usize>>, Vec<usize>) {

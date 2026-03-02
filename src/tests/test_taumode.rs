@@ -1,7 +1,7 @@
 use crate::{
     builder::ArrowSpaceBuilder,
     energymaps::{EnergyMaps, EnergyMapsBuilder, EnergyParams},
-    taumode::{TAU_FLOOR, TauMode},
+    search::taumode::{TAU_FLOOR, TauMode},
     tests::test_data::{make_gaussian_blob, make_moons_hd},
 };
 

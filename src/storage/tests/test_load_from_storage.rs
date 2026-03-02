@@ -1,10 +1,10 @@
 use crate::builder::ConfigValue;
+use crate::search::taumode::TauMode;
 use crate::storage::parquet::ArrowSpaceMetadata;
-use crate::taumode::TauMode;
 use crate::{
     core::ArrowSpace,
     graph::{GraphLaplacian, GraphParams},
-    sorted_index::SortedLambdas,
+    search::sorted_index::SortedLambdas,
     storage::parquet::{
         FileInfo, save_dense_matrix, save_lambda, save_metadata, save_sparse_matrix,
     },

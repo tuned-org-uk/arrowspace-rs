@@ -123,7 +123,7 @@ pub trait Motives {
     fn spot_motives_energy(
         &self,
         aspace: &crate::core::ArrowSpace,
-        cfg: &crate::motives::MotiveConfig,
+        cfg: &crate::analysis::motives::MotiveConfig,
     ) -> Vec<Vec<usize>>;
 
     /// Check if a given set of nodes forms a clique in the graph.

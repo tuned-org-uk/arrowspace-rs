@@ -4,9 +4,9 @@ pub mod sg_from_motives;
 #[cfg(test)]
 mod tests;
 
+use crate::analysis::motives::MotiveConfig;
 use crate::core::ArrowSpace;
 use crate::graph::GraphLaplacian;
-use crate::motives::MotiveConfig;
 
 /// Configuration for subgraph extraction.
 #[derive(Clone, Debug)]

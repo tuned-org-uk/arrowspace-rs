@@ -1,7 +1,7 @@
 use crate::builder::ArrowSpaceBuilder;
 use crate::core::ArrowItem;
 use crate::energymaps::{EnergyMaps, EnergyMapsBuilder, EnergyParams};
-use crate::taumode::TauMode;
+use crate::search::taumode::TauMode;
 use std::collections::HashSet;
 
 use approx::{assert_relative_ne, relative_eq};

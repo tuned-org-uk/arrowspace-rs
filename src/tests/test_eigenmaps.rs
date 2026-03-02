@@ -24,7 +24,7 @@ use crate::clustering::{ClusteredOutput, ClusteringHeuristic};
 use crate::core::ArrowSpace;
 use crate::eigenmaps::EigenMaps;
 use crate::graph::GraphLaplacian;
-use crate::taumode::TauMode;
+use crate::search::taumode::TauMode;
 use crate::tests::init;
 use crate::tests::test_data::make_gaussian_hd;
 

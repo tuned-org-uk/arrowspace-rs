@@ -17,7 +17,6 @@ use crate::{
 use log::debug;
 use rand::Rng;
 use serial_test::serial;
-use smartcore::linalg::basic::arrays::Array;
 
 // -------------------- Helper function tests --------------------
 
@@ -828,7 +827,7 @@ fn test_fast_clustering_no_reduction_fallback() {
     assert_eq!(output.reduced_dim, 3); // Original dimension preserved
 }
 
-use crate::taumode::TauMode;
+use crate::search::taumode::TauMode;
 
 /// Test that with_cluster_max_clusters correctly overrides the automatic heuristic
 #[test]

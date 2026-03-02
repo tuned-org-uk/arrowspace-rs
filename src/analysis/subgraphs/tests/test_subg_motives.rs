@@ -1,6 +1,6 @@
+use crate::analysis::motives::MotiveConfig;
+use crate::analysis::subgraphs::{Subgraph, SubgraphConfig, SubgraphsMotive};
 use crate::builder::ArrowSpaceBuilder;
-use crate::motives::MotiveConfig;
-use crate::subgraphs::{Subgraph, SubgraphConfig, SubgraphsMotive};
 use crate::tests::test_data::make_gaussian_cliques_multi;
 
 use log::debug;

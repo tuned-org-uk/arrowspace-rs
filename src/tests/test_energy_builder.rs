@@ -4,7 +4,7 @@
 use crate::builder::ArrowSpaceBuilder;
 use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::graph::GraphLaplacian;
-use crate::taumode::TauMode;
+use crate::search::taumode::TauMode;
 use log::{debug, info};
 use smartcore::linalg::basic::arrays::Array;
 
