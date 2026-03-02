@@ -1,12 +1,7 @@
 pub mod parquet;
 
 #[cfg(test)]
-#[cfg(feature = "storage")]
-mod test_storage;
-
-#[cfg(test)]
-#[cfg(all(test, feature = "storage"))]
-mod test_load_from_storage;
+mod tests;
 
 // ============================================================================
 // Error Types

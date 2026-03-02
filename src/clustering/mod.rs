@@ -12,7 +12,6 @@
 //!   Incremental clustering with optimal K heuristics for `ArrowSpace`.
 //!
 //! **DETERMINISTIC**: All random operations use fixed seed 128 for reproducibility.
-pub mod surface;
 
 use std::sync::{Arc, Mutex};
 
