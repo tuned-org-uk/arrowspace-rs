@@ -719,26 +719,81 @@ fn test_optimal_k_performance_large_dataset() {
 
 // -------------------- Regression tests --------------------
 
+/// Verifies that `compute_optimal_k` is fully deterministic: identical inputs
+/// and seed must produce bit-for-bit identical outputs on every call.
+///
+/// Two separate concerns are tested:
+/// A. Seed regression — same seed produces identical (k, radius, id_est).
+/// B. Cluster sensitivity — the returned k reflects the known cluster structure.
+///
+/// Dataset design: 20 points in 2D split into two tight, well-separated clusters.
+/// n=20 opens a meaningful k search range (k_min=2, k_max=4), unlike n=4 where
+/// n/10=0 collapses kmin==kmax and Calinski-Harabasz is never evaluated.
 #[test]
-#[serial]
 fn test_consistent_results_with_seed() {
-    let rows = vec![
-        vec![0.0, 0.0],
-        vec![0.1, 0.1],
-        vec![5.0, 5.0],
-        vec![5.1, 5.1],
-    ];
+    // Two tight clusters: {0.0..0.9} × {0.0..0.9} and {5.0..5.9} × {5.0..5.9}
+    // Separation >> intra-cluster spread → CH index strongly prefers k=2.
+    let cluster_a: Vec<Vec<f64>> = (0..10)
+        .map(|i| vec![i as f64 * 0.1, i as f64 * 0.1])
+        .collect();
+    let cluster_b: Vec<Vec<f64>> = (0..10)
+        .map(|i| vec![5.0 + i as f64 * 0.1, 5.0 + i as f64 * 0.1])
+        .collect();
+    let rows: Vec<Vec<f64>> = cluster_a.into_iter().chain(cluster_b).collect();
 
+    let n = rows.len(); // 20
+    let f = rows[0].len(); // 2
+
+    // k_min = max(ceil(sqrt(20/10.0)), 2) = max(2, 2) = 2
+    // k_max candidates: f*2=4, n/10=2, sqrt(n)≈4, 5*id_est
+    // → effective range [2, 4], Calinski-Harabasz is evaluated
     let builder = ArrowSpaceBuilder::new();
-    let (k1, radius_1, id1) = builder.compute_optimal_k(&rows, 4, 2, None, 42);
-    let (k2, radius_2, id2) = builder.compute_optimal_k(&rows, 4, 2, None, 42);
 
-    assert_eq!(k1, k2, "K should be consistent");
-    assert!(
-        (radius_1 - radius_2).abs() < radius_1 * 0.5,
-        "radius should be similar"
+    // --- A: Determinism — same seed must yield bit-identical results ---
+    let (k1, radius_1, id1) = builder.compute_optimal_k(&rows, n, f, None, 42);
+    let (k2, radius_2, id2) = builder.compute_optimal_k(&rows, n, f, None, 42);
+
+    assert_eq!(k1, k2, "k must be identical across runs with the same seed");
+    assert_eq!(
+        radius_1, radius_2,
+        "radius must be bit-identical across runs — \
+         compute_threshold_from_pilot is deterministic with same seed"
     );
-    assert_eq!(id1, id2, "ID should be consistent");
+    assert_eq!(
+        id1, id2,
+        "id_est must be identical across runs — \
+         Two-NN uses a seeded RNG"
+    );
+
+    // --- B: Different seeds must produce the same k on well-separated data ---
+    // The CH index is dominated by between-cluster variance here.
+    // k=2 should win regardless of which random trials are used.
+    let (k3, _, _) = builder.compute_optimal_k(&rows, n, f, None, 99);
+    assert_eq!(
+        k1, k3,
+        "k should be seed-stable on clearly separable data (got k={k1} vs k={k3})"
+    );
+
+    // --- C: Structural sanity ---
+    // With two obvious clusters in 2D, k=2 is the expected optimum.
+    assert_eq!(
+        k1, 2,
+        "k should be 2 for a dataset with two well-separated clusters"
+    );
+
+    // radius must be positive and finite — it drives the incremental clustering threshold
+    assert!(
+        radius_1 > 0.0 && radius_1.is_finite(),
+        "radius must be positive and finite (got {radius_1})"
+    );
+
+    // id_est on n=20, f=2: Two-NN on 2D data returns 1 or 2
+    assert!(
+        id1 >= 1 && id1 <= f,
+        "id_est={id1} should be in [1, f={f}] for 2D data"
+    );
+
+    println!("✓ Determinism verified (n={n}, f={f}): k={k1}, radius={radius_1:.6}, id_est={id1}");
 }
 
 // -------------------- Documentation example test --------------------
