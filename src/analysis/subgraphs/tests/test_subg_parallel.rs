@@ -53,42 +53,20 @@ fn test_recluster_centroids_deterministic() {
     }
 }
 
-/// Verifies that `spot_subg_motives` produces consistent results across repeated calls.
+/// Verifies that `spot_subg_motives` is fully deterministic across repeated calls.
 ///
-/// ## Root cause of non-determinism
+/// ## Non-determinism sources (fixed in spot_motives_energy):
 ///
-/// `spot_motives_energy` runs greedy expansion in parallel (step 4 via `par_iter`),
-/// then feeds the results into a sequential Jaccard dedup pass (step 5) in
-/// whatever order Rayon delivers them. Because `HashSet` iteration is unordered,
-/// two runs can produce the same logical motifs but evict different sets during
-/// dedup, changing the final count.
+/// 1. **Step 4 — greedy tie-breaking**: when two candidates share the same
+///    triangle-gain score, `best_u` was set by whichever node `HashSet`
+///    iteration happened to yield last. Fix: iterate candidates in sorted order.
 ///
-/// ## What this test does
+/// 2. **Step 7 — item dedup input order**: `item_sets` was produced by
+///    `sc_results.par_iter()`, whose delivery order varies between runs.
+///    The sequential Jaccard dedup then evicted different items on tie.
+///    Fix: collect to sorted `Vec<Vec<usize>>` before dedup.
 ///
-/// Rather than asserting bit-identical output (which the current implementation
-/// cannot guarantee), it asserts the weaker but still meaningful invariants
-/// that *must* hold regardless of ordering:
-///   1. The union of all returned node-index sets is stable across runs.
-///   2. Every individual subgraph passes structural invariants on both runs.
-///   3. No subgraph is duplicated within a single run (Jaccard dedup is working).
-///
-/// ## Fix required in production code
-///
-/// To achieve full determinism, step 5 in `spot_motives_energy` must sort
-/// `expansions` before the dedup pass, e.g.:
-///
-/// ```rust
-/// // After collecting expansions, before dedup:
-/// let mut sorted_expansions: Vec<Vec<usize>> = expansions
-///     .into_iter()
-///     .flatten()
-///     .map(|mut s| { let mut v: Vec<usize> = s.into_iter().collect(); v.sort_unstable(); v })
-///     .collect();
-/// sorted_expansions.sort_unstable();
-/// ```
-///
-/// Once that fix is applied, the `assert_eq!(count1, count2)` below will pass
-/// reliably and the `known_non_determinism` flag can be removed.
+/// After both fixes, this test must pass on every run with no flakiness.
 #[test]
 fn test_motif_subgraphs_parallel_correctness() {
     crate::init();
@@ -115,23 +93,22 @@ fn test_motif_subgraphs_parallel_correctness() {
     let subgraphs1 = gl.spot_subg_motives(&aspace, &cfg);
     let subgraphs2 = gl.spot_subg_motives(&aspace, &cfg);
 
-    // --- Structural invariants: must hold on every run independently ---
+    // --- Structural invariants: must hold independently on each run ---
+    let f_parent = gl.init_data.shape().0;
     for (run, subgraphs) in [&subgraphs1, &subgraphs2].iter().enumerate() {
-        let fparent = gl.init_data.shape().0;
-
         for (i, sg) in subgraphs.iter().enumerate() {
-            let (fsg, xcentroids) = sg.laplacian.init_data.shape();
+            let (f_sg, x_centroids) = sg.laplacian.init_data.shape();
             assert_eq!(
-                fsg, fparent,
+                f_sg, f_parent,
                 "run={run} sg={i}: feature dim must match parent"
             );
             assert_eq!(
-                sg.laplacian.nnodes, xcentroids,
+                sg.laplacian.nnodes, x_centroids,
                 "run={run} sg={i}: nnodes must equal initdata column count"
             );
             assert_eq!(
                 sg.node_indices.len(),
-                xcentroids,
+                x_centroids,
                 "run={run} sg={i}: node_indices length must equal nnodes"
             );
             assert!(
@@ -140,74 +117,40 @@ fn test_motif_subgraphs_parallel_correctness() {
             );
             assert!(
                 sg.laplacian.nnodes >= 2,
-                "run={run} sg={i}: subgraph must have at least 2 centroids for a graph"
+                "run={run} sg={i}: subgraph needs at least 2 centroids"
             );
         }
-
-        // No two subgraphs within a single run should be near-duplicates —
-        // the Jaccard dedup pass is supposed to prevent this.
-        let mut seen: Vec<Vec<usize>> = Vec::new();
-        for sg in subgraphs.iter() {
-            let mut v = sg.node_indices.clone();
-            v.sort_unstable();
-            for prev in &seen {
-                let inter = prev.iter().filter(|x| v.contains(x)).count();
-                let union = prev.len() + v.len() - inter;
-                let jaccard = if union == 0 {
-                    0.0
-                } else {
-                    inter as f64 / union as f64
-                };
-                assert!(
-                    jaccard < cfg.motives.jaccard_dedup,
-                    "run={run}: duplicate subgraphs found (Jaccard={jaccard:.3} >= threshold={:.3})",
-                    cfg.motives.jaccard_dedup
-                );
-            }
-            seen.push(v);
-        }
     }
 
-    // --- Union stability: the set of all node-index sets must be the same ---
-    // This is the correct cross-run check: ordering may differ but content must not.
-    // TODO: remove the `allow` comment once spot_motives_energy sorts expansions
-    //       before the dedup pass (see doc comment above for the required fix).
-    let mut union1: Vec<Vec<usize>> = subgraphs1
-        .iter()
-        .map(|sg| {
-            let mut v = sg.node_indices.clone();
-            v.sort_unstable();
-            v
-        })
-        .collect();
-    let mut union2: Vec<Vec<usize>> = subgraphs2
-        .iter()
-        .map(|sg| {
-            let mut v = sg.node_indices.clone();
-            v.sort_unstable();
-            v
-        })
-        .collect();
-    union1.sort_unstable();
-    union2.sort_unstable();
+    // --- Full determinism: count, content and order must be identical ---
+    assert_eq!(
+        subgraphs1.len(),
+        subgraphs2.len(),
+        "run1={} subgraphs vs run2={} — non-determinism detected",
+        subgraphs1.len(),
+        subgraphs2.len()
+    );
 
-    // This assertion documents the known non-determinism and will start
-    // passing once the production fix is applied.
-    if union1 != union2 {
-        // Acceptable until spot_motives_energy sorts expansions pre-dedup.
-        // Log the divergence so it's visible in CI without failing the suite.
-        debug!(
-            "KNOWN NON-DETERMINISM: run1={} subgraphs, run2={} subgraphs — \
-             union sets differ. Fix: sort expansions before Jaccard dedup in spot_motives_energy.",
-            subgraphs1.len(),
-            subgraphs2.len()
+    for (i, (sg1, sg2)) in subgraphs1.iter().zip(subgraphs2.iter()).enumerate() {
+        assert_eq!(
+            sg1.node_indices, sg2.node_indices,
+            "sg={i}: node_indices differ between runs"
         );
-    } else {
-        println!(
-            "✓ Full determinism confirmed: {} subgraphs, union sets identical",
-            subgraphs1.len()
+        assert_eq!(
+            sg1.laplacian.nnodes, sg2.laplacian.nnodes,
+            "sg={i}: nnodes differs between runs"
+        );
+        // item_indices content must also match (both sorted in production fix)
+        assert_eq!(
+            sg1.item_indices, sg2.item_indices,
+            "sg={i}: item_indices differ between runs"
         );
     }
+
+    println!(
+        "✓ Determinism confirmed: {} subgraphs, all node/item indices identical",
+        subgraphs1.len()
+    );
 }
 
 /// Test that centroid hierarchy is deterministic with parallelization.
