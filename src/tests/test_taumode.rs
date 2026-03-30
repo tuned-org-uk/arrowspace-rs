@@ -1,6 +1,6 @@
 use crate::{
     builder::ArrowSpaceBuilder,
-    energymaps::{EnergyMaps, EnergyMapsBuilder, EnergyParams},
+    maps::energymaps::{EnergyMaps, EnergyMapsBuilder, EnergyParams},
     search::taumode::{TAU_FLOOR, TauMode},
     tests::test_data::{make_gaussian_blob, make_moons_hd},
 };
@@ -570,7 +570,7 @@ fn test_taumode_consistency_with_projection() {
 #[test]
 fn test_taumode_energy_consistency_with_projection() {
     crate::init();
-    use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
+    use crate::maps::energymaps::{EnergyMapsBuilder, EnergyParams};
 
     // Generate larger test dataset (100 items × 50 features)
     let rows = crate::tests::test_data::make_moons_hd(99, 0.2, 0.08, 50, 42);

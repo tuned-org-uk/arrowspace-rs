@@ -19,10 +19,10 @@ use crate::clustering::{
     ClusteredOutput, ClusteringHeuristic, run_incremental_clustering_with_sampling,
 };
 use crate::core::{ArrowSpace, TAUDEFAULT};
-use crate::eigenmaps::EigenMaps;
-use crate::energymaps::EnergyMaps;
-use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::graph::GraphLaplacian;
+use crate::maps::eigenmaps::EigenMaps;
+use crate::maps::energymaps::EnergyMaps;
+use crate::maps::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::reduction::{ImplicitProjection, compute_jl_dimension};
 use crate::sampling::{InlineSampler, SamplerType};
 use crate::search::taumode::TauMode;

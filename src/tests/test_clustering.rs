@@ -11,11 +11,10 @@
 use crate::{
     builder::ArrowSpaceBuilder,
     clustering::{ClusteringHeuristic, euclidean_dist, kmeans_lloyd, nearest_centroid},
-    tests::test_data::make_gaussian_blob,
+    tests::{CLUSTERING_TEST_DATA, test_data::make_gaussian_blob},
 };
 
 use log::debug;
-use rand::Rng;
 use serial_test::serial;
 
 // -------------------- Helper function tests --------------------
@@ -832,23 +831,14 @@ use crate::search::taumode::TauMode;
 /// Test that with_cluster_max_clusters correctly overrides the automatic heuristic
 #[test]
 fn test_with_cluster_max_clusters_override() {
-    // Create a synthetic dataset: 500 items × 50 features
-    let n_items = 500;
-    let n_features = 50;
-    let mut rng = rand::rng();
-
-    let rows: Vec<Vec<f64>> = (0..n_items)
-        .map(|_| {
-            (0..n_features)
-                .map(|_| rng.random_range(0.0..1.0))
-                .collect()
-        })
-        .collect();
+    let rows = &*CLUSTERING_TEST_DATA;
 
     // Build 1: Let heuristic decide K (should be ~20-30 for N=500)
     let builder_auto = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.5, 10, 5, 2.0, None)
-        .with_synthesis(TauMode::Median);
+        .with_synthesis(TauMode::Median)
+        .with_dims_reduction(false, None)
+        .with_inline_sampling(None);
 
     let (aspace_auto, _gl_auto) = builder_auto.build(rows.clone());
     let k_auto = aspace_auto.n_clusters;
@@ -857,8 +847,8 @@ fn test_with_cluster_max_clusters_override() {
     let builder_manual = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.5, 10, 5, 2.0, None)
         .with_synthesis(TauMode::Median)
-        .with_cluster_max_clusters(100) // Force manual override
-        .with_cluster_radius(0.8);
+        .with_cluster_max_clusters(3) // Force manual override
+        .with_cluster_radius(0.4);
 
     let (aspace_manual, _gl_manual) = builder_manual.build(rows.clone());
     let k_manual = aspace_manual.n_clusters;
@@ -867,14 +857,14 @@ fn test_with_cluster_max_clusters_override() {
     println!("Automatic K: {}, Manual K: {}", k_auto, k_manual);
 
     assert!(
-        k_auto < 50,
+        k_auto < 10,
         "Heuristic should produce modest cluster count (got {})",
         k_auto
     );
 
     assert_eq!(
-        k_manual, 100,
-        "Manual override should produce exactly 100 clusters (got {})",
+        k_manual, 3,
+        "Manual override should produce exactly 3 clusters (got {})",
         k_manual
     );
 
@@ -927,28 +917,7 @@ fn test_with_cluster_max_clusters_override() {
 /// Test that with_cluster_radius affects clustering tightness
 #[test]
 fn test_with_cluster_radius_tightness() {
-    // Create clustered synthetic data with clear structure
-    let n_clusters_true = 5;
-    let points_per_cluster = 50;
-    let n_features = 20;
-
-    let mut rows: Vec<Vec<f64>> = Vec::new();
-    let mut rng = rand::rng();
-
-    // Generate 5 well-separated clusters
-    for cluster_id in 0..n_clusters_true {
-        let center: Vec<f64> = (0..n_features)
-            .map(|_| (cluster_id as f64) * 5.0 + rng.random_range(-0.2..0.2))
-            .collect();
-
-        for _ in 0..points_per_cluster {
-            let point: Vec<f64> = center
-                .iter()
-                .map(|&c| c + rng.random_range(-0.3..0.3)) // Tight variance
-                .collect();
-            rows.push(point);
-        }
-    }
+    let rows = &*CLUSTERING_TEST_DATA;
 
     // Build 1: Force LOOSE radius AND K
     let builder_loose = ArrowSpaceBuilder::new()
@@ -1010,17 +979,7 @@ fn test_with_cluster_radius_tightness() {
 #[test]
 fn test_dense_mesh_topology() {
     // Simulate a high-dimensional scenario (like Dorothea after projection)
-    let n_items = 200;
-    let n_features = 100;
-    let mut rng = rand::rng();
-
-    let rows: Vec<Vec<f64>> = (0..n_items)
-        .map(|_| {
-            (0..n_features)
-                .map(|_| rng.random_range(0.0..1.0))
-                .collect()
-        })
-        .collect();
+    let rows = &*CLUSTERING_TEST_DATA;
 
     // Configure "Dense Mesh" strategy: many clusters + tight radius
     let target_k = 50; // ~25% of dataset size
@@ -1033,7 +992,7 @@ fn test_dense_mesh_topology() {
         .with_dims_reduction(true, Some(0.2)) // High-fidelity projection
         .with_synthesis(TauMode::Median);
 
-    let (aspace, _gl) = builder.build(rows);
+    let (aspace, _gl) = builder.build(rows.clone());
 
     // Verify configuration was respected
     assert_eq!(
@@ -1093,22 +1052,10 @@ fn test_dense_mesh_topology() {
     );
 }
 
-// Helper to generate synthetic data with controlled properties
-fn generate_test_data(n: usize, f: usize, seed: u64) -> Vec<Vec<f64>> {
-    use rand::SeedableRng;
-    use rand::rngs::StdRng;
-    let mut rng = StdRng::seed_from_u64(seed);
-
-    // Just random noise - 100x faster!
-    (0..n)
-        .map(|_| (0..f).map(|_| rng.random_range(-1.0..1.0)).collect())
-        .collect()
-}
-
 #[test]
 fn test_step1_bounds_with_projection_basic() {
     let builder = ArrowSpaceBuilder::default();
-    let rows = generate_test_data(1000, 100000, 50);
+    let rows = &*CLUSTERING_TEST_DATA;
     let n = rows.len();
     let f = rows[0].len();
     let effective_dim = Some(500); // Projected from 100K to 500D
@@ -1133,10 +1080,9 @@ fn test_step1_bounds_with_projection_basic() {
 
 #[test]
 #[serial]
-#[ignore = "takes long"]
 fn test_step1_bounds_projection_dominates_over_ambient() {
     let builder = ArrowSpaceBuilder::default();
-    let rows = generate_test_data(1000, 100000, 50);
+    let rows = &*CLUSTERING_TEST_DATA;
     let n = rows.len();
     let f = rows[0].len();
 
@@ -1162,10 +1108,9 @@ fn test_step1_bounds_projection_dominates_over_ambient() {
 
 #[test]
 #[serial]
-#[ignore = "takes long"]
 fn test_step1_bounds_small_effective_dim() {
     let builder = ArrowSpaceBuilder::default();
-    let rows = generate_test_data(10000, 10000, 20);
+    let rows = &*CLUSTERING_TEST_DATA;
     let n = rows.len();
     let f = rows[0].len();
     let effective_dim = Some(100); // Aggressive projection to 100D
@@ -1187,7 +1132,7 @@ fn test_step1_bounds_small_effective_dim() {
 #[serial]
 fn test_step1_bounds_effective_dim_smaller_than_id() {
     let builder = ArrowSpaceBuilder::default();
-    let rows = generate_test_data(2000, 5000, 80);
+    let rows = &*CLUSTERING_TEST_DATA;
     let n = rows.len();
     let f = rows[0].len();
     let effective_dim = Some(50); // Projected to LESS than intrinsic dim
@@ -1213,7 +1158,7 @@ fn test_step1_bounds_effective_dim_smaller_than_id() {
 #[serial]
 fn test_step1_bounds_effective_dim_equals_intrinsic() {
     let builder = ArrowSpaceBuilder::default();
-    let rows = generate_test_data(1000, 5000, 60);
+    let rows = &*CLUSTERING_TEST_DATA;
     let n = rows.len();
     let f = rows[0].len();
 
@@ -1239,7 +1184,7 @@ fn test_step1_bounds_effective_dim_equals_intrinsic() {
 #[serial]
 fn test_step1_bounds_tiny_dataset_with_projection() {
     let builder = ArrowSpaceBuilder::default();
-    let rows = generate_test_data(50, 10000, 10);
+    let rows = &*CLUSTERING_TEST_DATA;
     let n = rows.len();
     let f = rows[0].len();
     let effective_dim = Some(100);

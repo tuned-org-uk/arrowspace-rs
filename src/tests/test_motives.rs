@@ -1,6 +1,6 @@
 use crate::analysis::motives::{MotiveConfig, Motives};
 use crate::builder::ArrowSpaceBuilder;
-use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
+use crate::maps::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::tests::test_data::make_gaussian_cliques;
 
 use log::{debug, info};

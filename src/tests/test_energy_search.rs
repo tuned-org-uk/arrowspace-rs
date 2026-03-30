@@ -1,6 +1,6 @@
 use crate::builder::ArrowSpaceBuilder;
 use crate::core::ArrowItem;
-use crate::energymaps::{EnergyMaps, EnergyMapsBuilder, EnergyParams};
+use crate::maps::energymaps::{EnergyMaps, EnergyMapsBuilder, EnergyParams};
 use crate::search::taumode::TauMode;
 use std::collections::HashSet;
 
@@ -47,7 +47,7 @@ fn test_energy_search_basic() {
 #[test]
 fn test_energy_search_single() {
     crate::init();
-    use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
+    use crate::maps::energymaps::{EnergyMapsBuilder, EnergyParams};
 
     // Generate larger test dataset (100 items × 50 features)
     let rows = make_moons_hd(99, 0.2, 0.08, 50, 42);
