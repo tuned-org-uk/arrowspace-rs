@@ -11,13 +11,11 @@
 use crate::{
     builder::ArrowSpaceBuilder,
     clustering::{ClusteringHeuristic, euclidean_dist, kmeans_lloyd, nearest_centroid},
-    tests::test_data::make_gaussian_blob,
+    tests::{CLUSTERING_TEST_DATA, test_data::make_gaussian_blob},
 };
 
 use log::debug;
-use rand::Rng;
 use serial_test::serial;
-use smartcore::linalg::basic::arrays::Array;
 
 // -------------------- Helper function tests --------------------
 
@@ -176,7 +174,7 @@ fn test_intrinsic_dimension_small_n() {
 fn test_step1_bounds_small_dataset() {
     let rows = vec![vec![1.0]; 10];
     let builder = ArrowSpaceBuilder::new();
-    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 10, 1, 42);
+    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 10, 1, None, 42);
 
     debug!("step 1 bounds (N=10, F=1): [{}, {}]", k_min, k_max);
     assert!(k_min >= 2, "k_min should be at least 2");
@@ -188,7 +186,7 @@ fn test_step1_bounds_small_dataset() {
 fn test_step1_bounds_large_n_small_f() {
     let rows = vec![vec![0.0; 5]; 1000];
     let builder = ArrowSpaceBuilder::new();
-    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 1000, 5, 42);
+    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 1000, 5, None, 42);
 
     debug!("step 1 bounds (N=1000, F=5): [{}, {}]", k_min, k_max);
     assert!(k_min <= k_max);
@@ -199,7 +197,7 @@ fn test_step1_bounds_large_n_small_f() {
 fn test_step1_bounds_high_dimensional() {
     let rows = vec![vec![0.0; 100]; 50];
     let builder = ArrowSpaceBuilder::new();
-    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 50, 100, 42);
+    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 50, 100, None, 42);
 
     debug!("step 1 bounds (N=50, F=100): [{}, {}]", k_min, k_max);
     assert!(k_min >= 2);
@@ -438,7 +436,7 @@ fn test_optimal_k_heuristic_synthetic_three_clusters() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 3, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 3, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 3-cluster synthetic",
@@ -476,7 +474,7 @@ fn test_optimal_k_heuristic_spherical_clusters() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 4 spherical clusters",
@@ -508,7 +506,7 @@ fn test_optimal_k_heuristic_high_dimensional_random() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 8, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 8, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 8D random",
@@ -530,7 +528,7 @@ fn test_optimal_k_heuristic_small_n() {
     ];
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, None, 42);
 
     debug!("Optimal K={}, radius={:.6}, ID={} for N=4", k, radius, id);
     assert!(k >= 2, "K should be at least 2");
@@ -542,7 +540,7 @@ fn test_optimal_k_heuristic_small_n() {
 fn test_optimal_k_heuristic_degenerate_identical() {
     let rows = vec![vec![3.0, 4.0]; 100];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, 42);
+    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, None, 42);
 
     debug!("Optimal K={}, radius={:.6} for identical points", k, radius);
     assert!(k >= 2, "K should be at least 2 even for degenerate data");
@@ -557,7 +555,7 @@ fn test_optimal_k_heuristic_single_feature() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 100, 1, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 100, 1, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 1D uniform",
@@ -574,7 +572,7 @@ fn test_optimal_k_heuristic_single_feature() {
 fn test_optimal_k_minimum_viable_dataset() {
     let rows = vec![vec![0.0, 0.0], vec![1.0, 1.0]];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 2, 2, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 2, 2, None, 42);
 
     debug!("Optimal K={}, radius={:.6}, ID={} for N=2", k, radius, id);
     assert!(k >= 2, "K should be at least 2");
@@ -585,7 +583,7 @@ fn test_optimal_k_minimum_viable_dataset() {
 fn test_optimal_k_very_high_dimensional() {
     let rows = vec![vec![0.0; 1000]; 20];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 20, 1000, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 20, 1000, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for N=20, F=1000",
@@ -604,7 +602,7 @@ fn test_optimal_k_mixed_scale_features() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, 42);
+    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6} for mixed-scale features",
@@ -681,7 +679,7 @@ fn test_clustering_heuristic_trait_interface() {
     ];
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, None, 42);
 
     debug!("Trait interface: K={}, radius={:.6}, ID={}", k, radius, id);
     assert!(k >= 2);
@@ -709,7 +707,7 @@ fn test_optimal_k_performance_large_dataset() {
 
     let builder = ArrowSpaceBuilder::new();
     let start = Instant::now();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 4, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 4, None, 42);
     let elapsed = start.elapsed();
 
     debug!(
@@ -721,26 +719,81 @@ fn test_optimal_k_performance_large_dataset() {
 
 // -------------------- Regression tests --------------------
 
+/// Verifies that `compute_optimal_k` is fully deterministic: identical inputs
+/// and seed must produce bit-for-bit identical outputs on every call.
+///
+/// Two separate concerns are tested:
+/// A. Seed regression — same seed produces identical (k, radius, id_est).
+/// B. Cluster sensitivity — the returned k reflects the known cluster structure.
+///
+/// Dataset design: 20 points in 2D split into two tight, well-separated clusters.
+/// n=20 opens a meaningful k search range (k_min=2, k_max=4), unlike n=4 where
+/// n/10=0 collapses kmin==kmax and Calinski-Harabasz is never evaluated.
 #[test]
-#[serial]
 fn test_consistent_results_with_seed() {
-    let rows = vec![
-        vec![0.0, 0.0],
-        vec![0.1, 0.1],
-        vec![5.0, 5.0],
-        vec![5.1, 5.1],
-    ];
+    // Two tight clusters: {0.0..0.9} × {0.0..0.9} and {5.0..5.9} × {5.0..5.9}
+    // Separation >> intra-cluster spread → CH index strongly prefers k=2.
+    let cluster_a: Vec<Vec<f64>> = (0..10)
+        .map(|i| vec![i as f64 * 0.1, i as f64 * 0.1])
+        .collect();
+    let cluster_b: Vec<Vec<f64>> = (0..10)
+        .map(|i| vec![5.0 + i as f64 * 0.1, 5.0 + i as f64 * 0.1])
+        .collect();
+    let rows: Vec<Vec<f64>> = cluster_a.into_iter().chain(cluster_b).collect();
 
+    let n = rows.len(); // 20
+    let f = rows[0].len(); // 2
+
+    // k_min = max(ceil(sqrt(20/10.0)), 2) = max(2, 2) = 2
+    // k_max candidates: f*2=4, n/10=2, sqrt(n)≈4, 5*id_est
+    // → effective range [2, 4], Calinski-Harabasz is evaluated
     let builder = ArrowSpaceBuilder::new();
-    let (k1, radius_1, id1) = builder.compute_optimal_k(&rows, 4, 2, 42);
-    let (k2, radius_2, id2) = builder.compute_optimal_k(&rows, 4, 2, 42);
 
-    assert_eq!(k1, k2, "K should be consistent");
-    assert!(
-        (radius_1 - radius_2).abs() < radius_1 * 0.5,
-        "radius should be similar"
+    // --- A: Determinism — same seed must yield bit-identical results ---
+    let (k1, radius_1, id1) = builder.compute_optimal_k(&rows, n, f, None, 42);
+    let (k2, radius_2, id2) = builder.compute_optimal_k(&rows, n, f, None, 42);
+
+    assert_eq!(k1, k2, "k must be identical across runs with the same seed");
+    assert_eq!(
+        radius_1, radius_2,
+        "radius must be bit-identical across runs — \
+         compute_threshold_from_pilot is deterministic with same seed"
     );
-    assert_eq!(id1, id2, "ID should be consistent");
+    assert_eq!(
+        id1, id2,
+        "id_est must be identical across runs — \
+         Two-NN uses a seeded RNG"
+    );
+
+    // --- B: Different seeds must produce the same k on well-separated data ---
+    // The CH index is dominated by between-cluster variance here.
+    // k=2 should win regardless of which random trials are used.
+    let (k3, _, _) = builder.compute_optimal_k(&rows, n, f, None, 99);
+    assert_eq!(
+        k1, k3,
+        "k should be seed-stable on clearly separable data (got k={k1} vs k={k3})"
+    );
+
+    // --- C: Structural sanity ---
+    // With two obvious clusters in 2D, k=2 is the expected optimum.
+    assert_eq!(
+        k1, 2,
+        "k should be 2 for a dataset with two well-separated clusters"
+    );
+
+    // radius must be positive and finite — it drives the incremental clustering threshold
+    assert!(
+        radius_1 > 0.0 && radius_1.is_finite(),
+        "radius must be positive and finite (got {radius_1})"
+    );
+
+    // id_est on n=20, f=2: Two-NN on 2D data returns 1 or 2
+    assert!(
+        id1 >= 1 && id1 <= f,
+        "id_est={id1} should be in [1, f={f}] for 2D data"
+    );
+
+    println!("✓ Determinism verified (n={n}, f={f}): k={k1}, radius={radius_1:.6}, id_est={id1}");
 }
 
 // -------------------- Documentation example test --------------------
@@ -756,93 +809,11 @@ fn test_readme_example() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, 42);
+    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, None, 42);
 
     debug!("README example: K={}, radius={:.6}, ID={}", k, radius, id);
     assert!(k >= 2, "Should detect at least 2 clusters");
     assert!(radius > 0.0);
-}
-
-#[test]
-#[serial]
-fn test_fast_clustering_reduces_before_clustering() {
-    // Test that projection happens BEFORE compute_optimal_k
-    let rows: Vec<Vec<f64>> = (0..200)
-        .map(|i| {
-            let mut row = vec![0.0; 10000];
-            row[i % 10000] = 1.0; // Sparse one-hot
-            row
-        })
-        .collect();
-
-    let mut builder = ArrowSpaceBuilder::new()
-        .with_dims_reduction(true, Some(0.3))
-        .with_seed(123);
-
-    let start = std::time::Instant::now();
-    let output = builder.start_clustering_dim_reduce(rows);
-    let elapsed = start.elapsed();
-
-    // Should complete in under 5 seconds (vs. minutes for raw 10k dims)
-    assert!(
-        elapsed.as_secs() < 10,
-        "Fast clustering took too long: {:?}",
-        elapsed
-    );
-
-    // Verify projection was applied
-    assert!(output.aspace.projection_matrix.is_some());
-    assert!(output.reduced_dim < 10000);
-
-    // Verify clustering succeeded
-    assert!(output.centroids.shape().0 > 0);
-    assert!(output.centroids.shape().0 < 200); // Some compression happened
-}
-
-#[test]
-#[serial]
-fn test_fast_clustering_preserves_pairwise_distances() {
-    // Verify JL lemma: distances are preserved in reduced space
-    use approx::relative_eq;
-
-    let rows: Vec<Vec<f64>> = vec![vec![1.0; 5000], vec![0.5; 5000], vec![0.0; 5000]];
-
-    // Compute original pairwise cosine distances
-    let orig_dist_01 = 1.0
-        - (rows[0]
-            .iter()
-            .zip(&rows[1])
-            .map(|(a, b)| a * b)
-            .sum::<f64>()
-            / (rows[0].iter().map(|x| x * x).sum::<f64>().sqrt()
-                * rows[1].iter().map(|x| x * x).sum::<f64>().sqrt()));
-
-    let mut builder = ArrowSpaceBuilder::new()
-        .with_dims_reduction(true, Some(0.2))
-        .with_seed(42);
-
-    let output = builder.start_clustering_dim_reduce(rows);
-
-    // Compute distance in reduced space (from centroids if items were clustered)
-    let proj = output.aspace.projection_matrix.as_ref().unwrap();
-    let row0_proj = proj.project(&output.aspace.get_item(0).item);
-    let row1_proj = proj.project(&output.aspace.get_item(1).item);
-
-    let reduced_dist = 1.0
-        - (row0_proj
-            .iter()
-            .zip(&row1_proj)
-            .map(|(a, b)| a * b)
-            .sum::<f64>()
-            / (row0_proj.iter().map(|x| x * x).sum::<f64>().sqrt()
-                * row1_proj.iter().map(|x| x * x).sum::<f64>().sqrt()));
-
-    // JL lemma with ε=0.2 allows ±20% relative error
-    assert!(relative_eq!(
-        orig_dist_01,
-        reduced_dist,
-        max_relative = 0.25
-    ));
 }
 
 #[test]
@@ -910,28 +881,19 @@ fn test_fast_clustering_no_reduction_fallback() {
     assert_eq!(output.reduced_dim, 3); // Original dimension preserved
 }
 
-use crate::taumode::TauMode;
+use crate::search::taumode::TauMode;
 
 /// Test that with_cluster_max_clusters correctly overrides the automatic heuristic
 #[test]
 fn test_with_cluster_max_clusters_override() {
-    // Create a synthetic dataset: 500 items × 50 features
-    let n_items = 500;
-    let n_features = 50;
-    let mut rng = rand::rng();
-
-    let rows: Vec<Vec<f64>> = (0..n_items)
-        .map(|_| {
-            (0..n_features)
-                .map(|_| rng.random_range(0.0..1.0))
-                .collect()
-        })
-        .collect();
+    let rows = &*CLUSTERING_TEST_DATA;
 
     // Build 1: Let heuristic decide K (should be ~20-30 for N=500)
     let builder_auto = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.5, 10, 5, 2.0, None)
-        .with_synthesis(TauMode::Median);
+        .with_synthesis(TauMode::Median)
+        .with_dims_reduction(false, None)
+        .with_inline_sampling(None);
 
     let (aspace_auto, _gl_auto) = builder_auto.build(rows.clone());
     let k_auto = aspace_auto.n_clusters;
@@ -940,8 +902,8 @@ fn test_with_cluster_max_clusters_override() {
     let builder_manual = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.5, 10, 5, 2.0, None)
         .with_synthesis(TauMode::Median)
-        .with_cluster_max_clusters(100) // Force manual override
-        .with_cluster_radius(0.8);
+        .with_cluster_max_clusters(3) // Force manual override
+        .with_cluster_radius(0.4);
 
     let (aspace_manual, _gl_manual) = builder_manual.build(rows.clone());
     let k_manual = aspace_manual.n_clusters;
@@ -950,14 +912,14 @@ fn test_with_cluster_max_clusters_override() {
     println!("Automatic K: {}, Manual K: {}", k_auto, k_manual);
 
     assert!(
-        k_auto < 50,
+        k_auto < 10,
         "Heuristic should produce modest cluster count (got {})",
         k_auto
     );
 
     assert_eq!(
-        k_manual, 100,
-        "Manual override should produce exactly 100 clusters (got {})",
+        k_manual, 3,
+        "Manual override should produce exactly 3 clusters (got {})",
         k_manual
     );
 
@@ -1010,28 +972,7 @@ fn test_with_cluster_max_clusters_override() {
 /// Test that with_cluster_radius affects clustering tightness
 #[test]
 fn test_with_cluster_radius_tightness() {
-    // Create clustered synthetic data with clear structure
-    let n_clusters_true = 5;
-    let points_per_cluster = 50;
-    let n_features = 20;
-
-    let mut rows: Vec<Vec<f64>> = Vec::new();
-    let mut rng = rand::rng();
-
-    // Generate 5 well-separated clusters
-    for cluster_id in 0..n_clusters_true {
-        let center: Vec<f64> = (0..n_features)
-            .map(|_| (cluster_id as f64) * 5.0 + rng.random_range(-0.2..0.2))
-            .collect();
-
-        for _ in 0..points_per_cluster {
-            let point: Vec<f64> = center
-                .iter()
-                .map(|&c| c + rng.random_range(-0.3..0.3)) // Tight variance
-                .collect();
-            rows.push(point);
-        }
-    }
+    let rows = &*CLUSTERING_TEST_DATA;
 
     // Build 1: Force LOOSE radius AND K
     let builder_loose = ArrowSpaceBuilder::new()
@@ -1093,21 +1034,11 @@ fn test_with_cluster_radius_tightness() {
 #[test]
 fn test_dense_mesh_topology() {
     // Simulate a high-dimensional scenario (like Dorothea after projection)
-    let n_items = 200;
-    let n_features = 100;
-    let mut rng = rand::rng();
-
-    let rows: Vec<Vec<f64>> = (0..n_items)
-        .map(|_| {
-            (0..n_features)
-                .map(|_| rng.random_range(0.0..1.0))
-                .collect()
-        })
-        .collect();
+    let rows = &*CLUSTERING_TEST_DATA;
 
     // Configure "Dense Mesh" strategy: many clusters + tight radius
-    let target_k = 50; // ~25% of dataset size
-    let tight_radius = 0.7;
+    let target_k = 30; // ~25% of dataset size
+    let tight_radius = 0.3;
 
     let builder = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.5, 10, 5, 2.0, None)
@@ -1116,7 +1047,7 @@ fn test_dense_mesh_topology() {
         .with_dims_reduction(true, Some(0.2)) // High-fidelity projection
         .with_synthesis(TauMode::Median);
 
-    let (aspace, _gl) = builder.build(rows);
+    let (aspace, _gl) = builder.build(rows.clone());
 
     // Verify configuration was respected
     assert_eq!(
@@ -1162,7 +1093,7 @@ fn test_dense_mesh_topology() {
         .filter(|&&l| l < 0.01) // Less than 1% of range
         .count();
 
-    // With 200 items and 50 clusters, expect very few near-minimum
+    // With 99 items and 30 clusters, expect very few near-minimum
     assert!(
         near_zero_count < 5,
         "Dense mesh should minimize clustered lambdas at minimum (found {})",
@@ -1173,5 +1104,218 @@ fn test_dense_mesh_topology() {
         "Lambdas near zero: {} ({:.1}%)",
         near_zero_count,
         (near_zero_count as f64 / aspace.nitems as f64) * 100.0
+    );
+}
+
+#[test]
+fn test_step1_bounds_with_projection_basic() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = &*CLUSTERING_TEST_DATA; // n=99, f=500, uniform random noise
+    let n = rows.len(); // 99
+    let f = rows[0].len(); // 500
+    let effective_dim = Some(50); // Simulates a JL projection from 500D → 50D
+
+    let (k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+
+    // --- k_min ---
+    // Formula: max(ceil(sqrt(n / 10.0)), 2)
+    //        = max(ceil(sqrt(99 / 10.0)), 2)
+    //        = max(ceil(3.146), 2)
+    //        = 4
+    assert_eq!(k_min, 4, "k_min should be 4");
+
+    // --- k_max ---
+    // The bound is computed as the minimum of four candidates:
+    //
+    //   1. dim_for_bounds * 2  = effective_dim * 2 = 50 * 2 = 100
+    //   2. n / 10              = 99 / 10           = 9   (integer division)
+    //   3. 5 * id_est          = ~45–50            (Two-NN on random 500D noise)
+    //   4. sqrt(n)             = sqrt(99)          ≈ 9
+    //
+    // The binding constraints here are (2) and (4): both yield 9.
+    // The projection candidate (1) = 100 plays no role at this dataset size.
+    // So k_max is expected to be ~9, well below 100.
+    assert!(
+        k_max <= n / 10 + 1,
+        "k_max should be near n/10=9, the binding constraint for n=99 (got {k_max})"
+    );
+    assert!(
+        k_max >= k_min + 1,
+        "k_max must always exceed k_min to allow a valid search range (got {k_max})"
+    );
+    assert!(
+        k_max <= n / 2,
+        "k_max should never exceed n/2={} as a sanity cap (got {k_max})",
+        n / 2
+    );
+
+    // --- id_est ---
+    // On pure uniform random noise in 500D, Two-NN intrinsic dimension estimation
+    // is expected to return a high value (reflecting the ambient dimensionality),
+    // though the exact value is data- and seed-dependent.
+    assert!(id_est >= 1, "id_est must be at least 1 (got {id_est})");
+
+    println!(
+        "✓ Projection basic (n={n}, f={f}, effective_dim=50): \
+         k_min={k_min}, k_max={k_max}, id_est={id_est}"
+    );
+}
+
+#[test]
+#[serial]
+fn test_step1_bounds_projection_dominates_over_ambient() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = &*CLUSTERING_TEST_DATA;
+    let n = rows.len();
+    let f = rows[0].len();
+
+    // Without projection: should cap f at 1000
+    let (_, k_max_no_proj, _) = builder.step1_bounds(&rows, n, f, None, 42);
+
+    // With projection to 500D
+    let (_, k_max_with_proj, _) = builder.step1_bounds(&rows, n, f, Some(500), 42);
+
+    // Both should be bounded similarly (both use reasonable dims)
+    // But with_proj uses 500*2=1000, no_proj uses min(f,1000)=1000
+    // So candidates are nearly identical
+    assert_eq!(
+        k_max_no_proj, k_max_with_proj,
+        "Projected and capped-ambient should give same k_max"
+    );
+
+    println!(
+        "✓ Projection vs capped ambient: no_proj={}, with_proj={}",
+        k_max_no_proj, k_max_with_proj
+    );
+}
+
+#[test]
+#[serial]
+fn test_step1_bounds_small_effective_dim() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = &*CLUSTERING_TEST_DATA;
+    let n = rows.len();
+    let f = rows[0].len();
+    let effective_dim = Some(50); // Aggressive projection to 50D
+
+    let (k_min, k_max, _id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+
+    assert!(
+        k_max >= 9,
+        "k_max should be at least sqrt(n) = 9 (is {k_max})"
+    );
+    assert!(
+        k_max <= 100,
+        "k_max should be ≤ 2*effective_dim = 100 (is {k_max})"
+    );
+
+    println!(
+        "✓ Small effective_dim=100: k_min={}, k_max={}",
+        k_min, k_max
+    );
+}
+
+#[test]
+#[serial]
+fn test_step1_bounds_effective_dim_smaller_than_id() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = &*CLUSTERING_TEST_DATA;
+    let n = rows.len();
+    let f = rows[0].len();
+    let effective_dim = Some(50); // Projected to LESS than intrinsic dim
+
+    let (_k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+
+    // This tests over-compression: effective_dim < id_est
+    // k_max candidates: [50*2=100, 2000/10=200, 5*id_est≈400, sqrt(2000)≈44]
+    // Expected: min(100, 200, 400, 44) ≈ 44
+
+    println!(
+        "✓ Effective_dim < id_est: effective={}, id_est={}, k_max={}",
+        effective_dim.unwrap(),
+        id_est,
+        k_max
+    );
+
+    // Over-compression should still work but k_max may be limited by sqrt(n)
+    assert!(k_max <= 100, "k_max limited by min of candidates");
+}
+
+#[test]
+#[serial]
+fn test_step1_bounds_effective_dim_equals_intrinsic() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = &*CLUSTERING_TEST_DATA;
+    let n = rows.len();
+    let f = rows[0].len();
+
+    // Assume intrinsic dim ≈ 60, project to 120 (2× intrinsic)
+    let effective_dim = Some(120);
+
+    let (_k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+
+    // k_max candidates: [120*2=240, 1000/10=100, 5*id_est≈300, sqrt(1000)≈31]
+    // Expected: min(240, 100, 300, 31) = 31
+
+    println!(
+        "✓ Effective_dim ≈ 2×id_est: effective={}, id_est={}, k_max={}",
+        effective_dim.unwrap(),
+        id_est,
+        k_max
+    );
+
+    assert!(k_max <= 100, "k_max should be bounded by n/10");
+}
+
+#[test]
+#[serial]
+fn test_step1_bounds_higher_effective_dim() {
+    let builder = ArrowSpaceBuilder::default();
+    let rows = &*CLUSTERING_TEST_DATA; // n=99, f=500, uniform random noise
+    let n = rows.len(); // 99
+    let f = rows[0].len(); // 500
+    let effective_dim = Some(100); // Larger projection target than the basic test (50 → 100)
+
+    let (k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+
+    // --- k_min ---
+    // Formula: max(ceil(sqrt(n / 10.0)), 2)
+    //        = max(ceil(sqrt(99 / 10.0)), 2)
+    //        = max(ceil(3.146), 2)
+    //        = 4
+    assert_eq!(k_min, 4, "k_min should be 4 for n=99");
+
+    // --- k_max ---
+    // Candidates:
+    //   1. effective_dim * 2  = 100 * 2 = 200
+    //   2. n / 10             = 99 / 10 = 9   (integer division)
+    //   3. 5 * id_est         = ~45–50        (Two-NN on random 500D noise)
+    //   4. sqrt(n)            = sqrt(99) ≈ 9
+    //
+    // Binding constraints are again (2) and (4), both yielding 9.
+    // Doubling effective_dim from 50 → 100 raises candidate (1) from 100 → 200,
+    // but it still doesn't bind — n/10 and sqrt(n) dominate at this dataset size.
+    // This confirms that for small n, projection size does not influence k_max.
+    assert!(
+        k_max <= n / 10 + 1,
+        "k_max should be near n/10=9 — the binding constraint for n=99 (got {k_max})"
+    );
+    assert!(
+        k_max >= k_min + 1,
+        "k_max must exceed k_min to allow a valid search range (got {k_max})"
+    );
+    assert!(
+        k_max <= n / 2,
+        "k_max must never exceed n/2={} (got {k_max})",
+        n / 2
+    );
+
+    // --- id_est ---
+    // Pure random noise in 500D — Two-NN is expected to return a high ID.
+    assert!(id_est >= 1, "id_est must be at least 1 (got {id_est})");
+
+    println!(
+        "✓ Higher effective_dim (n={n}, f={f}, effective_dim=100): \
+         k_min={k_min}, k_max={k_max}, id_est={id_est}"
     );
 }

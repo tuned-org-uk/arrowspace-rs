@@ -19,13 +19,13 @@ use crate::clustering::{
     ClusteredOutput, ClusteringHeuristic, run_incremental_clustering_with_sampling,
 };
 use crate::core::{ArrowSpace, TAUDEFAULT};
-use crate::eigenmaps::EigenMaps;
-use crate::energymaps::EnergyMaps;
-use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::graph::GraphLaplacian;
+use crate::maps::eigenmaps::EigenMaps;
+use crate::maps::energymaps::EnergyMaps;
+use crate::maps::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::reduction::{ImplicitProjection, compute_jl_dimension};
 use crate::sampling::{InlineSampler, SamplerType};
-use crate::taumode::TauMode;
+use crate::search::taumode::TauMode;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Pipeline {
@@ -188,6 +188,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                 &rows,
                 n_items,
                 n_features,
+                None,
                 self.clustering_seed.as_ref().unwrap().clone(),
             );
 
@@ -355,7 +356,8 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
             let (k_opt, radius, intrinsic_dim) = self.compute_optimal_k(
                 &working_rows,
                 n_items,
-                reduced_dim,
+                n_features,
+                Some(reduced_dim),
                 self.clustering_seed.as_ref().unwrap().clone(),
             );
             debug!("Heuristic K={}, radius={:.4}", k_opt, radius);
@@ -491,6 +493,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                 &compute,
                 n_items,
                 n_features,
+                None,
                 self.clustering_seed.as_ref().unwrap().clone(),
             );
 

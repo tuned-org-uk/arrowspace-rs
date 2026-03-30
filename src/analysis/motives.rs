@@ -123,7 +123,7 @@ pub trait Motives {
     fn spot_motives_energy(
         &self,
         aspace: &crate::core::ArrowSpace,
-        cfg: &crate::motives::MotiveConfig,
+        cfg: &crate::analysis::motives::MotiveConfig,
     ) -> Vec<Vec<usize>>;
 
     /// Check if a given set of nodes forms a clique in the graph.
@@ -345,48 +345,91 @@ impl Motives for GraphLaplacian {
             clust.iter().cloned().fold(0.0f64, f64::max)
         );
 
-        // 3) Seeds (parallel filter + sort)
+        // 3) Seeds (parallel filter + deterministic sort)
+        //
+        // par_filter output order is scheduler-dependent; par_sort_unstable_by_key
+        // can leave equal-scored seeds in arbitrary relative order because it is
+        // unstable. We finish with a sequential sort_by_key so that seeds with
+        // identical (tri_count, clust) scores always appear in ascending node-index
+        // order, giving the greedy expansion in step 4 a fully reproducible input.
         let mut seeds: Vec<usize> = (0..n_sc)
             .into_par_iter()
             .filter(|&i| tri_count[i] >= cfg.min_triangles && clust[i] >= cfg.min_clust)
             .collect();
-        seeds.par_sort_unstable_by_key(|&i| {
-            std::cmp::Reverse((tri_count[i], (clust[i] * 1e6) as i64))
+
+        // Primary key: triangle count descending + clustering coefficient descending.
+        // Tie-breaker: node index ascending — deterministic across all runs.
+        seeds.sort_by_key(|&i| {
+            (
+                std::cmp::Reverse(tri_count[i]),
+                std::cmp::Reverse((clust[i] * 1e6) as i64),
+                i, // ascending node index breaks all remaining ties
+            )
         });
 
         debug!("Energy motifs seeds (subcentroids): {:?}", seeds);
 
-        // 4) Parallel greedy expansions per seed in subcentroid space
+        // 4) Parallel greedy expansions per seed in subcentroid space.
+        //
+        // Each expansion is independent, so par_iter is safe here.
+        // The two sources of non-determinism fixed below are:
+        //
+        //   a) Candidate frontier built from HashSet iteration:
+        //      `for &u in &seeds_hashset` and `for &v in &neigh_idx[u]` both iterated
+        //      a HashSet, whose order is undefined. Two runs could produce different
+        //      `cand` sets with different insertion orders, affecting which u wins
+        //      when multiple candidates share the same best_gain.
+        //      Fix: collect cand into a sorted Vec before the gain loop.
+        //
+        //   b) Tie-breaking in the gain loop:
+        //      When two candidates share best_gain, `best_u` was last-write-wins
+        //      over HashSet iteration order. After fix (a) the loop is ordered, so
+        //      the first maximum found is always the lowest node index — stable.
         let expansions: Vec<Option<HashSet<usize>>> = seeds
             .par_iter()
             .map(|&s| {
-                let mut seeds_hashset: HashSet<usize> = HashSet::from([s]);
+                // Use a sorted Vec as the working set so `for &u in &seeds_vec`
+                // always iterates in ascending node-index order.
+                let mut seeds_vec: Vec<usize> = vec![s];
 
                 loop {
-                    if seeds_hashset.len() >= cfg.max_motif_size {
+                    if seeds_vec.len() >= cfg.max_motif_size {
                         break;
                     }
 
-                    let mut cand = HashSet::new();
-                    for &u in &seeds_hashset {
-                        for &v in &neigh_idx[u] {
-                            if !seeds_hashset.contains(&v) {
-                                cand.insert(v);
+                    // Build frontier: neighbours of current set not yet in set.
+                    // Collect into a HashSet first to deduplicate, then sort for
+                    // deterministic iteration order in the gain loop below.
+                    let seeds_set: HashSet<usize> = seeds_vec.iter().copied().collect();
+                    let cand: Vec<usize> = {
+                        let mut c = HashSet::new();
+                        for &u in &seeds_vec {
+                            for &v in &neigh_idx[u] {
+                                if !seeds_set.contains(&v) {
+                                    c.insert(v);
+                                }
                             }
                         }
-                    }
+                        let mut v: Vec<usize> = c.into_iter().collect();
+                        v.sort_unstable(); // deterministic candidate order
+                        v
+                    };
+
                     if cand.is_empty() {
                         break;
                     }
 
+                    // Select candidate with highest triangle-gain.
+                    // Iterating a sorted Vec means the first maximum encountered is
+                    // always the lowest node index — fully deterministic tie-breaking.
                     let mut best_u: Option<usize> = None;
                     let mut best_gain: i64 = -1;
 
-                    for u in cand {
+                    for &u in &cand {
                         let mut s_nbrs: Vec<usize> = neigh_idx[u]
                             .iter()
                             .copied()
-                            .filter(|v| seeds_hashset.contains(v))
+                            .filter(|v| seeds_set.contains(v))
                             .collect();
                         s_nbrs.sort_unstable();
                         let mut edges = 0i64;
@@ -402,16 +445,15 @@ impl Motives for GraphLaplacian {
 
                     match best_u {
                         Some(u) => {
-                            let mut s2 = seeds_hashset.clone();
-                            s2.insert(u);
-                            seeds_hashset = s2;
+                            seeds_vec.push(u);
+                            seeds_vec.sort_unstable(); // keep working set sorted
                         }
                         None => break,
                     }
                 }
 
-                if seeds_hashset.len() >= 3 {
-                    Some(seeds_hashset)
+                if seeds_vec.len() >= 3 {
+                    Some(seeds_vec.iter().copied().collect::<HashSet<usize>>())
                 } else {
                     None
                 }
@@ -492,18 +534,45 @@ impl Motives for GraphLaplacian {
             .filter(|s_items| s_items.len() >= 3)
             .collect();
 
-        // 7) Final item-level dedup (sequential for determinism)
-        let mut deduped_items: Vec<HashSet<usize>> = Vec::new();
-        for item in item_sets {
+        // 7) Final item-level dedup (sequential, fully deterministic)
+        //
+        // Non-determinism source: `item_sets` is produced by `sc_results.par_iter()`
+        // in step 6, whose delivery order is scheduler-dependent. The sequential dedup
+        // loop below is order-sensitive — different input orderings evict different
+        // sets on Jaccard ties, changing the final count between runs.
+        //
+        // Fix: canonicalise every set into a sorted Vec<usize> and sort the whole
+        // input slice before dedup. This gives the dedup loop a stable, reproducible
+        // input regardless of how Rayon delivered the parallel results.
+
+        // Canonicalise: HashSet → sorted Vec so both content and ordering are stable.
+        let mut item_sets_sorted: Vec<Vec<usize>> = item_sets
+            .into_iter()
+            .map(|set| {
+                let mut v: Vec<usize> = set.into_iter().collect();
+                v.sort_unstable(); // canonical form for each set
+                v
+            })
+            .collect();
+
+        // Sort the collection itself so dedup always sees the same input order.
+        // Lexicographic order on sorted Vecs is deterministic and cheap here
+        // since item_sets_sorted is bounded by cfg.max_sets (typically ≤ 60).
+        item_sets_sorted.sort_unstable();
+
+        let mut deduped_items: Vec<Vec<usize>> = Vec::new();
+        for item in item_sets_sorted {
+            let item_set: HashSet<usize> = item.iter().copied().collect();
             let mut keep = true;
             for cmp in &deduped_items {
-                if jaccard(&item, cmp) >= cfg.jaccard_dedup {
+                let cmp_set: HashSet<usize> = cmp.iter().copied().collect();
+                if jaccard(&item_set, &cmp_set) >= cfg.jaccard_dedup {
                     keep = false;
                     break;
                 }
             }
             if keep {
-                deduped_items.push(item);
+                deduped_items.push(item); // already sorted, no re-sort needed
                 if deduped_items.len() >= cfg.max_sets {
                     break;
                 }
@@ -515,14 +584,8 @@ impl Motives for GraphLaplacian {
             deduped_items.len()
         );
 
-        let mut out: Vec<Vec<usize>> = deduped_items
-            .into_iter()
-            .map(|it| {
-                let mut v: Vec<usize> = it.into_iter().collect();
-                v.sort_unstable();
-                v
-            })
-            .collect();
+        // Output vecs are already sorted from canonicalisation above.
+        let mut out: Vec<Vec<usize>> = deduped_items;
         out.shrink_to_fit();
         out
     }

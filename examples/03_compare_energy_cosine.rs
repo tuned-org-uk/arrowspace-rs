@@ -2,7 +2,7 @@
 /// Demonstrates performance and result differences between traditional similarity and energy-aware retrieval
 use arrowspace::builder::ArrowSpaceBuilder;
 use arrowspace::core::ArrowItem;
-use arrowspace::energymaps::{EnergyMaps, EnergyMapsBuilder, EnergyParams};
+use arrowspace::maps::energymaps::{EnergyMaps, EnergyMapsBuilder, EnergyParams};
 use log::info;
 use std::time::Instant;
 

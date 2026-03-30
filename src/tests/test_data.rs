@@ -385,3 +385,16 @@ pub fn make_gaussian_cliques_multi(
     rows.shuffle(&mut rng);
     rows
 }
+
+use rand::Rng;
+// Helper to generate synthetic data with controlled properties
+pub fn generate_test_data(n: usize, f: usize, seed: u64) -> Vec<Vec<f64>> {
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    // Just random noise - 100x faster!
+    (0..n)
+        .map(|_| (0..f).map(|_| rng.random_range(-1.0..1.0)).collect())
+        .collect()
+}

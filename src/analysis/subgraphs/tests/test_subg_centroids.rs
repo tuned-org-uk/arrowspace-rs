@@ -1,6 +1,6 @@
+use crate::analysis::subgraphs::sg_from_centroids::recluster_centroids;
+use crate::analysis::subgraphs::{CentroidGraphParams, SubgraphsCentroid};
 use crate::builder::ArrowSpaceBuilder;
-use crate::subgraphs::sg_from_centroids::recluster_centroids;
-use crate::subgraphs::{CentroidGraphParams, SubgraphsCentroid};
 use crate::tests::test_data::make_gaussian_hd;
 
 use smartcore::linalg::basic::arrays::Array;

@@ -1,3 +1,4 @@
+pub mod analysis;
 /// Copyright (2025) Mec-iS, tuned.org.uk
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -13,17 +14,12 @@
 pub mod builder;
 pub mod clustering;
 pub mod core;
-pub mod eigenmaps;
-pub mod energymaps;
 pub mod graph;
 pub mod laplacian;
-pub mod motives;
+pub mod maps;
 pub mod reduction;
 pub mod sampling;
-pub mod sorted_index;
-pub mod sparsification;
-pub mod subgraphs;
-pub mod taumode;
+pub mod search;
 
 #[cfg(feature = "storage")]
 pub mod storage;

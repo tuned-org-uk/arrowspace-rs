@@ -54,8 +54,8 @@ use sprs::CsMat;
 use crate::builder::ConfigValue;
 use crate::graph::GraphLaplacian;
 use crate::reduction::ImplicitProjection;
-use crate::sorted_index::SortedLambdas;
-use crate::taumode::TauMode;
+use crate::search::sorted_index::SortedLambdas;
+use crate::search::taumode::TauMode;
 
 // Add logging
 use log::{debug, info, trace, warn};
@@ -1668,7 +1668,7 @@ impl ArrowSpace {
             data,
             signals: sprs::CsMat::zero((0, 0)),
             lambdas,
-            lambdas_sorted: crate::sorted_index::SortedLambdas::new(),
+            lambdas_sorted: crate::search::sorted_index::SortedLambdas::new(),
             min_lambdas,
             max_lambdas,
             range_lambdas,

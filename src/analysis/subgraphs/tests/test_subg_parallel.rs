@@ -1,8 +1,8 @@
-use crate::builder::ArrowSpaceBuilder;
-use crate::subgraphs::sg_from_centroids::recluster_centroids;
-use crate::subgraphs::{
+use crate::analysis::subgraphs::sg_from_centroids::recluster_centroids;
+use crate::analysis::subgraphs::{
     CentroidGraphParams, MotiveConfig, SubgraphConfig, SubgraphsCentroid, SubgraphsMotive,
 };
+use crate::builder::ArrowSpaceBuilder;
 use crate::tests::test_data::make_gaussian_cliques_multi;
 
 use log::debug;
@@ -53,7 +53,20 @@ fn test_recluster_centroids_deterministic() {
     }
 }
 
-/// Test that parallel motif processing produces same results as serial
+/// Verifies that `spot_subg_motives` is fully deterministic across repeated calls.
+///
+/// ## Non-determinism sources (fixed in spot_motives_energy):
+///
+/// 1. **Step 4 — greedy tie-breaking**: when two candidates share the same
+///    triangle-gain score, `best_u` was set by whichever node `HashSet`
+///    iteration happened to yield last. Fix: iterate candidates in sorted order.
+///
+/// 2. **Step 7 — item dedup input order**: `item_sets` was produced by
+///    `sc_results.par_iter()`, whose delivery order varies between runs.
+///    The sequential Jaccard dedup then evicted different items on tie.
+///    Fix: collect to sorted `Vec<Vec<usize>>` before dedup.
+///
+/// After both fixes, this test must pass on every run with no flakiness.
 #[test]
 fn test_motif_subgraphs_parallel_correctness() {
     crate::init();
@@ -77,24 +90,78 @@ fn test_motif_subgraphs_parallel_correctness() {
         min_size: 5,
     };
 
-    // Run multiple times and verify consistent results
     let subgraphs1 = gl.spot_subg_motives(&aspace, &cfg);
     let subgraphs2 = gl.spot_subg_motives(&aspace, &cfg);
 
+    // --- Structural invariants: must hold independently on each run ---
+    let f_parent = gl.init_data.shape().0;
+    for (run, subgraphs) in [&subgraphs1, &subgraphs2].iter().enumerate() {
+        for (i, sg) in subgraphs.iter().enumerate() {
+            let (f_sg, x_centroids) = sg.laplacian.init_data.shape();
+            assert_eq!(
+                f_sg, f_parent,
+                "run={run} sg={i}: feature dim must match parent"
+            );
+            assert_eq!(
+                sg.laplacian.nnodes, x_centroids,
+                "run={run} sg={i}: nnodes must equal initdata column count"
+            );
+            assert_eq!(
+                sg.node_indices.len(),
+                x_centroids,
+                "run={run} sg={i}: node_indices length must equal nnodes"
+            );
+            assert!(
+                sg.item_indices.is_some(),
+                "run={run} sg={i}: energy subgraphs must carry item_indices"
+            );
+            assert!(
+                sg.laplacian.nnodes >= 2,
+                "run={run} sg={i}: subgraph needs at least 2 centroids"
+            );
+        }
+    }
+
+    // --- Full determinism: count, content and order must be identical ---
     assert_eq!(
         subgraphs1.len(),
         subgraphs2.len(),
-        "Should produce same number of subgraphs"
+        "run1={} subgraphs vs run2={} — non-determinism detected",
+        subgraphs1.len(),
+        subgraphs2.len()
     );
 
-    // Check that subgraphs are identical (same node indices)
-    for (sg1, sg2) in subgraphs1.iter().zip(subgraphs2.iter()) {
-        assert_eq!(sg1.node_indices, sg2.node_indices);
-        assert_eq!(sg1.laplacian.nnodes, sg2.laplacian.nnodes);
+    for (i, (sg1, sg2)) in subgraphs1.iter().zip(subgraphs2.iter()).enumerate() {
+        assert_eq!(
+            sg1.node_indices, sg2.node_indices,
+            "sg={i}: node_indices differ between runs"
+        );
+        assert_eq!(
+            sg1.laplacian.nnodes, sg2.laplacian.nnodes,
+            "sg={i}: nnodes differs between runs"
+        );
+        // item_indices content must also match (both sorted in production fix)
+        assert_eq!(
+            sg1.item_indices, sg2.item_indices,
+            "sg={i}: item_indices differ between runs"
+        );
     }
+
+    println!(
+        "✓ Determinism confirmed: {} subgraphs, all node/item indices identical",
+        subgraphs1.len()
+    );
 }
 
-/// Test that centroid hierarchy is deterministic with parallelization
+/// Test that centroid hierarchy is deterministic with parallelization.
+///
+/// Verifies three levels of identity across two independent builds:
+/// 1. Structural shape  — same number of levels and subgraphs per level.
+/// 2. Node identity     — same centroid indices at every node.
+/// 3. Parent mapping    — same label assignments propagated down the tree.
+///
+/// `recluster_centroids` uses modulo-based label assignment (label[i] = i % k),
+/// so full bit-for-bit identity is expected — not just count equality.
 #[test]
 fn test_centroid_hierarchy_parallel_determinism() {
     crate::init();
@@ -118,26 +185,79 @@ fn test_centroid_hierarchy_parallel_determinism() {
         max_depth: 2,
     };
 
-    // Run multiple times
     let hierarchy1 = gl.build_centroid_hierarchy(&aspace, params.clone());
     let hierarchy2 = gl.build_centroid_hierarchy(&aspace, params.clone());
 
-    assert_eq!(
-        hierarchy1.count_subgraphs(),
-        hierarchy2.count_subgraphs(),
-        "Should produce same number of subgraphs"
-    );
-
+    // --- Level 1: structural shape ---
     assert_eq!(
         hierarchy1.levels.len(),
         hierarchy2.levels.len(),
-        "Should have same number of levels"
+        "Number of hierarchy levels must be identical across runs"
+    );
+    assert_eq!(
+        hierarchy1.count_subgraphs(),
+        hierarchy2.count_subgraphs(),
+        "Total subgraph count must be identical across runs"
     );
 
-    // Check each level has same structure
-    for (level1, level2) in hierarchy1.levels.iter().zip(hierarchy2.levels.iter()) {
-        assert_eq!(level1.len(), level2.len(), "Level sizes should match");
+    // --- Level 2: per-level node counts and node identity ---
+    // count_only is insufficient: same count with different centroids
+    // would still represent a non-deterministic result.
+    for (depth, (level1, level2)) in hierarchy1
+        .levels
+        .iter()
+        .zip(hierarchy2.levels.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            level1.len(),
+            level2.len(),
+            "Node count at depth {depth} must match"
+        );
+
+        for (node_idx, (node1, node2)) in level1.iter().zip(level2.iter()).enumerate() {
+            // Centroid node indices must be identical.
+            assert_eq!(
+                node1.graph.node_indices, node2.graph.node_indices,
+                "node_indices differ at depth={depth}, node={node_idx}"
+            );
+
+            // Parent label assignments must be identical.
+            // parentmap[i] is the child cluster ID centroid i was mapped to;
+            // any divergence here means the re-clustering path is non-deterministic.
+            assert_eq!(
+                node1.parent_map, node2.parent_map,
+                "parentmap differs at depth={depth}, node={node_idx}"
+            );
+
+            // Graph shape invariants must hold on both runs.
+            let (f1, x1) = node1.graph.laplacian.init_data.shape();
+            let (f2, x2) = node2.graph.laplacian.init_data.shape();
+            assert_eq!(
+                (f1, x1),
+                (f2, x2),
+                "initdata shape differs at depth={depth}, node={node_idx}"
+            );
+            assert_eq!(
+                node1.graph.laplacian.nnodes, node2.graph.laplacian.nnodes,
+                "nnodes differs at depth={depth}, node={node_idx}"
+            );
+        }
     }
+
+    // --- Level 3: root item-to-centroid index mapping ---
+    // root_indices[c] is the list of original item indices assigned to centroid c.
+    // Two builds with identical params must produce the same mapping.
+    assert_eq!(
+        hierarchy1.root.root_indices, hierarchy2.root.root_indices,
+        "Root item-to-centroid mapping must be identical across runs"
+    );
+
+    println!(
+        "✓ Determinism verified: {} levels, {} total subgraphs",
+        hierarchy1.levels.len(),
+        hierarchy1.count_subgraphs()
+    );
 }
 
 /// Test that recluster_centroids means are computed correctly

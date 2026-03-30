@@ -65,7 +65,7 @@ use smartcore::linalg::basic::matrix::DenseMatrix;
 use crate::builder::ArrowSpaceBuilder;
 use crate::core::{ArrowItem, ArrowSpace};
 use crate::graph::{GraphFactory, GraphLaplacian};
-use crate::taumode::TauMode;
+use crate::search::taumode::TauMode;
 
 /// This trait decomposes the `ArrowSpaceBuilder::build`` pipeline into explicit stages
 /// for custom workflows, debugging, and analysis. All stages preserve the semantics

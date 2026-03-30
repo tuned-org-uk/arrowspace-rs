@@ -26,11 +26,11 @@ use smartcore::linalg::basic::{
 };
 use std::collections::HashSet;
 
+use crate::analysis::motives::Motives;
+use crate::analysis::subgraphs::{Subgraph, SubgraphConfig, SubgraphsMotive};
 use crate::core::ArrowSpace;
 use crate::graph::{GraphLaplacian, GraphParams};
 use crate::laplacian::build_laplacian_matrix;
-use crate::motives::Motives;
-use crate::subgraphs::{Subgraph, SubgraphConfig, SubgraphsMotive};
 
 impl Subgraph {
     /// Build a motif subgraph with centroid matrix and feature Laplacian.

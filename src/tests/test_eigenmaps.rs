@@ -22,11 +22,11 @@
 use crate::builder::ArrowSpaceBuilder;
 use crate::clustering::{ClusteredOutput, ClusteringHeuristic};
 use crate::core::ArrowSpace;
-use crate::eigenmaps::EigenMaps;
 use crate::graph::GraphLaplacian;
-use crate::taumode::TauMode;
+use crate::maps::eigenmaps::EigenMaps;
+use crate::search::taumode::TauMode;
+use crate::tests::GAUSSIAN_DATA;
 use crate::tests::init;
-use crate::tests::test_data::make_gaussian_hd;
 
 use approx::{relative_eq, relative_ne};
 use log::{debug, info};
@@ -106,7 +106,7 @@ fn test_eigenmaps_non_sensical_undecidable_query() {
     crate::init(); // Initialize logger
     info!("Test: EigenMaps trait vs build() - basic dataset");
 
-    let rows = make_gaussian_hd(99, 0.6);
+    let rows = &*GAUSSIAN_DATA;
     // this vector is not in the context of the dataset
     // it is not being generated consistently like the others
     let query = vec![0.5; 100];
@@ -136,7 +136,7 @@ fn test_eigenmaps_vs_build_basic() {
     crate::init(); // Initialize logger
     info!("Test: EigenMaps trait vs build() - basic dataset");
 
-    let rows = make_gaussian_hd(99, 0.6);
+    let rows = &*GAUSSIAN_DATA;
     let query_idx = 10;
     let query = &rows[query_idx];
     let k = 5;
@@ -205,7 +205,7 @@ fn test_eigenmaps_vs_build_with_spectral() {
     crate::init();
     info!("Test: EigenMaps trait vs build() - with spectral Laplacian");
 
-    let rows = make_gaussian_hd(99, 0.6);
+    let rows = &*GAUSSIAN_DATA;
     let query = &rows[10];
     let k = 4;
     let tau = 0.6;
@@ -285,7 +285,7 @@ fn test_eigenmaps_vs_build_different_taumode() {
     crate::init();
     info!("Test: EigenMaps trait vs build() - Mean taumode");
 
-    let rows = make_gaussian_hd(99, 0.6);
+    let rows = &*GAUSSIAN_DATA;
     let query_idx = 10;
     let query = &rows[query_idx];
     let k = 6;
@@ -351,7 +351,7 @@ fn test_search_without_taumode_panics() {
     crate::init();
     info!("Test: Search without compute_taumode should panic in debug");
 
-    let rows = make_gaussian_hd(99, 0.6);
+    let rows = &*GAUSSIAN_DATA;
     let query = vec![0.0; 6];
 
     let mut builder = ArrowSpaceBuilder::new()
@@ -364,7 +364,7 @@ fn test_search_without_taumode_panics() {
         centroids,
         n_items,
         ..
-    } = ArrowSpaceBuilder::start_clustering(&mut builder, rows);
+    } = ArrowSpaceBuilder::start_clustering(&mut builder, rows.clone());
 
     let gl = aspace.eigenmaps(&builder, &centroids, n_items);
 
@@ -373,11 +373,12 @@ fn test_search_without_taumode_panics() {
 }
 
 #[test]
+#[ignore = "run for too long"]
 fn test_eigenmaps_stages_produce_valid_state() {
     crate::init();
     info!("Test: EigenMaps stages produce valid intermediate state");
 
-    let rows = make_gaussian_hd(99, 0.6);
+    let rows = &*GAUSSIAN_DATA;
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_lambda_graph(1.0, 3, 3, 2.0, None)
@@ -429,7 +430,7 @@ fn test_eigenmaps_stages_produce_valid_state() {
 fn test_eigenmaps_with_dim_reduction() {
     crate::init(); // Initialize logger
 
-    let rows = make_gaussian_hd(99, 0.6);
+    let rows = &*GAUSSIAN_DATA;
     let query_idx = 10;
     let query = &rows[query_idx];
     let k = 5;

@@ -13,7 +13,6 @@ mod test_laplacian_unnormalised;
 mod test_motives;
 mod test_querying_proj;
 mod test_reduction;
-mod test_sparsification;
 mod test_taumode;
 
 use std::sync::Once;
@@ -31,3 +30,19 @@ pub fn init() {
             .try_init();
     });
 }
+
+use crate::tests::test_data::generate_test_data;
+use crate::tests::test_data::make_gaussian_hd;
+use once_cell::sync::Lazy;
+
+#[cfg(test)]
+static GAUSSIAN_DATA: Lazy<Vec<Vec<f64>>> = Lazy::new(|| {
+    // generate synthetic data
+    make_gaussian_hd(99, 0.6)
+});
+
+#[cfg(test)]
+static CLUSTERING_TEST_DATA: Lazy<Vec<Vec<f64>>> = Lazy::new(|| {
+    // generate synthetic data
+    generate_test_data(99, 500, 12345)
+});

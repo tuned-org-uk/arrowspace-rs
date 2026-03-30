@@ -17,7 +17,7 @@ use crate::core::ArrowSpace;
 use crate::graph::{GraphLaplacian, GraphParams};
 use crate::laplacian::build_laplacian_matrix;
 use crate::reduction::ImplicitProjection;
-use crate::taumode::TauMode;
+use crate::search::taumode::TauMode;
 
 /// Parameters for the energy-only pipeline.
 ///
