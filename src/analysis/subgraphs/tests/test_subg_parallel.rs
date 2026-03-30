@@ -94,7 +94,15 @@ fn test_motif_subgraphs_parallel_correctness() {
     }
 }
 
-/// Test that centroid hierarchy is deterministic with parallelization
+/// Test that centroid hierarchy is deterministic with parallelization.
+///
+/// Verifies three levels of identity across two independent builds:
+/// 1. Structural shape  — same number of levels and subgraphs per level.
+/// 2. Node identity     — same centroid indices at every node.
+/// 3. Parent mapping    — same label assignments propagated down the tree.
+///
+/// `recluster_centroids` uses modulo-based label assignment (label[i] = i % k),
+/// so full bit-for-bit identity is expected — not just count equality.
 #[test]
 fn test_centroid_hierarchy_parallel_determinism() {
     crate::init();
@@ -118,26 +126,79 @@ fn test_centroid_hierarchy_parallel_determinism() {
         max_depth: 2,
     };
 
-    // Run multiple times
     let hierarchy1 = gl.build_centroid_hierarchy(&aspace, params.clone());
     let hierarchy2 = gl.build_centroid_hierarchy(&aspace, params.clone());
 
-    assert_eq!(
-        hierarchy1.count_subgraphs(),
-        hierarchy2.count_subgraphs(),
-        "Should produce same number of subgraphs"
-    );
-
+    // --- Level 1: structural shape ---
     assert_eq!(
         hierarchy1.levels.len(),
         hierarchy2.levels.len(),
-        "Should have same number of levels"
+        "Number of hierarchy levels must be identical across runs"
+    );
+    assert_eq!(
+        hierarchy1.count_subgraphs(),
+        hierarchy2.count_subgraphs(),
+        "Total subgraph count must be identical across runs"
     );
 
-    // Check each level has same structure
-    for (level1, level2) in hierarchy1.levels.iter().zip(hierarchy2.levels.iter()) {
-        assert_eq!(level1.len(), level2.len(), "Level sizes should match");
+    // --- Level 2: per-level node counts and node identity ---
+    // count_only is insufficient: same count with different centroids
+    // would still represent a non-deterministic result.
+    for (depth, (level1, level2)) in hierarchy1
+        .levels
+        .iter()
+        .zip(hierarchy2.levels.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            level1.len(),
+            level2.len(),
+            "Node count at depth {depth} must match"
+        );
+
+        for (node_idx, (node1, node2)) in level1.iter().zip(level2.iter()).enumerate() {
+            // Centroid node indices must be identical.
+            assert_eq!(
+                node1.graph.node_indices, node2.graph.node_indices,
+                "node_indices differ at depth={depth}, node={node_idx}"
+            );
+
+            // Parent label assignments must be identical.
+            // parentmap[i] is the child cluster ID centroid i was mapped to;
+            // any divergence here means the re-clustering path is non-deterministic.
+            assert_eq!(
+                node1.parent_map, node2.parent_map,
+                "parentmap differs at depth={depth}, node={node_idx}"
+            );
+
+            // Graph shape invariants must hold on both runs.
+            let (f1, x1) = node1.graph.laplacian.init_data.shape();
+            let (f2, x2) = node2.graph.laplacian.init_data.shape();
+            assert_eq!(
+                (f1, x1),
+                (f2, x2),
+                "initdata shape differs at depth={depth}, node={node_idx}"
+            );
+            assert_eq!(
+                node1.graph.laplacian.nnodes, node2.graph.laplacian.nnodes,
+                "nnodes differs at depth={depth}, node={node_idx}"
+            );
+        }
     }
+
+    // --- Level 3: root item-to-centroid index mapping ---
+    // root_indices[c] is the list of original item indices assigned to centroid c.
+    // Two builds with identical params must produce the same mapping.
+    assert_eq!(
+        hierarchy1.root.root_indices, hierarchy2.root.root_indices,
+        "Root item-to-centroid mapping must be identical across runs"
+    );
+
+    println!(
+        "✓ Determinism verified: {} levels, {} total subgraphs",
+        hierarchy1.levels.len(),
+        hierarchy1.count_subgraphs()
+    );
 }
 
 /// Test that recluster_centroids means are computed correctly

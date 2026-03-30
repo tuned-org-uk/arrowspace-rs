@@ -982,8 +982,8 @@ fn test_dense_mesh_topology() {
     let rows = &*CLUSTERING_TEST_DATA;
 
     // Configure "Dense Mesh" strategy: many clusters + tight radius
-    let target_k = 50; // ~25% of dataset size
-    let tight_radius = 0.7;
+    let target_k = 30; // ~25% of dataset size
+    let tight_radius = 0.3;
 
     let builder = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.5, 10, 5, 2.0, None)
@@ -1038,7 +1038,7 @@ fn test_dense_mesh_topology() {
         .filter(|&&l| l < 0.01) // Less than 1% of range
         .count();
 
-    // With 200 items and 50 clusters, expect very few near-minimum
+    // With 99 items and 30 clusters, expect very few near-minimum
     assert!(
         near_zero_count < 5,
         "Dense mesh should minimize clustered lambdas at minimum (found {})",
@@ -1055,26 +1055,54 @@ fn test_dense_mesh_topology() {
 #[test]
 fn test_step1_bounds_with_projection_basic() {
     let builder = ArrowSpaceBuilder::default();
-    let rows = &*CLUSTERING_TEST_DATA;
-    let n = rows.len();
-    let f = rows[0].len();
-    let effective_dim = Some(500); // Projected from 100K to 500D
+    let rows = &*CLUSTERING_TEST_DATA; // n=99, f=500, uniform random noise
+    let n = rows.len(); // 99
+    let f = rows[0].len(); // 500
+    let effective_dim = Some(50); // Simulates a JL projection from 500D → 50D
 
     let (k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
 
-    // Assertions
-    assert_eq!(k_min, 10, "k_min should be sqrt(1000/10) = 10");
+    // --- k_min ---
+    // Formula: max(ceil(sqrt(n / 10.0)), 2)
+    //        = max(ceil(sqrt(99 / 10.0)), 2)
+    //        = max(ceil(3.146), 2)
+    //        = 4
+    assert_eq!(k_min, 4, "k_min should be 4");
 
-    // k_max should be min of [500*2=1000, 1000/10=100, 5*id_est, sqrt(1000)≈31]
-    // Expected: min(1000, 100, 5*id_est, 31) where id_est ≈ 50
-    // So: min(1000, 100, 250, 31) = 31
-    assert!(k_max <= 100, "k_max should be ≤ 100 (10% of data)");
-    assert!(k_max >= k_min + 1, "k_max should be > k_min");
-    assert!(k_max <= n / 2, "k_max should be ≤ n/2 = 500");
+    // --- k_max ---
+    // The bound is computed as the minimum of four candidates:
+    //
+    //   1. dim_for_bounds * 2  = effective_dim * 2 = 50 * 2 = 100
+    //   2. n / 10              = 99 / 10           = 9   (integer division)
+    //   3. 5 * id_est          = ~45–50            (Two-NN on random 500D noise)
+    //   4. sqrt(n)             = sqrt(99)          ≈ 9
+    //
+    // The binding constraints here are (2) and (4): both yield 9.
+    // The projection candidate (1) = 100 plays no role at this dataset size.
+    // So k_max is expected to be ~9, well below 100.
+    assert!(
+        k_max <= n / 10 + 1,
+        "k_max should be near n/10=9, the binding constraint for n=99 (got {k_max})"
+    );
+    assert!(
+        k_max >= k_min + 1,
+        "k_max must always exceed k_min to allow a valid search range (got {k_max})"
+    );
+    assert!(
+        k_max <= n / 2,
+        "k_max should never exceed n/2={} as a sanity cap (got {k_max})",
+        n / 2
+    );
+
+    // --- id_est ---
+    // On pure uniform random noise in 500D, Two-NN intrinsic dimension estimation
+    // is expected to return a high value (reflecting the ambient dimensionality),
+    // though the exact value is data- and seed-dependent.
+    assert!(id_est >= 1, "id_est must be at least 1 (got {id_est})");
 
     println!(
-        "✓ Basic projection: k_min={}, k_max={}, id_est={}",
-        k_min, k_max, id_est
+        "✓ Projection basic (n={n}, f={f}, effective_dim=50): \
+         k_min={k_min}, k_max={k_max}, id_est={id_est}"
     );
 }
 
@@ -1113,14 +1141,18 @@ fn test_step1_bounds_small_effective_dim() {
     let rows = &*CLUSTERING_TEST_DATA;
     let n = rows.len();
     let f = rows[0].len();
-    let effective_dim = Some(100); // Aggressive projection to 100D
+    let effective_dim = Some(50); // Aggressive projection to 50D
 
     let (k_min, k_max, _id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
 
-    // k_max candidates: [100*2=200, 10000/10=1000, 5*id_est, sqrt(10000)=100]
-    // Expected: min(200, 1000, ~100, 100) ≈ 100
-    assert!(k_max >= 100, "k_max should be at least sqrt(n) = 100");
-    assert!(k_max <= 200, "k_max should be ≤ 2*effective_dim = 200");
+    assert!(
+        k_max >= 9,
+        "k_max should be at least sqrt(n) = 9 (is {k_max})"
+    );
+    assert!(
+        k_max <= 100,
+        "k_max should be ≤ 2*effective_dim = 100 (is {k_max})"
+    );
 
     println!(
         "✓ Small effective_dim=100: k_min={}, k_max={}",
@@ -1182,27 +1214,53 @@ fn test_step1_bounds_effective_dim_equals_intrinsic() {
 
 #[test]
 #[serial]
-fn test_step1_bounds_tiny_dataset_with_projection() {
+fn test_step1_bounds_higher_effective_dim() {
     let builder = ArrowSpaceBuilder::default();
-    let rows = &*CLUSTERING_TEST_DATA;
-    let n = rows.len();
-    let f = rows[0].len();
-    let effective_dim = Some(100);
+    let rows = &*CLUSTERING_TEST_DATA; // n=99, f=500, uniform random noise
+    let n = rows.len(); // 99
+    let f = rows[0].len(); // 500
+    let effective_dim = Some(100); // Larger projection target than the basic test (50 → 100)
 
-    let (k_min, k_max, _id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+    let (k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
 
-    // For tiny n=50:
-    // k_min = max(sqrt(50/10), 2) = max(2.23, 2) ≈ 2
-    // k_max candidates: [100*2=200, 50/10=5, 5*id_est, sqrt(50)≈7]
-    // min(200, 5, ~50, 7) = 5
-    // But clamped to [k_min+1, n/2] = [3, 25]
+    // --- k_min ---
+    // Formula: max(ceil(sqrt(n / 10.0)), 2)
+    //        = max(ceil(sqrt(99 / 10.0)), 2)
+    //        = max(ceil(3.146), 2)
+    //        = 4
+    assert_eq!(k_min, 4, "k_min should be 4 for n=99");
 
-    assert_eq!(k_min, 3, "k_min should be 3 for tiny datasets");
-    assert!(k_max <= 25, "k_max should be ≤ n/2 = 25");
-    assert!(k_max >= k_min + 1, "k_max should be > k_min");
+    // --- k_max ---
+    // Candidates:
+    //   1. effective_dim * 2  = 100 * 2 = 200
+    //   2. n / 10             = 99 / 10 = 9   (integer division)
+    //   3. 5 * id_est         = ~45–50        (Two-NN on random 500D noise)
+    //   4. sqrt(n)            = sqrt(99) ≈ 9
+    //
+    // Binding constraints are again (2) and (4), both yielding 9.
+    // Doubling effective_dim from 50 → 100 raises candidate (1) from 100 → 200,
+    // but it still doesn't bind — n/10 and sqrt(n) dominate at this dataset size.
+    // This confirms that for small n, projection size does not influence k_max.
+    assert!(
+        k_max <= n / 10 + 1,
+        "k_max should be near n/10=9 — the binding constraint for n=99 (got {k_max})"
+    );
+    assert!(
+        k_max >= k_min + 1,
+        "k_max must exceed k_min to allow a valid search range (got {k_max})"
+    );
+    assert!(
+        k_max <= n / 2,
+        "k_max must never exceed n/2={} (got {k_max})",
+        n / 2
+    );
+
+    // --- id_est ---
+    // Pure random noise in 500D — Two-NN is expected to return a high ID.
+    assert!(id_est >= 1, "id_est must be at least 1 (got {id_est})");
 
     println!(
-        "✓ Tiny dataset with projection: k_min={}, k_max={}",
-        k_min, k_max
+        "✓ Higher effective_dim (n={n}, f={f}, effective_dim=100): \
+         k_min={k_min}, k_max={k_max}, id_est={id_est}"
     );
 }
