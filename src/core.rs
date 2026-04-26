@@ -168,7 +168,6 @@ impl ArrowItem {
         let cosine_sim = self.cosine_similarity(&other.item);
         let lambda_sim = self.lambda_component_similarity(other);
 
-        // let result = alpha * cosine_sim + (1.0 - alpha) * lambda_sim;
         let result = alpha * cosine_sim + cosine_sim.signum() * (1.0 - alpha) * lambda_sim;
 
         trace!(
