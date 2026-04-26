@@ -97,7 +97,7 @@ fn test_energy_search_self_retrieval() {
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
         .with_lambda_graph(0.5, 3, 10, 2.0, None)
-        .with_dims_reduction(true, Some(0.8))
+        .with_dims_reduction(true, Some(0.1))
         .with_inline_sampling(None);
 
     let p = EnergyParams::new(&builder);
