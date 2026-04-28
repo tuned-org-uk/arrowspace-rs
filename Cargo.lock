@@ -385,7 +385,7 @@ dependencies = [
  "once_cell",
  "ordered-float 5.3.0",
  "parquet",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rand_chacha",
  "rand_distr",
  "rand_pcg",
