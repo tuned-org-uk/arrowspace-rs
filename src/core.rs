@@ -136,18 +136,38 @@ impl ArrowItem {
         self.item.is_empty()
     }
 
-    /// Lambda component similarity (spectral distance)
+    /// Lambda component similarity (spectral proximity).
+    ///
+    /// Computes `sim_λ = 1 − min(|λ_a − λ_b|, 1.0)`, which maps identical
+    /// lambdas to 1.0 and lambdas differing by ≥ 1.0 to 0.0.
+    /// This is the form used in both search entry points and reconciles the
+    /// paper shorthand `sim_λ = λτ_q − λτ_i` (a signed difference) with the
+    /// bounded proximity score actually computed here.
     #[inline]
     pub fn lambda_component_similarity(&self, other: &ArrowItem) -> f64 {
         let lambda_diff = (self.lambda - other.lambda).abs();
         1.0 - lambda_diff.min(1.0)
     }
 
-    /// Combined lambda-aware similarity
-    /// Combines semantic (cosine) similarity and lambda proximity (Rayleigh plus dispersion).
+    /// Combined lambda-aware similarity.
     ///
-    /// `alpha` weights semantic similarity; `beta` weights lambda proximity
-    /// defined as `1 / (1 + |lambda_a - lambda_b|)`.
+    /// Blends cosine (semantic) similarity and spectral proximity using a
+    /// convex combination controlled by `alpha`:
+    ///
+    /// ```text
+    /// score = α · cos(q, i) + (1 − α) · sim_λ(q, i)
+    /// ```
+    ///
+    /// where `sim_λ = 1 − min(|λ_q − λ_i|, 1.0)` (see
+    /// [`lambda_component_similarity`]).
+    ///
+    /// This is the same unsigned blend used by `search_lambda_aware_hybrid`
+    /// (`alpha * cosine + beta * lambda_component`).  Both entry points are
+    /// therefore consistent for all cosine values, including the negative
+    /// half-space.
+    ///
+    /// `alpha` weights semantic similarity (cosine); `(1 − alpha)` weights
+    /// spectral proximity.
     ///
     /// # Examples
     ///
@@ -156,7 +176,7 @@ impl ArrowItem {
     /// let a = ArrowItem::new(vec![1.0, 0.0].as_ref(), 0.5);
     /// let b = ArrowItem::new(vec![1.0, 0.0].as_ref(), 0.6);
     /// let s = a.lambda_similarity(&b, 0.7);
-    /// assert!(s <= 1.0 && s >= 0.0);
+    /// assert!(s >= 0.0 && s <= 1.0);
     /// ```
     #[inline]
     pub fn lambda_similarity(&self, other: &ArrowItem, alpha: f64) -> f64 {
@@ -168,7 +188,9 @@ impl ArrowItem {
         let cosine_sim = self.cosine_similarity(&other.item);
         let lambda_sim = self.lambda_component_similarity(other);
 
-        let result = alpha * cosine_sim + cosine_sim.signum() * (1.0 - alpha) * lambda_sim;
+        // Unsigned convex blend: score = α·cos + (1−α)·sim_λ
+        // Equivalent to the hybrid path: alpha * cosine + beta * lambda_component
+        let result = alpha * cosine_sim + (1.0 - alpha) * lambda_sim;
 
         trace!(
             "Lambda similarity: semantic={:.6}, lambda={:.6}, combined={:.6}",
