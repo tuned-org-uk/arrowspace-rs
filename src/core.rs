@@ -52,6 +52,7 @@ use smartcore::linalg::basic::matrix::DenseMatrix;
 use sprs::CsMat;
 
 use crate::builder::ConfigValue;
+use crate::error::ArrowSpaceError;
 use crate::graph::GraphLaplacian;
 use crate::reduction::ImplicitProjection;
 use crate::search::sorted_index::SortedLambdas;
@@ -884,11 +885,31 @@ impl ArrowSpace {
     ///
     /// Maps query to nearest subcentroid and returns its lambda.
     /// Pre-computed subcentroids and lambdas are already stored in ArrowSpace.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the query contains non-finite values, has the wrong dimension,
+    /// or produces a degenerate lambda (~0). Use [`try_prepare_query_item`] to
+    /// obtain a typed [`ArrowSpaceError`] instead.
+    ///
+    /// [`try_prepare_query_item`]: ArrowSpace::try_prepare_query_item
     pub fn prepare_query_item(&self, query: &[f64], gl: &GraphLaplacian) -> f64 {
-        assert!(
-            query.iter().all(|x| x.is_finite()),
-            "query item has non-finite values"
-        );
+        self.try_prepare_query_item(query, gl)
+            .expect("prepare_query_item")
+    }
+
+    /// Fallible variant of [`prepare_query_item`](ArrowSpace::prepare_query_item).
+    ///
+    /// Returns a typed [`ArrowSpaceError`] instead of panicking, so that FFI
+    /// bindings can surface catchable exceptions.
+    pub fn try_prepare_query_item(
+        &self,
+        query: &[f64],
+        gl: &GraphLaplacian,
+    ) -> Result<f64, ArrowSpaceError> {
+        if !query.iter().all(|x| x.is_finite()) {
+            return Err(ArrowSpaceError::NonFiniteQuery);
+        }
 
         // Energy mode: subcentroid mapping (fast)
         if let (Some(subcentroids), Some(sc_lambdas)) =
@@ -927,10 +948,23 @@ impl ArrowSpace {
                 best_dist
             );
 
-            return lambda;
+            return Ok(lambda);
         }
 
-        // Eigen mode
+        // Eigen mode — validate dimension before computation
+        let valid_dim = if self.projection_matrix.is_some() {
+            let proj = self.projection_matrix.as_ref().unwrap();
+            query.len() == proj.original_dim || query.len() == proj.reduced_dim
+        } else {
+            query.len() == self.nfeatures
+        };
+        if !valid_dim {
+            return Err(ArrowSpaceError::DimensionMismatch {
+                expected: self.nfeatures,
+                got: query.len(),
+            });
+        }
+
         let tau = TauMode::select_tau(&query, self.taumode);
         let raw_lambda = TauMode::compute_synthetic_lambda(
             &query,
@@ -940,19 +974,16 @@ impl ArrowSpace {
         );
 
         // Normalize if stats are available
-        let msg = "Check your eps parameter for the builder, every dataset has an optimal eps. \n \
-            Also, the query item may be out of context for the dataset (undecidable), \
-            despite all safeguards its lambda is 0.0";
         if self.range_lambdas.is_finite() {
             if relative_eq!(raw_lambda, 0.0, epsilon = 1e-12) {
-                panic!("{}", msg)
+                return Err(ArrowSpaceError::DegenerateLambda { raw: raw_lambda });
             }
-            return self.normalise_query_lambda(raw_lambda);
+            return Ok(self.normalise_query_lambda(raw_lambda));
         } else {
             if relative_eq!(raw_lambda, 0.0, epsilon = 1e-12) {
-                panic!("{}", msg)
+                return Err(ArrowSpaceError::DegenerateLambda { raw: raw_lambda });
             }
-            return raw_lambda;
+            return Ok(raw_lambda);
         }
     }
 
@@ -965,6 +996,21 @@ impl ArrowSpace {
     #[inline]
     pub fn lambdas(&self) -> &[f64] {
         self.lambdas.as_ref()
+    }
+
+    /// Count how many stored lambdas are approximately zero (~0).
+    ///
+    /// A significant fraction of degenerate lambdas indicates a mis-tuned `eps`
+    /// parameter: the graph Laplacian maps every item to its null space,
+    /// producing an index that builds successfully but is unusable for search.
+    /// Surfacing this count lets callers detect the condition at build time
+    /// rather than discovering it as a panic (or typed error) at query time.
+    #[inline]
+    pub fn degenerate_lambda_count(&self) -> usize {
+        self.lambdas
+            .iter()
+            .filter(|&&l| l.abs() < 1e-12)
+            .count()
     }
 
     /// Returns cluster assignment for row i (None if outlier or not clustered).
@@ -1174,6 +1220,14 @@ impl ArrowSpace {
     /// assert_eq!(res.len(), 2);
     /// assert!(res.1 >= 0.0);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the query lambda is 0.0 (the item was not prepared) or the
+    /// query dimension does not match the index. Use [`try_search_lambda_aware`]
+    /// to obtain a typed [`ArrowSpaceError`] instead.
+    ///
+    /// [`try_search_lambda_aware`]: ArrowSpace::try_search_lambda_aware
     #[inline]
     pub fn search_lambda_aware(
         &self,
@@ -1181,6 +1235,21 @@ impl ArrowSpace {
         k: usize,
         alpha: f64,
     ) -> Vec<(usize, f64)> {
+        self.try_search_lambda_aware(query, k, alpha)
+            .expect("search_lambda_aware")
+    }
+
+    /// Fallible variant of [`search_lambda_aware`](ArrowSpace::search_lambda_aware).
+    ///
+    /// Returns a typed [`ArrowSpaceError`] instead of panicking, so that FFI
+    /// bindings can surface catchable exceptions.
+    #[inline]
+    pub fn try_search_lambda_aware(
+        &self,
+        query: &ArrowItem,
+        k: usize,
+        alpha: f64,
+    ) -> Result<Vec<(usize, f64)>, ArrowSpaceError> {
         info!("Lambda-aware search: k={}", k);
         debug!(
             "Query vector dimension: {}, lambda: {:.6}",
@@ -1188,10 +1257,18 @@ impl ArrowSpace {
             query.lambda
         );
 
-        assert_ne!(
-            query.lambda, 0.0,
-            "Lambda of the item is 0.0, prepare the item before searching"
-        );
+        if query.lambda == 0.0 {
+            return Err(ArrowSpaceError::DegenerateLambda {
+                raw: query.lambda,
+            });
+        }
+
+        if query.len() != self.nfeatures {
+            return Err(ArrowSpaceError::DimensionMismatch {
+                expected: self.nfeatures,
+                got: query.len(),
+            });
+        }
 
         let mut results: Vec<_> = (0..self.nitems)
             .map(|i| {
@@ -1211,7 +1288,7 @@ impl ArrowSpace {
             );
         }
 
-        results
+        Ok(results)
     }
 
     /// A version of `search_lambda_aware` that mix-in results from pure cosine similarity
@@ -1461,6 +1538,23 @@ impl ArrowSpace {
         };
 
         self.lambdas = new_lambdas;
+
+        // Surface degenerate indexes at the point eps was chosen.
+        // A significant fraction of ~0 raw lambdas means the graph Laplacian
+        // maps every item to its null space — the index builds but is unusable.
+        let degenerate_count = self
+            .lambdas
+            .iter()
+            .filter(|&&l| l.abs() < 1e-12)
+            .count();
+        if degenerate_count > self.nitems / 2 {
+            warn!(
+                "{} of {} lambdas are ~0 (degenerate). \
+                 Check the eps parameter for the builder — every dataset has an optimal eps.",
+                degenerate_count, self.nitems
+            );
+        }
+
         self.normalise_lambdas();
 
         let new_stats = {
