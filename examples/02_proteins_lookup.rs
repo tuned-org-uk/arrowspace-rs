@@ -16,8 +16,8 @@
 // Dependencies: arrowspace crate in this repo.
 // Run: cargo run --example proteins_lookup
 
-use ordered_float::OrderedFloat;
 use arrowspace::builder::ArrowSpaceBuilder;
+use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
 
 #[path = "./common/lib.rs"]
@@ -107,11 +107,11 @@ fn main() {
     //   k: optional cap on neighbors per item
     //   p: kernel exponent
     //   sigma_override: None => σ defaults to eps
-    let eps = 0.05;        // Larger epsilon for more connected graph
-    let k = 12usize;       // More neighbors for stability (trade-off with items)
+    let eps = 0.05; // Larger epsilon for more connected graph
+    let k = 12usize; // More neighbors for stability (trade-off with items)
     let topk = 4usize;
-    let p = 2.0;           // Linear kernel less sensitive to outliers  
-    let sigma_override = Some(eps * 0.5);  // Explicit sigma control
+    let p = 2.0; // Linear kernel less sensitive to outliers  
+    let sigma_override = Some(eps * 0.5); // Explicit sigma control
 
     let (aspace, _) = ArrowSpaceBuilder::new()
         .with_lambda_graph(eps, k, topk, p, sigma_override)
@@ -132,9 +132,9 @@ fn main() {
         zset.zadd(lambdas[i], i, id.clone(), items_nxf[i].clone());
     }
 
-    // 5) Query λ for the query vector 
+    // 5) Query λ for the query vector
     // define a band of querying arond the query vector
-    
+
     let lambda_q = lambdas[q_index];
     let band = std_deviation(&lambdas).unwrap() as f64 / 2.0_f64.powf(p);
     let lo = lambda_q - band;

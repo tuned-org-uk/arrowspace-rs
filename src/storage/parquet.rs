@@ -589,6 +589,9 @@ pub fn load_sparse_matrix(path: impl AsRef<Path>) -> Result<CsMat<f64>, StorageE
 /// Save all ArrowSpace artifacts using ArrowSpaceBuilder directly
 ///
 /// This is the recommended approach - pass the builder directly.
+// Each argument is a distinct persisted artifact of the checkpoint; grouping
+// them into a struct would only relocate the same list without adding meaning.
+#[allow(clippy::too_many_arguments)]
 pub fn save_arrowspace_checkpoint_with_builder(
     path: impl AsRef<Path>,
     checkpoint_name: &str,
@@ -845,11 +848,10 @@ pub fn load_lambda(path: impl AsRef<Path>) -> Result<Vec<f64>, StorageError> {
             if let Some(n_values_col) = batch
                 .column_by_name("n_values")
                 .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                && !n_values_col.is_empty()
             {
-                if !n_values_col.is_empty() {
-                    let n_values = n_values_col.value(0) as usize;
-                    lambdas.reserve(n_values);
-                }
+                let n_values = n_values_col.value(0) as usize;
+                lambdas.reserve(n_values);
             }
         }
 

@@ -100,10 +100,7 @@ fn test_try_prepare_query_item_dimension_mismatch_returns_err() {
 
     let result = aspace.try_prepare_query_item(&wrong_query, &gl);
     match result {
-        Err(ArrowSpaceError::DimensionMismatch {
-            expected,
-            got,
-        }) => {
+        Err(ArrowSpaceError::DimensionMismatch { expected, got }) => {
             assert_eq!(expected, aspace.nfeatures);
             assert_eq!(got, aspace.nfeatures / 2);
         }
@@ -233,7 +230,12 @@ fn test_try_search_lambda_aware_matches_search_lambda_aware() {
     assert_eq!(fallible.len(), infallible.len());
     for (a, b) in fallible.iter().zip(infallible.iter()) {
         assert_eq!(a.0, b.0, "index mismatch");
-        assert!((a.1 - b.1).abs() < 1e-12, "score mismatch: {} vs {}", a.1, b.1);
+        assert!(
+            (a.1 - b.1).abs() < 1e-12,
+            "score mismatch: {} vs {}",
+            a.1,
+            b.1
+        );
     }
 }
 

@@ -274,26 +274,23 @@ impl TauMode {
         }
 
         // project only if unprojected
-        let projected_item = if projection_matrix.is_some()
-            && item_vector.len() == projection_matrix.as_ref().unwrap().original_dim
-        {
-            projection_matrix.unwrap().project(&item_vector)
-        } else if projection_matrix.is_none()
-            || item_vector.len() == projection_matrix.as_ref().unwrap().reduced_dim
-        {
-            item_vector.to_owned()
-        } else {
-            panic!(
-                "Check the projection pipeline, item seems neither projected nor unprojected. \n\
-                   input item len: {:?} \
-                   projection matrix is set: {} \
-                   projection matrix original dims: {} \
-                   projection matrix reduced dims: {}",
-                item_vector.len(),
-                projection_matrix.as_ref().is_some(),
-                projection_matrix.as_ref().unwrap().original_dim,
-                projection_matrix.as_ref().unwrap().reduced_dim
-            )
+        let projected_item = match projection_matrix {
+            Some(proj) if item_vector.len() == proj.original_dim => proj.project(item_vector),
+            Some(proj) if item_vector.len() == proj.reduced_dim => item_vector.to_owned(),
+            None => item_vector.to_owned(),
+            Some(proj) => {
+                panic!(
+                    "Check the projection pipeline, item seems neither projected nor unprojected. \n\
+                       input item len: {:?} \
+                       projection matrix is set: {} \
+                       projection matrix original dims: {} \
+                       projection matrix reduced dims: {}",
+                    item_vector.len(),
+                    true,
+                    proj.original_dim,
+                    proj.reduced_dim
+                )
+            }
         };
 
         // Parallel computation of E_raw and G_raw

@@ -189,7 +189,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                 n_items,
                 n_features,
                 None,
-                self.clustering_seed.as_ref().unwrap().clone(),
+                *self.clustering_seed.as_ref().unwrap(),
             );
 
             debug!(
@@ -357,7 +357,13 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         // STAGE 4: Compute Optimal K (now operating on reduced-dim data)
         // Auto-compute optimal clustering parameters via heuristic
         info!("Computing optimal clustering parameters");
-        let (k_opt, radius, intrinsic_dim) = if self.cluster_max_clusters.is_none() {
+        let (k_opt, radius, intrinsic_dim) = if let Some(manual_k) = self.cluster_max_clusters {
+            info!(
+                "Using manual override (no intrinsic dimensions): K={:?}, radius={:.4}",
+                self.cluster_max_clusters, self.cluster_radius
+            );
+            (manual_k, self.cluster_radius, None)
+        } else {
             if self.clustering_seed.is_none() {
                 panic!("`self.clustering_seed` shoud be set for optimal k heuristics")
             }
@@ -367,22 +373,12 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                 n_items,
                 n_features,
                 Some(reduced_dim),
-                self.clustering_seed.as_ref().unwrap().clone(),
+                *self.clustering_seed.as_ref().unwrap(),
             );
             debug!("Heuristic K={}, radius={:.4}", k_opt, radius);
             self.cluster_max_clusters = Some(k_opt);
             self.cluster_radius = radius;
             (k_opt, radius, Some(intrinsic_dim))
-        } else {
-            info!(
-                "Using manual override (no intrinsic dimensions): K={:?}, radius={:.4}",
-                self.cluster_max_clusters, self.cluster_radius
-            );
-            (
-                self.cluster_max_clusters.clone().unwrap(),
-                self.cluster_radius,
-                None,
-            )
         };
 
         debug!(
@@ -432,7 +428,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
             centroids: clustered_dm,
             reduced_dim,
             n_items,
-            n_features: n_features, // Keep original count for metadata
+            n_features, // Keep original count for metadata
         }
     }
 
@@ -498,7 +494,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                 n_items,
                 n_features,
                 None,
-                self.clustering_seed.as_ref().unwrap().clone(),
+                *self.clustering_seed.as_ref().unwrap(),
             );
 
             debug!(
@@ -612,21 +608,22 @@ impl ArrowSpaceBuilder {
 
     /// copy all the static parameters to generate a similar builder from the original
     pub fn copy_params(&self) -> Self {
-        let mut result = Self::default();
-        result.prebuilt_spectral = self.prebuilt_spectral;
-        result.synthesis = self.synthesis;
-        result.lambda_eps = self.lambda_eps;
-        result.lambda_k = self.lambda_k;
-        result.lambda_topk = self.lambda_topk;
-        result.lambda_p = self.lambda_p;
-        result.lambda_sigma = self.lambda_sigma;
-        result.normalise = self.normalise;
-        result.sparsity_check = self.sparsity_check;
-        result.sampling = self.sampling.clone();
-        result.use_dims_reduction = self.use_dims_reduction;
-        result.rp_eps = self.rp_eps;
-        result.persistence = self.persistence.clone();
-        result
+        Self {
+            prebuilt_spectral: self.prebuilt_spectral,
+            synthesis: self.synthesis,
+            lambda_eps: self.lambda_eps,
+            lambda_k: self.lambda_k,
+            lambda_topk: self.lambda_topk,
+            lambda_p: self.lambda_p,
+            lambda_sigma: self.lambda_sigma,
+            normalise: self.normalise,
+            sparsity_check: self.sparsity_check,
+            sampling: self.sampling.clone(),
+            use_dims_reduction: self.use_dims_reduction,
+            rp_eps: self.rp_eps,
+            persistence: self.persistence.clone(),
+            ..Self::default()
+        }
     }
 
     // -------------------- Lambda-graph configuration --------------------
@@ -752,7 +749,7 @@ impl ArrowSpaceBuilder {
     ///
     /// # Arguments
     /// * `radius` - Squared L2 distance threshold for cluster creation.
-    ///              Typical range: [0.5, 2.0]
+    ///   Typical range: [0.5, 2.0]
     ///
     /// # Example
     /// ```ignore
@@ -1017,7 +1014,7 @@ impl ArrowSpaceBuilder {
                 use crate::storage::parquet::{save_arrowspace, save_lambda_with_builder};
 
                 // save the metadata needed for search operations
-                let stored = save_arrowspace(&aspace, path.clone(), &name);
+                let stored = save_arrowspace(&aspace, path.clone(), name);
 
                 match stored {
                     Ok(_) => debug!("{}-arrowspace saved", name),
@@ -1585,7 +1582,7 @@ impl ConfigValue {
     // Convenience extraction methods
     pub fn as_tau_mode(&self) -> Option<TauMode> {
         match self {
-            ConfigValue::TauMode(v) => Some(v.clone()),
+            ConfigValue::TauMode(v) => Some(*v),
             _ => None,
         }
     }

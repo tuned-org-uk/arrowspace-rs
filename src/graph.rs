@@ -190,6 +190,9 @@ impl GraphFactory {
     /// This is a lower level method: use `ArrowSpaceBuilder::build`
     /// Transpose the resulting matrix from clustering and build a graph Laplacian matrix
     ///  so to be ready to be used to analyse signal features
+    // Public low-level entry point mirroring the λτ-graph parameter set; the
+    // arguments map 1:1 to `GraphParams` fields plus the raw-data item count.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_laplacian_matrix_from_k_cluster(
         clustered: &DenseMatrix<f64>, // X×F: X centroids of clusters, each with F features
         eps: f64,                     // maximum rectified cosine distance (see `docs/`)
@@ -282,10 +285,9 @@ impl GraphFactory {
             )
         }
 
-        if aspace.reduced_dim.is_some() {
+        if let Some(reduced) = aspace.reduced_dim {
             assert!(
-                aspace.signals.shape().0 == aspace.reduced_dim.unwrap()
-                    && aspace.reduced_dim.unwrap() == aspace.signals.shape().1,
+                aspace.signals.shape().0 == reduced && reduced == aspace.signals.shape().1,
                 "result should be a FxF matrix with reduced dimensions F"
             );
         } else {
