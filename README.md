@@ -1,6 +1,6 @@
 # arrowspace
 
-[![DOI](https://joss.theoj.org/papers/10.21105/joss.09002/status.svg)](https://doi.org/10.21105/joss.09002)
+[![DOI](https://joss.theoj.org/papers/10.21105/joss.09002/status.svg)](https://doi.org/10.21105/joss.09002)[Zenodo](https://zenodo.org/records/21679021)
 
 **Spectral vector search and analysis using dipersion models**
 
