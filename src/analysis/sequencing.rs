@@ -181,6 +181,11 @@ pub fn sequence_by_graph(gl: &GraphLaplacian) -> Sequence {
 
 /// Extracts the undirected weighted adjacency implied by L = D − A as
 /// flat per-node neighbour lists (sorted by neighbour index).
+///
+/// Assumes L is symmetric: each undirected edge is read once from the upper
+/// triangle (`j > i`). The pipeline guarantees this via deterministic
+/// symmetrisation; hand-built Laplacians must be symmetrised first or
+/// edges present only below the diagonal will be missed.
 fn _adjacency_from_laplacian(l: &CsMat<f64>) -> Vec<Vec<(usize, OrderedFloat<f64>)>> {
     let n = l.shape().0;
 
@@ -256,7 +261,8 @@ fn _minimum_spanning_forest(
 fn _serialise_forest(tree: Vec<Vec<usize>>) -> Sequence {
     let n = tree.len();
 
-    // Component labelling by stack DFS.
+    // Component labelling by stack DFS; members kept sorted ascending so
+    // downstream scans and tie-breaks are index-deterministic.
     let mut comp_of = vec![usize::MAX; n];
     let mut components: Vec<Vec<usize>> = Vec::new();
     for s in 0..n {
@@ -276,25 +282,27 @@ fn _serialise_forest(tree: Vec<Vec<usize>>) -> Sequence {
                 }
             }
         }
+        members.sort_unstable();
         components.push(members);
     }
 
     // Larger components first; ties broken by smallest member index.
-    components.sort_unstable_by_key(|members| {
-        let min_idx = members.iter().copied().min().unwrap_or(usize::MAX);
-        (std::cmp::Reverse(members.len()), min_idx)
-    });
+    components.sort_unstable_by_key(|members| (std::cmp::Reverse(members.len()), members[0]));
 
     let mut order: Vec<usize> = Vec::with_capacity(n);
     let mut depth_of = vec![0f64; n];
     let mut visited = vec![false; n];
+    // Scratch buffers reused by both sweeps of every component; entries are
+    // reset per call so cost stays proportional to the component, not n.
+    let mut dist = vec![usize::MAX; n];
+    let mut seen = vec![false; n];
 
     for members in &components {
-        let seed = members.iter().copied().min().unwrap_or(members[0]);
+        let seed = members[0];
 
         // Double sweep: BFS farthest twice to land near a tree diameter end.
-        let (far, _) = _bfs_farthest(seed, &tree);
-        let (root, _) = _bfs_farthest(far, &tree);
+        let far = _bfs_farthest(seed, &tree, members, &mut dist, &mut seen);
+        let root = _bfs_farthest(far, &tree, members, &mut dist, &mut seen);
 
         // Iterative DFS preorder; children pushed in reverse so the
         // smallest index is visited first.
@@ -319,13 +327,23 @@ fn _serialise_forest(tree: Vec<Vec<usize>>) -> Sequence {
     }
 }
 
-/// BFS over the tree returning the farthest node reachable from `src`;
-/// distance ties break on the smaller node index.
-fn _bfs_farthest(src: usize, tree: &[Vec<usize>]) -> (usize, usize) {
-    let n = tree.len();
-    let mut dist = vec![usize::MAX; n];
-    let mut seen = vec![false; n];
-    let mut queue = VecDeque::with_capacity(n);
+/// BFS over a component's tree returning the farthest member from `src`;
+/// distance ties break on the smaller node index (`members` is ascending).
+/// `dist` and `seen` are caller-owned scratch buffers reset for `members`
+/// only, so each call costs O(|members| + edges within the component) and
+/// the total across all components stays O(V + E).
+fn _bfs_farthest(
+    src: usize,
+    tree: &[Vec<usize>],
+    members: &[usize],
+    dist: &mut [usize],
+    seen: &mut [bool],
+) -> usize {
+    for &m in members {
+        dist[m] = usize::MAX;
+        seen[m] = false;
+    }
+    let mut queue = VecDeque::with_capacity(members.len());
     dist[src] = 0;
     seen[src] = true;
     queue.push_back(src);
@@ -340,13 +358,15 @@ fn _bfs_farthest(src: usize, tree: &[Vec<usize>]) -> (usize, usize) {
         }
     }
 
+    // Every member is reachable within its own tree, so no MAX guard is
+    // needed; strict > keeps the first (smallest) index on ties.
     let mut best = src;
     let mut best_dist = 0;
-    for (u, &d) in dist.iter().enumerate() {
-        if d != usize::MAX && d > best_dist {
+    for &u in members {
+        if dist[u] > best_dist {
             best = u;
-            best_dist = d;
+            best_dist = dist[u];
         }
     }
-    (best, best_dist)
+    best
 }
