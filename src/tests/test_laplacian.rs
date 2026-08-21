@@ -784,3 +784,64 @@ fn test_with_adjacency_output() {
 
     debug!("Sparse Adjacency + Laplacian test passed");
 }
+
+#[test]
+fn test_symmetrise_adjacency_sort_merge() {
+    // Directed adjacency: 0->1 (0.5), 0->2 (0.9), 1->2 (0.7), 2->1 (0.3)
+    // plus a self-loop on node 3 that must be dropped
+    let adj_rows = vec![
+        vec![(1, 0.5), (2, 0.9)],
+        vec![(2, 0.7)],
+        vec![(1, 0.3)],
+        vec![(3, 1.0)],
+    ];
+
+    let sym = _symmetrise_adjancency(adj_rows, 4);
+
+    assert_eq!(sym.len(), 4);
+    assert_eq!(sym[0], vec![(1, 0.5), (2, 0.9)]);
+    // Reciprocal edges (1,2) and (2,1) with weights 0.7/0.3 must merge to the max
+    assert_eq!(sym[1], vec![(0, 0.5), (2, 0.7)]);
+    assert_eq!(sym[2], vec![(0, 0.9), (1, 0.7)]);
+    assert!(sym[3].is_empty(), "self-loop should be dropped");
+
+    for i in 0..4 {
+        for &(j, w) in &sym[i] {
+            let mirrored = sym[j].iter().find(|&&(jj, _)| jj == i).map(|&(_, ww)| ww);
+            assert_eq!(
+                mirrored,
+                Some(w),
+                "edge ({i},{j})={w} has no symmetric counterpart"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_symmetrise_adjacency_reciprocal_max_is_deterministic() {
+    let adj_rows = vec![
+        vec![(1, 0.2), (3, 0.4)],
+        vec![(0, 0.8), (2, 0.6)],
+        vec![(1, 0.1)],
+        vec![],
+    ];
+
+    let first = _symmetrise_adjancency(adj_rows.clone(), 4);
+
+    assert_eq!(first[0], vec![(1, 0.8), (3, 0.4)]);
+    assert_eq!(first[1], vec![(0, 0.8), (2, 0.6)]);
+    assert_eq!(first[2], vec![(1, 0.6)]);
+    assert_eq!(first[3], vec![(0, 0.4)]);
+
+    for _ in 0..32 {
+        let again = _symmetrise_adjancency(adj_rows.clone(), 4);
+        assert_eq!(again, first, "symmetrisation must be deterministic");
+    }
+}
+
+#[test]
+fn test_symmetrise_adjacency_empty_and_disconnected() {
+    let sym = _symmetrise_adjancency(vec![vec![], vec![], vec![]], 3);
+    assert_eq!(sym.len(), 3);
+    assert!(sym.iter().all(|row| row.is_empty()));
+}

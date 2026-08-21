@@ -31,7 +31,6 @@
 
 use crate::graph::{GraphLaplacian, GraphParams};
 
-use dashmap::DashMap;
 use smartcore::algorithm::neighbour::cosinepair::CosinePair;
 use smartcore::api::{Transformer, UnsupervisedEstimator};
 use smartcore::linalg::basic::arrays::Array;
@@ -293,54 +292,49 @@ fn _build_adjacency(
     adj_rows
 }
 
-/// Symmetrise weighted Adjacency list
+/// Symmetrise weighted Adjacency list using a sort-merge pattern
+///
+/// 1. Flattens all edges and their mirrors into a coordinate list (COO): O(E)
+/// 2. Sorts the COO by `(row, col)` in parallel: O(E log E)
+/// 3. Groups consecutive entries per row via binary search and merges duplicates
+///    keeping the maximum weight: O(E)
+///
+/// Compared to the previous hash-map approach (O(N x E) full scans per node),
+/// this operates on contiguous memory and produces rows already sorted by
+/// column index, ready for CSR assembly. Reciprocal edges with different
+/// weights are merged deterministically by keeping the maximum.
 pub(crate) fn _symmetrise_adjancency(
     adj_rows: Vec<Vec<(usize, f64)>>,
     n: usize,
 ) -> Vec<Vec<(usize, f64)>> {
-    // Step 4: Symmetrise adjacency
     trace!("Symmetrizing adjacency matrix");
 
-    // Use parallel collection first, then sequential symmetrisation
-    let all_edges: Vec<(usize, usize, f64)> = adj_rows
-        .par_iter()
+    let mut edges: Vec<(usize, usize, f64)> = adj_rows
+        .into_par_iter()
         .enumerate()
-        .flat_map(|(i, row)| {
-            // Convert to owned data for parallel processing
-            row.par_iter()
-                .map(move |&(j, w)| (i, j, w))
-                .collect::<Vec<_>>()
+        .flat_map_iter(|(i, row)| {
+            row.into_iter()
+                .filter(move |&(j, _)| i != j)
+                .flat_map(move |(j, w)| [(i, j, w), (j, i, w)])
         })
         .collect();
 
-    // Concurrent edge map using DashMap (lock-free concurrent HashMap)
-    let edge_map: DashMap<(usize, usize), f64> = DashMap::new();
+    edges.par_sort_unstable_by_key(|&(i, j, _)| (i, j));
 
-    all_edges.par_iter().for_each(|&(i, j, w)| {
-        edge_map.insert((i, j), w);
-        edge_map.insert((j, i), w);
-    });
-
-    // Symmetrisation and sort during collection
     let sym: Vec<Vec<(usize, f64)>> = (0..n)
         .into_par_iter()
-        .map(|i| {
-            let mut neighbors: Vec<(usize, f64)> = edge_map
-                .iter()
-                .filter_map(|entry| {
-                    let &(src, dst) = entry.key();
-                    let &w = entry.value();
-                    if src == i && src != dst {
-                        Some((dst, w))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+        .map(|row_idx| {
+            let start = edges.partition_point(|&(i, _, _)| i < row_idx);
+            let end = edges.partition_point(|&(i, _, _)| i <= row_idx);
 
-            // Sort immediately within this thread
-            neighbors.sort_unstable_by_key(|&(j, _)| j);
-            neighbors
+            edges[start..end]
+                .chunk_by(|a, b| a.1 == b.1)
+                .map(|group| {
+                    let &(_, j, _) = group.first().unwrap();
+                    let max_w = group.iter().map(|&(_, _, w)| w).reduce(f64::max).unwrap();
+                    (j, max_w)
+                })
+                .collect()
         })
         .collect();
 
@@ -348,32 +342,32 @@ pub(crate) fn _symmetrise_adjancency(
 }
 
 /// Build sparse Laplacian(Adjacency)
+///
+/// Input rows must come from `_symmetrise_adjancency`: sorted by column index
+/// and deduplicated. Triplets are therefore emitted directly in a single pass,
+/// with no intermediate concurrent map.
 pub(crate) fn _build_sparse_laplacian(
     sym: Vec<Vec<(usize, f64)>>,
     n: usize,
 ) -> sprs::TriMatBase<Vec<usize>, Vec<f64>> {
-    info!("Converting adjacency to sparse Laplacian matrix (DashMap batched)");
+    info!("Converting adjacency to sparse Laplacian matrix");
 
     let start = std::time::Instant::now();
 
-    // Concurrent map for triplets
-    let triplet_map: DashMap<(usize, usize), f64> =
-        DashMap::with_capacity(sym.iter().map(|s| s.len() + 1).sum());
+    let mut triplets: Vec<(usize, usize, f64)> =
+        Vec::with_capacity(sym.iter().map(|s| s.len() + 1).sum());
 
-    // Parallel insertion with edge counting
     let total_edges = sym
-        .par_iter()
+        .iter()
         .enumerate()
-        .map(|(i, s)| {
+        .map(|(i, row)| {
+            let degree: f64 = row.iter().map(|&(_j, w)| w).sum();
+            triplets.push((i, i, degree));
+
             let mut local_edge_count = 0;
-
-            // Batch operations per row
-            let degree: f64 = s.iter().map(|&(_j, w)| w).sum();
-            triplet_map.insert((i, i), degree);
-
-            for &(j, w) in s {
+            for &(j, w) in row {
                 if i != j {
-                    triplet_map.insert((i, j), -w);
+                    triplets.push((i, j, -w));
                     if i < j {
                         local_edge_count += 1;
                     }
@@ -384,35 +378,13 @@ pub(crate) fn _build_sparse_laplacian(
         })
         .sum::<usize>();
 
-    trace!("DashMap population completed in {:?}", start.elapsed());
-    debug!(
-        "Total triplets: {}, edges: {}",
-        triplet_map.len(),
-        total_edges
-    );
+    debug!("Total triplets: {}, edges: {}", triplets.len(), total_edges);
 
-    // Convert to sorted vectors for more efficient TriMat insertion
-    let conversion_start = std::time::Instant::now();
-    let mut triplets: Vec<((usize, usize), f64)> = triplet_map.into_iter().collect();
-
-    // Sort by (row, col) for better cache locality during insertion
-    triplets.par_sort_unstable_by_key(|&((i, j), _)| (i, j));
-
-    trace!(
-        "Sorted {} triplets in {:?}",
-        triplets.len(),
-        conversion_start.elapsed()
-    );
-
-    // Sequential: Build TriMat from sorted triplets
-    let insert_start = std::time::Instant::now();
     let mut trimat = TriMat::with_capacity((n, n), triplets.len());
-
-    for ((i, j), val) in triplets {
+    for (i, j, val) in triplets {
         trimat.add_triplet(i, j, val);
     }
 
-    debug!("Inserted triplets in {:?}", insert_start.elapsed());
     info!("Sparse Laplacian construction time: {:?}", start.elapsed());
 
     trimat
