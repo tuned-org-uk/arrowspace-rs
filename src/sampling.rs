@@ -54,7 +54,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use log::{info, trace};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, rngs::SysRng, RngExt, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -120,7 +120,7 @@ impl InlineSampler for SimpleRandomSampler {
         );
         Self {
             keep_rate: target_rate,
-            rng: StdRng::from_os_rng(),
+            rng: StdRng::try_from_rng(&mut SysRng).expect("OS entropy source unavailable"),
             sampled_count: AtomicUsize::new(0),
             discarded_count: AtomicUsize::new(0),
         }
@@ -181,7 +181,7 @@ impl InlineSampler for DensityAdaptiveSampler {
         Self {
             base_rate: target_rate,
             current_idx: 0,
-            rng: StdRng::from_os_rng(),
+            rng: StdRng::try_from_rng(&mut SysRng).expect("OS entropy source unavailable"),
             sampled_count: AtomicUsize::new(0),
             discarded_count: AtomicUsize::new(0),
         }

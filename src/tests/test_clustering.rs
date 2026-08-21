@@ -208,7 +208,7 @@ fn test_step1_bounds_high_dimensional() {
 
 #[test]
 fn test_calinski_harabasz_well_separated() {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
     let mut rows = Vec::new();
 
@@ -242,7 +242,7 @@ fn test_calinski_harabasz_well_separated() {
 
 #[test]
 fn test_calinski_harabasz_three_clusters() {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
     let mut rows = Vec::new();
 
@@ -407,7 +407,7 @@ fn test_threshold_very_tight_clusters() {
 
 #[test]
 fn test_optimal_k_heuristic_synthetic_three_clusters() {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
     let mut rows = Vec::new();
 
@@ -453,7 +453,7 @@ fn test_optimal_k_heuristic_synthetic_three_clusters() {
 
 #[test]
 fn test_optimal_k_heuristic_spherical_clusters() {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
     let mut rows = Vec::new();
 
