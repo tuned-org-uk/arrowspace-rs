@@ -11,7 +11,7 @@ pub fn make_moons_hd(
     dims: usize,
     seed: u64,
 ) -> Vec<Vec<f64>> {
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use rand_pcg::Pcg64;
     use std::f64::consts::PI;
 
@@ -195,7 +195,7 @@ pub fn make_gaussian_hd(n_points: usize, noise: f64) -> Vec<Vec<f64>> {
 ///
 /// Creates 5 Gaussian clusters in 100D space with controlled separation
 pub fn make_energy_test_dataset(n_items: usize, n_features: usize, seed: u64) -> Vec<Vec<f64>> {
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use rand_xoshiro::Xoshiro256PlusPlus;
 
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
@@ -386,7 +386,7 @@ pub fn make_gaussian_cliques_multi(
     rows
 }
 
-use rand::Rng;
+use rand::RngExt;
 // Helper to generate synthetic data with controlled properties
 pub fn generate_test_data(n: usize, f: usize, seed: u64) -> Vec<Vec<f64>> {
     use rand::SeedableRng;

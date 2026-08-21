@@ -820,7 +820,7 @@ impl ArrowSpaceBuilder {
 
         // generate random seed if not provided
         if self.clustering_seed.is_none() {
-            use rand::Rng;
+            use rand::RngExt;
             let mut rng = rand::rng();
             let seed: u64 = rng.random();
             self = self.with_seed(seed);
@@ -1077,7 +1077,7 @@ impl ArrowSpaceBuilder {
 
         // generate random seed if not provided
         if self.clustering_seed.is_none() {
-            use rand::Rng;
+            use rand::RngExt;
             let mut rng = rand::rng();
             let seed: u64 = rng.random();
             self = self.with_seed(seed);
