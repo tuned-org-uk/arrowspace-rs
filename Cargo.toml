@@ -52,7 +52,7 @@ smartcore = {version = "^0.6", features = ["datasets"]}
 rand_pcg = "0.9.0"
 tempfile = "3.24.0"
 rand_xoshiro = "0.7.0"
-serial_test = "3.0"
+serial_test = "4.0"
 once_cell = "1.19"
 
 [features]
