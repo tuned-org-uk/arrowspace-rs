@@ -136,7 +136,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
 
         // Prepare base ArrowSpace with the builder's taumode (will be used in compute_taumode)
         debug!("Creating ArrowSpace with taumode: {:?}", self.synthesis);
-        let mut aspace = ArrowSpace::new(rows.clone(), self.synthesis);
+        let mut aspace = ArrowSpace::new(rows, self.synthesis);
 
         // Configure inline sampler matching builder policy
         let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
@@ -185,7 +185,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
             }
 
             let (h_k, h_r, h_id) = self.compute_optimal_k(
-                &rows,
+                &aspace.data,
                 n_items,
                 n_features,
                 None,
@@ -210,7 +210,12 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
             k_opt, radius
         );
         let (clustered_dm, assignments, sizes) = run_incremental_clustering_with_sampling(
-            self, &rows, n_features, k_opt, radius, sampler,
+            self,
+            &aspace.data,
+            n_features,
+            k_opt,
+            radius,
+            sampler,
         );
 
         let n_clusters = clustered_dm.shape().0;
@@ -284,9 +289,8 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         );
 
         // STAGE 1: Early Dimensionality Reduction (if enabled and beneficial)
-        let (working_rows, reduced_dim, projection) = if self.use_dims_reduction
-            && n_features > 1000
-        {
+        // Projection reads the rows before they are moved into the ArrowSpace.
+        let early_projection = if self.use_dims_reduction && n_features > 1000 {
             info!("Applying early JL projection to accelerate clustering");
 
             // Compute target dimension based on item count (not cluster count)
@@ -302,7 +306,8 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
             let proj = ImplicitProjection::new(n_features, target_dim, self.clustering_seed);
 
             // Project all rows in parallel using Rayon
-            let projected: Vec<Vec<f64>> = rows.par_iter().map(|row| proj.project(row)).collect();
+            let projected_flat: Vec<f64> =
+                rows.par_iter().flat_map(|row| proj.project(row)).collect();
 
             let compression = n_features as f64 / target_dim as f64;
             info!(
@@ -312,21 +317,25 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                 (n_items * target_dim * 8) / (1024 * 1024)
             );
 
-            (projected, target_dim, Some(proj))
+            Some((proj, target_dim, projected_flat))
         } else {
             debug!("Skipping early projection (disabled or dimension too small)");
-            (rows.clone(), n_features, None)
+            None
         };
 
-        // STAGE 2: Prepare ArrowSpace (now using potentially-reduced data)
+        // STAGE 2: Prepare ArrowSpace owning the original full-dimensional data
         debug!("Creating ArrowSpace with taumode: {:?}", self.synthesis);
-        let mut aspace = ArrowSpace::new(rows.clone(), self.synthesis);
+        let mut aspace = ArrowSpace::new(rows, self.synthesis);
 
-        // Store projection metadata early
-        if let Some(proj) = projection.clone() {
+        // Heuristics and clustering operate on the projected matrix when present,
+        // otherwise directly on the data already stored in the ArrowSpace.
+        let projected_dm: Option<DenseMatrix<f64>> = early_projection.map(|(proj, rd, flat)| {
             aspace.projection_matrix = Some(proj);
-            aspace.reduced_dim = Some(reduced_dim);
-        }
+            aspace.reduced_dim = Some(rd);
+            DenseMatrix::new(n_items, rd, flat, false).unwrap()
+        });
+        let reduced_dim = projected_dm.as_ref().map_or(n_features, |dm| dm.shape().1);
+        let working_rows = projected_dm.as_ref().unwrap_or(&aspace.data);
 
         // STAGE 3: Configure Sampler
         let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
@@ -354,7 +363,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
             }
 
             let (k_opt, radius, intrinsic_dim) = self.compute_optimal_k(
-                &working_rows,
+                working_rows,
                 n_items,
                 n_features,
                 Some(reduced_dim),
@@ -394,7 +403,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         );
         let (clustered_dm, assignments, sizes) = run_incremental_clustering_with_sampling(
             self,
-            &working_rows,
+            working_rows,
             reduced_dim, // Use reduced dimension for distance computations
             k_opt,
             radius,
@@ -439,7 +448,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
 
         // Prepare base ArrowSpace with the builder's taumode (will be used in compute_taumode)
         debug!("Creating ArrowSpace with taumode: {:?}", self.synthesis);
-        let mut aspace = ArrowSpace::new_from_dense(rows.clone(), self.synthesis);
+        let mut aspace = ArrowSpace::new_from_dense(rows, self.synthesis);
 
         // Configure inline sampler matching builder policy
         let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
@@ -464,11 +473,6 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
 
         // Auto-compute optimal clustering parameters via heuristic
         info!("Computing clustering parameters (heuristic or manual override)");
-        let compute: Vec<Vec<f64>> = (0..n_items)
-            .map(|i| rows.get_row(i).iterator(0).copied().collect())
-            .collect();
-
-        // Determine if we should run heuristics or use manual overrides
         let use_manual_k = self.cluster_max_clusters.is_some();
 
         // Run heuristic ONLY if we need any computed values
@@ -490,7 +494,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                 panic!("`self.clustering_seed` shoud be set for full heuristics")
             }
             let (h_k, h_r, h_id) = self.compute_optimal_k(
-                &compute,
+                &aspace.data,
                 n_items,
                 n_features,
                 None,
@@ -523,7 +527,12 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
             k_opt, radius
         );
         let (clustered_dm, assignments, sizes) = run_incremental_clustering_with_sampling(
-            self, &compute, n_features, k_opt, radius, sampler,
+            self,
+            &aspace.data,
+            n_features,
+            k_opt,
+            radius,
+            sampler,
         );
 
         let n_clusters = clustered_dm.shape().0;
@@ -840,35 +849,6 @@ impl ArrowSpaceBuilder {
             self.synthesis
         );
 
-        // Save raw input if persistence is enabled
-        #[cfg(feature = "storage")]
-        {
-            if let Some((ref name, ref path)) = self.persistence {
-                use crate::storage::StorageError;
-                use crate::storage::parquet::save_dense_matrix_with_builder;
-
-                // Create temporary ArrowSpace for saving raw data
-                let temp_aspace = ArrowSpace::new(rows.clone(), self.synthesis);
-
-                use std::fs;
-                fs::create_dir_all(path).unwrap();
-
-                let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
-                    &temp_aspace.data,
-                    path.clone(),
-                    &format!("{}-raw_input", name),
-                    Some(&self),
-                );
-                match saved {
-                    Ok(_) => debug!("raw-input saved"),
-                    Err(StorageError::Parquet(err)) => {
-                        panic!("saving failed for raw-input {}", err)
-                    }
-                    _ => panic!("Error with {:?}", saved),
-                };
-            }
-        }
-
         // ============================================================
         // Stage 1: Clustering with sampling and optional projection
         // ============================================================
@@ -883,11 +863,38 @@ impl ArrowSpaceBuilder {
                 "High-dimensional data detected (F={}), using fast reduce-then-cluster path",
                 n_features
             );
-            Self::start_clustering_dim_reduce(&mut self, rows.clone())
+            Self::start_clustering_dim_reduce(&mut self, rows)
         } else {
             debug!("Standard clustering path (F={} ≤ 2048)", n_features);
-            Self::start_clustering(&mut self, rows.clone())
+            Self::start_clustering(&mut self, rows)
         };
+
+        // Save raw input if persistence is enabled: the ArrowSpace holds the
+        // original dataset in `data`
+        #[cfg(feature = "storage")]
+        {
+            if let Some((ref name, ref path)) = self.persistence {
+                use crate::storage::StorageError;
+                use crate::storage::parquet::save_dense_matrix_with_builder;
+
+                use std::fs;
+                fs::create_dir_all(path).unwrap();
+
+                let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
+                    &aspace.data,
+                    path.clone(),
+                    &format!("{}-raw_input", name),
+                    Some(&self),
+                );
+                match saved {
+                    Ok(_) => debug!("raw-input saved"),
+                    Err(StorageError::Parquet(err)) => {
+                        panic!("saving failed for raw-input {}", err)
+                    }
+                    _ => panic!("Error with {:?}", saved),
+                };
+            }
+        }
 
         // Save clustered centroids if persistence is enabled
         #[cfg(feature = "storage")]
@@ -1113,7 +1120,7 @@ impl ArrowSpaceBuilder {
                     n_items: _n_items,
                     n_features: _n_features,
                     ..
-                } = Self::start_clustering_dense(&mut self, rows.clone());
+                } = Self::start_clustering_dense(&mut self, rows);
 
                 // ============================================================
                 // Stage 2: Build item-graph Laplacian

@@ -20,7 +20,7 @@ use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use smartcore::cluster::kmeans::{KMeans, KMeansParameters};
-use smartcore::linalg::basic::arrays::Array2;
+use smartcore::linalg::basic::arrays::{Array, Array2};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
 use crate::builder::ArrowSpaceBuilder;
@@ -68,7 +68,7 @@ pub trait ClusteringHeuristic {
     /// and estimated intrinsic dimension from NxF data matrix.
     fn compute_optimal_k(
         &self,
-        rows: &[Vec<f64>],
+        rows: &DenseMatrix<f64>,
         n: usize,
         f: usize,                   // original number of dimensions (`n_features`)
         effective_f: Option<usize>, // projected number of dimensions (if projection already happened)
@@ -93,7 +93,7 @@ pub trait ClusteringHeuristic {
 
         let sampled_rows: Vec<Vec<f64>> = sample_indices
             .par_iter()
-            .map(|&i| rows[i].clone())
+            .map(|&i| rows.get_row(i).iterator(0).copied().collect())
             .collect();
 
         let k_optimal = self.step2_calinski_harabasz(&sampled_rows, k_min, k_max, base_seed);
@@ -106,7 +106,7 @@ pub trait ClusteringHeuristic {
     // Step 1: Bounds via N/F and intrinsic dimension
     fn step1_bounds(
         &self,
-        rows: &[Vec<f64>],
+        rows: &DenseMatrix<f64>,
         n: usize,
         f: usize,                     // original number of dimensions (`n_features`)
         effective_dim: Option<usize>, // projected number of dimensions (if projection already happened)
@@ -144,7 +144,7 @@ pub trait ClusteringHeuristic {
     /// Estimate intrinsic dimension via Two-NN ratio method (DETERMINISTIC).
     fn estimate_intrinsic_dimension(
         &self,
-        rows: &[Vec<f64>],
+        rows: &DenseMatrix<f64>,
         n: usize,
         f: usize,
         base_seed: u64,
@@ -162,14 +162,14 @@ pub trait ClusteringHeuristic {
         let ratios: Vec<f64> = sample_indices
             .par_iter()
             .filter_map(|&i| {
-                let row_i = &rows[i];
+                let row_i = rows.get_row(i);
                 let mut dists: Vec<(usize, f64)> = (0..n)
                     .filter(|&j| j != i)
                     .map(|j| {
                         let d2: f64 = row_i
-                            .iter()
-                            .zip(&rows[j])
-                            .map(|(a, b)| (a - b).powi(2))
+                            .iterator(0)
+                            .zip(rows.get_row(j).iterator(0))
+                            .map(|(a, b)| (*a - *b).powi(2))
                             .sum();
                         (j, d2.sqrt())
                     })
@@ -586,13 +586,13 @@ pub fn euclidean_dist(a: &[f64], b: &[f64]) -> f64 {
 /// Returns (centroids_matrix, assignments, sizes).
 pub(crate) fn run_incremental_clustering_with_sampling(
     arrowspacebuilder: &ArrowSpaceBuilder,
-    rows: &[Vec<f64>],
+    rows: &DenseMatrix<f64>,
     nfeatures: usize,
     max_clusters: usize,
     radius: f64,
     sampler: Arc<Mutex<dyn InlineSampler>>,
 ) -> (DenseMatrix<f64>, Vec<Option<usize>>, Vec<usize>) {
-    let nrows = rows.len();
+    let nrows = rows.shape().0;
 
     info!("Starting incremental clustering with inline sampling");
     debug!(
@@ -606,7 +606,8 @@ pub(crate) fn run_incremental_clustering_with_sampling(
     let assignments = Mutex::new(vec![None; nrows]);
 
     let process_row = |row_idx: usize| {
-        let row = &rows[row_idx];
+        let row: Vec<f64> = rows.get_row(row_idx).iterator(0).copied().collect();
+        let row = row.as_slice();
 
         // ============================================================
         // PHASE 1: Snapshot and decision
@@ -687,7 +688,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
                 row_idx
             );
 
-            c.push(row.clone());
+            c.push(row.to_vec());
             k.push(1);
             a[row_idx] = Some(0);
 
@@ -734,7 +735,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
                 );
             }
 
-            c.push(row.clone());
+            c.push(row.to_vec());
             k.push(1);
             a[row_idx] = Some(new_idx);
 

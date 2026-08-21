@@ -467,6 +467,9 @@ impl Default for ArrowSpace {
 
 impl ArrowSpace {
     /// Returns an empty space from the initial data
+    ///
+    /// Consumes `items`, flattening them once into a row-major `DenseMatrix`
+    /// stored in `data` (NxF).
     pub(crate) fn new(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
         assert!(
@@ -475,10 +478,20 @@ impl ArrowSpace {
         );
         let n_items = items.len(); // Number of items (columns in final layout)
         let n_features = items[0].len(); // Number of features (rows in final layout)
+        let mut flat = Vec::with_capacity(n_items * n_features);
+        for row in &items {
+            assert_eq!(
+                row.len(),
+                n_features,
+                "all items must have the same number of features"
+            );
+            flat.extend_from_slice(row);
+        }
+        let data = DenseMatrix::new(n_items, n_features, flat, false).unwrap();
         Self {
             nfeatures: n_features,
             nitems: n_items,
-            data: DenseMatrix::from_2d_vec(&items).unwrap(),
+            data,
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
             lambdas: vec![0.0; n_items],        // will be computed later
             lambdas_sorted: SortedLambdas::new(),
@@ -1007,10 +1020,7 @@ impl ArrowSpace {
     /// rather than discovering it as a panic (or typed error) at query time.
     #[inline]
     pub fn degenerate_lambda_count(&self) -> usize {
-        self.lambdas
-            .iter()
-            .filter(|&&l| l.abs() < 1e-12)
-            .count()
+        self.lambdas.iter().filter(|&&l| l.abs() < 1e-12).count()
     }
 
     /// Returns cluster assignment for row i (None if outlier or not clustered).
@@ -1258,9 +1268,7 @@ impl ArrowSpace {
         );
 
         if query.lambda == 0.0 {
-            return Err(ArrowSpaceError::DegenerateLambda {
-                raw: query.lambda,
-            });
+            return Err(ArrowSpaceError::DegenerateLambda { raw: query.lambda });
         }
 
         if query.len() != self.nfeatures {
@@ -1542,11 +1550,7 @@ impl ArrowSpace {
         // Surface degenerate indexes at the point eps was chosen.
         // A significant fraction of ~0 raw lambdas means the graph Laplacian
         // maps every item to its null space — the index builds but is unusable.
-        let degenerate_count = self
-            .lambdas
-            .iter()
-            .filter(|&&l| l.abs() < 1e-12)
-            .count();
+        let degenerate_count = self.lambdas.iter().filter(|&&l| l.abs() < 1e-12).count();
         if degenerate_count > self.nitems / 2 {
             warn!(
                 "{} of {} lambdas are ~0 (degenerate). \
