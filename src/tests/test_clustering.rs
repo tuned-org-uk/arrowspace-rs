@@ -16,6 +16,7 @@ use crate::{
 
 use log::debug;
 use serial_test::serial;
+use smartcore::linalg::basic::matrix::DenseMatrix;
 
 // -------------------- Helper function tests --------------------
 
@@ -118,7 +119,12 @@ fn test_intrinsic_dimension_line() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let id = builder.estimate_intrinsic_dimension(&rows, rows.len(), 3, 42);
+    let id = builder.estimate_intrinsic_dimension(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        rows.len(),
+        3,
+        42,
+    );
 
     debug!("Estimated ID for 1D line: {}", id);
     assert!(id >= 1 && id <= 3, "Expected ID near 1, got {}", id);
@@ -134,7 +140,12 @@ fn test_intrinsic_dimension_plane() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let id = builder.estimate_intrinsic_dimension(&rows, rows.len(), 3, 42);
+    let id = builder.estimate_intrinsic_dimension(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        rows.len(),
+        3,
+        42,
+    );
 
     debug!("Estimated ID for 2D plane: {}", id);
     assert!(id >= 1 && id <= 3, "Expected ID near 2, got {}", id);
@@ -154,7 +165,12 @@ fn test_intrinsic_dimension_full_space() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let id = builder.estimate_intrinsic_dimension(&rows, rows.len(), 5, 42);
+    let id = builder.estimate_intrinsic_dimension(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        rows.len(),
+        5,
+        42,
+    );
 
     debug!("Estimated ID for 5D full space: {}", id);
     assert!(id >= 2 && id <= 5, "Expected ID near 5, got {}", id);
@@ -164,7 +180,8 @@ fn test_intrinsic_dimension_full_space() {
 fn test_intrinsic_dimension_small_n() {
     let rows = vec![vec![1.0, 2.0], vec![3.0, 4.0]];
     let builder = ArrowSpaceBuilder::new();
-    let id = builder.estimate_intrinsic_dimension(&rows, 2, 2, 42);
+    let id =
+        builder.estimate_intrinsic_dimension(&DenseMatrix::from_2d_vec(&rows).unwrap(), 2, 2, 42);
     assert!(id <= 2);
 }
 
@@ -174,7 +191,8 @@ fn test_intrinsic_dimension_small_n() {
 fn test_step1_bounds_small_dataset() {
     let rows = vec![vec![1.0]; 10];
     let builder = ArrowSpaceBuilder::new();
-    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 10, 1, None, 42);
+    let (k_min, k_max, _id) =
+        builder.step1_bounds(&DenseMatrix::from_2d_vec(&rows).unwrap(), 10, 1, None, 42);
 
     debug!("step 1 bounds (N=10, F=1): [{}, {}]", k_min, k_max);
     assert!(k_min >= 2, "k_min should be at least 2");
@@ -186,7 +204,8 @@ fn test_step1_bounds_small_dataset() {
 fn test_step1_bounds_large_n_small_f() {
     let rows = vec![vec![0.0; 5]; 1000];
     let builder = ArrowSpaceBuilder::new();
-    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 1000, 5, None, 42);
+    let (k_min, k_max, _id) =
+        builder.step1_bounds(&DenseMatrix::from_2d_vec(&rows).unwrap(), 1000, 5, None, 42);
 
     debug!("step 1 bounds (N=1000, F=5): [{}, {}]", k_min, k_max);
     assert!(k_min <= k_max);
@@ -197,7 +216,8 @@ fn test_step1_bounds_large_n_small_f() {
 fn test_step1_bounds_high_dimensional() {
     let rows = vec![vec![0.0; 100]; 50];
     let builder = ArrowSpaceBuilder::new();
-    let (k_min, k_max, _id) = builder.step1_bounds(&rows, 50, 100, None, 42);
+    let (k_min, k_max, _id) =
+        builder.step1_bounds(&DenseMatrix::from_2d_vec(&rows).unwrap(), 50, 100, None, 42);
 
     debug!("step 1 bounds (N=50, F=100): [{}, {}]", k_min, k_max);
     assert!(k_min >= 2);
@@ -436,7 +456,13 @@ fn test_optimal_k_heuristic_synthetic_three_clusters() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 3, None, 42);
+    let (k, radius, id) = builder.compute_optimal_k(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        rows.len(),
+        3,
+        None,
+        42,
+    );
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 3-cluster synthetic",
@@ -474,7 +500,13 @@ fn test_optimal_k_heuristic_spherical_clusters() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, None, 42);
+    let (k, radius, id) = builder.compute_optimal_k(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        rows.len(),
+        2,
+        None,
+        42,
+    );
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 4 spherical clusters",
@@ -506,7 +538,13 @@ fn test_optimal_k_heuristic_high_dimensional_random() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 8, None, 42);
+    let (k, radius, id) = builder.compute_optimal_k(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        rows.len(),
+        8,
+        None,
+        42,
+    );
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 8D random",
@@ -528,7 +566,8 @@ fn test_optimal_k_heuristic_small_n() {
     ];
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, None, 42);
+    let (k, radius, id) =
+        builder.compute_optimal_k(&DenseMatrix::from_2d_vec(&rows).unwrap(), 4, 2, None, 42);
 
     debug!("Optimal K={}, radius={:.6}, ID={} for N=4", k, radius, id);
     assert!(k >= 2, "K should be at least 2");
@@ -540,7 +579,8 @@ fn test_optimal_k_heuristic_small_n() {
 fn test_optimal_k_heuristic_degenerate_identical() {
     let rows = vec![vec![3.0, 4.0]; 100];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, None, 42);
+    let (k, radius, _id) =
+        builder.compute_optimal_k(&DenseMatrix::from_2d_vec(&rows).unwrap(), 100, 2, None, 42);
 
     debug!("Optimal K={}, radius={:.6} for identical points", k, radius);
     assert!(k >= 2, "K should be at least 2 even for degenerate data");
@@ -555,7 +595,8 @@ fn test_optimal_k_heuristic_single_feature() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 100, 1, None, 42);
+    let (k, radius, id) =
+        builder.compute_optimal_k(&DenseMatrix::from_2d_vec(&rows).unwrap(), 100, 1, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for 1D uniform",
@@ -572,7 +613,8 @@ fn test_optimal_k_heuristic_single_feature() {
 fn test_optimal_k_minimum_viable_dataset() {
     let rows = vec![vec![0.0, 0.0], vec![1.0, 1.0]];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 2, 2, None, 42);
+    let (k, radius, id) =
+        builder.compute_optimal_k(&DenseMatrix::from_2d_vec(&rows).unwrap(), 2, 2, None, 42);
 
     debug!("Optimal K={}, radius={:.6}, ID={} for N=2", k, radius, id);
     assert!(k >= 2, "K should be at least 2");
@@ -583,7 +625,13 @@ fn test_optimal_k_minimum_viable_dataset() {
 fn test_optimal_k_very_high_dimensional() {
     let rows = vec![vec![0.0; 1000]; 20];
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 20, 1000, None, 42);
+    let (k, radius, id) = builder.compute_optimal_k(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        20,
+        1000,
+        None,
+        42,
+    );
 
     debug!(
         "Optimal K={}, radius={:.6}, ID={} for N=20, F=1000",
@@ -602,7 +650,8 @@ fn test_optimal_k_mixed_scale_features() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, None, 42);
+    let (k, radius, _id) =
+        builder.compute_optimal_k(&DenseMatrix::from_2d_vec(&rows).unwrap(), 100, 2, None, 42);
 
     debug!(
         "Optimal K={}, radius={:.6} for mixed-scale features",
@@ -679,7 +728,8 @@ fn test_clustering_heuristic_trait_interface() {
     ];
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, None, 42);
+    let (k, radius, id) =
+        builder.compute_optimal_k(&DenseMatrix::from_2d_vec(&rows).unwrap(), 4, 2, None, 42);
 
     debug!("Trait interface: K={}, radius={:.6}, ID={}", k, radius, id);
     assert!(k >= 2);
@@ -707,7 +757,13 @@ fn test_optimal_k_performance_large_dataset() {
 
     let builder = ArrowSpaceBuilder::new();
     let start = Instant::now();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 4, None, 42);
+    let (k, radius, id) = builder.compute_optimal_k(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        rows.len(),
+        4,
+        None,
+        42,
+    );
     let elapsed = start.elapsed();
 
     debug!(
@@ -750,8 +806,10 @@ fn test_consistent_results_with_seed() {
     let builder = ArrowSpaceBuilder::new();
 
     // --- A: Determinism — same seed must yield bit-identical results ---
-    let (k1, radius_1, id1) = builder.compute_optimal_k(&rows, n, f, None, 42);
-    let (k2, radius_2, id2) = builder.compute_optimal_k(&rows, n, f, None, 42);
+    let (k1, radius_1, id1) =
+        builder.compute_optimal_k(&DenseMatrix::from_2d_vec(&rows).unwrap(), n, f, None, 42);
+    let (k2, radius_2, id2) =
+        builder.compute_optimal_k(&DenseMatrix::from_2d_vec(&rows).unwrap(), n, f, None, 42);
 
     assert_eq!(k1, k2, "k must be identical across runs with the same seed");
     assert_eq!(
@@ -768,7 +826,8 @@ fn test_consistent_results_with_seed() {
     // --- B: Different seeds must produce the same k on well-separated data ---
     // The CH index is dominated by between-cluster variance here.
     // k=2 should win regardless of which random trials are used.
-    let (k3, _, _) = builder.compute_optimal_k(&rows, n, f, None, 99);
+    let (k3, _, _) =
+        builder.compute_optimal_k(&DenseMatrix::from_2d_vec(&rows).unwrap(), n, f, None, 99);
     assert_eq!(
         k1, k3,
         "k should be seed-stable on clearly separable data (got k={k1} vs k={k3})"
@@ -809,7 +868,13 @@ fn test_readme_example() {
     }
 
     let builder = ArrowSpaceBuilder::new();
-    let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, None, 42);
+    let (k, radius, id) = builder.compute_optimal_k(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        rows.len(),
+        2,
+        None,
+        42,
+    );
 
     debug!("README example: K={}, radius={:.6}, ID={}", k, radius, id);
     assert!(k >= 2, "Should detect at least 2 clusters");
@@ -1115,7 +1180,13 @@ fn test_step1_bounds_with_projection_basic() {
     let f = rows[0].len(); // 500
     let effective_dim = Some(50); // Simulates a JL projection from 500D → 50D
 
-    let (k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+    let (k_min, k_max, id_est) = builder.step1_bounds(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        n,
+        f,
+        effective_dim,
+        42,
+    );
 
     // --- k_min ---
     // Formula: max(ceil(sqrt(n / 10.0)), 2)
@@ -1170,10 +1241,17 @@ fn test_step1_bounds_projection_dominates_over_ambient() {
     let f = rows[0].len();
 
     // Without projection: should cap f at 1000
-    let (_, k_max_no_proj, _) = builder.step1_bounds(&rows, n, f, None, 42);
+    let (_, k_max_no_proj, _) =
+        builder.step1_bounds(&DenseMatrix::from_2d_vec(&rows).unwrap(), n, f, None, 42);
 
     // With projection to 500D
-    let (_, k_max_with_proj, _) = builder.step1_bounds(&rows, n, f, Some(500), 42);
+    let (_, k_max_with_proj, _) = builder.step1_bounds(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        n,
+        f,
+        Some(500),
+        42,
+    );
 
     // Both should be bounded similarly (both use reasonable dims)
     // But with_proj uses 500*2=1000, no_proj uses min(f,1000)=1000
@@ -1198,7 +1276,13 @@ fn test_step1_bounds_small_effective_dim() {
     let f = rows[0].len();
     let effective_dim = Some(50); // Aggressive projection to 50D
 
-    let (k_min, k_max, _id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+    let (k_min, k_max, _id_est) = builder.step1_bounds(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        n,
+        f,
+        effective_dim,
+        42,
+    );
 
     assert!(
         k_max >= 9,
@@ -1224,7 +1308,13 @@ fn test_step1_bounds_effective_dim_smaller_than_id() {
     let f = rows[0].len();
     let effective_dim = Some(50); // Projected to LESS than intrinsic dim
 
-    let (_k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+    let (_k_min, k_max, id_est) = builder.step1_bounds(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        n,
+        f,
+        effective_dim,
+        42,
+    );
 
     // This tests over-compression: effective_dim < id_est
     // k_max candidates: [50*2=100, 2000/10=200, 5*id_est≈400, sqrt(2000)≈44]
@@ -1252,7 +1342,13 @@ fn test_step1_bounds_effective_dim_equals_intrinsic() {
     // Assume intrinsic dim ≈ 60, project to 120 (2× intrinsic)
     let effective_dim = Some(120);
 
-    let (_k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+    let (_k_min, k_max, id_est) = builder.step1_bounds(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        n,
+        f,
+        effective_dim,
+        42,
+    );
 
     // k_max candidates: [120*2=240, 1000/10=100, 5*id_est≈300, sqrt(1000)≈31]
     // Expected: min(240, 100, 300, 31) = 31
@@ -1276,7 +1372,13 @@ fn test_step1_bounds_higher_effective_dim() {
     let f = rows[0].len(); // 500
     let effective_dim = Some(100); // Larger projection target than the basic test (50 → 100)
 
-    let (k_min, k_max, id_est) = builder.step1_bounds(&rows, n, f, effective_dim, 42);
+    let (k_min, k_max, id_est) = builder.step1_bounds(
+        &DenseMatrix::from_2d_vec(&rows).unwrap(),
+        n,
+        f,
+        effective_dim,
+        42,
+    );
 
     // --- k_min ---
     // Formula: max(ceil(sqrt(n / 10.0)), 2)
