@@ -25,7 +25,7 @@ exclude = [
 ]
 
 [dependencies]
-rand = "0.9.2"
+rand = "0.10.2"
 smartcore = {version = "^0.6"}
 ordered-float = "5.1.0"
 rayon = "1.11.0"
