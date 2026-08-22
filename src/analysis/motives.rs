@@ -596,13 +596,13 @@ impl Motives for GraphLaplacian {
             return false;
         }
         // Parallel short-circuit check
-        let ok = set.par_iter().all(|&u| {
+
+        set.par_iter().all(|&u| {
             let nbrs: HashSet<usize> = self.neighbors_of(u).iter().map(|(j, _)| *j).collect();
             let need = sz - 1;
             let have = nbrs.intersection(set).count();
             have == need
-        });
-        ok
+        })
     }
 
     /// unused: potential improvements using rayleigh energy boundaries
@@ -667,7 +667,7 @@ fn triangle_stats_sorted(neigh_idx: &[Vec<usize>], n: usize) -> (Vec<usize>, Vec
 
 // Count common neighbors excluding i and j using two-pointer scan on sorted lists
 #[inline]
-fn count_intersection(a: &Vec<usize>, b: &Vec<usize>, i: usize, j: usize) -> usize {
+fn count_intersection(a: &[usize], b: &[usize], i: usize, j: usize) -> usize {
     let mut x = 0usize;
     let (mut p, mut q) = (0usize, 0usize);
     while p < a.len() && q < b.len() {
@@ -690,7 +690,7 @@ fn count_intersection(a: &Vec<usize>, b: &Vec<usize>, i: usize, j: usize) -> usi
 
 // Count edges among s_nbrs after position start by intersecting with neigh(u)
 #[inline]
-fn count_edges_among(neigh_u: &Vec<usize>, s_nbrs: &Vec<usize>, start: usize) -> usize {
+fn count_edges_among(neigh_u: &[usize], s_nbrs: &[usize], start: usize) -> usize {
     let mut x = 0usize;
     let mut p = 0usize;
     let mut q = start;

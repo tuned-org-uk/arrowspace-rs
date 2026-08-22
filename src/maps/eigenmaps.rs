@@ -152,7 +152,7 @@ impl EigenMaps for ArrowSpace {
         );
 
         let gl = GraphFactory::build_laplacian_matrix_from_k_cluster(
-            &centroids,
+            centroids,
             builder.lambda_eps,
             builder.lambda_k,
             builder.lambda_topk,

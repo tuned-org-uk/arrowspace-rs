@@ -337,11 +337,10 @@ pub trait ClusteringHeuristic {
                         _ => k_a.cmp(k_b),
                     }
                 })
+                && fine_score > best_score
             {
-                if fine_score > best_score {
-                    best_k = fine_k;
-                    best_score = fine_score;
-                }
+                best_k = fine_k;
+                best_score = fine_score;
             }
         }
 
@@ -551,8 +550,7 @@ pub fn kmeans_lloyd(rows: &[Vec<f64>], k: usize, max_iter: usize, seed: u64) -> 
     let k = k.min(n);
 
     // Flatten row-major data
-    let x: DenseMatrix<f64> =
-        DenseMatrix::from_iterator(rows.into_iter().flatten().map(|x| *x), n, f, 1);
+    let x: DenseMatrix<f64> = DenseMatrix::from_iterator(rows.iter().flatten().copied(), n, f, 1);
 
     // Create parameters with explicit seed
     let params = KMeansParameters {
@@ -565,9 +563,8 @@ pub fn kmeans_lloyd(rows: &[Vec<f64>], k: usize, max_iter: usize, seed: u64) -> 
     let km = KMeans::fit(&x, params).expect("Failed to fit K-Means model");
 
     // Predict cluster assignments
-    let labels = km.predict(&x).expect("Failed to predict labels");
 
-    labels
+    km.predict(&x).expect("Failed to predict labels")
 }
 
 pub fn euclidean_dist(a: &[f64], b: &[f64]) -> f64 {
@@ -904,8 +901,8 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             "Centroids:  {:?}\n : nitems->{} nfeatures->{}",
             flat, x_out, nfeatures
         );
-        let dm = DenseMatrix::from_iterator(flat.iter().map(|x| *x), *x_out, nfeatures, 1);
-        dm
+
+        DenseMatrix::from_iterator(flat.iter().copied(), *x_out, nfeatures, 1)
     } else {
         warn!("No clusters created; returning zero matrix");
         let inline_sampling = arrowspacebuilder.sampling.as_ref().unwrap();
@@ -914,7 +911,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             inline_sampling
         );
         #[allow(unreachable_code)]
-        DenseMatrix::from_2d_vec(&vec![vec![0.0 as f64; nfeatures]; *x_out]).unwrap()
+        DenseMatrix::from_2d_vec(&vec![vec![0.0_f64; nfeatures]; *x_out]).unwrap()
     };
 
     if arrowspacebuilder.sampling.is_some() {

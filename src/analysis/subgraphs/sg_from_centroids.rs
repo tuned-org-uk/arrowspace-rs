@@ -28,7 +28,7 @@ impl SubgraphsCentroid for GraphLaplacian {
             params.max_depth, params.min_centroids
         );
 
-        let hierarchy = CentroidHierarchy::from_centroid_graph(aspace, self, &params);
+        let hierarchy = CentroidHierarchy::from_centroid_graph(aspace, self, params);
 
         let subgraphs = hierarchy.all_subgraphs();
 
@@ -244,10 +244,10 @@ fn build_root_indices_from_centroid_map(aspace: &ArrowSpace, n_root: usize) -> V
     } else if !aspace.cluster_assignments.is_empty() {
         // Fallback: cluster_assignments (Vec<Option<usize>>).
         for (item_idx, &assignment) in aspace.cluster_assignments.iter().enumerate() {
-            if let Some(cid) = assignment {
-                if cid < n_root {
-                    root_indices[cid].push(item_idx);
-                }
+            if let Some(cid) = assignment
+                && cid < n_root
+            {
+                root_indices[cid].push(item_idx);
             }
             // Ignore items with assignment == None (outliers / unassigned).
         }
@@ -304,16 +304,12 @@ pub(crate) fn recluster_centroids(
     }
 
     let k_eff = k.min(n);
-    let mut labels = vec![0usize; n];
-    for i in 0..n {
-        labels[i] = i % k_eff;
-    }
+    let labels: Vec<usize> = (0..n).map(|i| i % k_eff).collect();
 
     let mut sums = DenseMatrix::zeros(k_eff, d);
     let mut counts = vec![0usize; k_eff];
 
-    for i in 0..n {
-        let cid = labels[i];
+    for (i, &cid) in labels.iter().enumerate() {
         counts[cid] += 1;
         for j in 0..d {
             let val = *centroids.get((i, j));
@@ -322,9 +318,9 @@ pub(crate) fn recluster_centroids(
         }
     }
 
-    for cid in 0..k_eff {
-        if counts[cid] > 0 {
-            let c = counts[cid] as f64;
+    for (cid, &count) in counts.iter().enumerate() {
+        if count > 0 {
+            let c = count as f64;
             for j in 0..d {
                 let cur = *sums.get((cid, j));
                 sums.set((cid, j), cur / c);

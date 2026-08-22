@@ -103,11 +103,11 @@ impl EnergyParams {
 
         // Adaptive neighbor_k: scale with graph connectivity
         // Rule: neighbor_k should be 2-3x lambda_k for dense energy graph
-        let neighbor_k = (base_k * 2).max(15).min(50);
+        let neighbor_k = (base_k * 2).clamp(15, 50);
 
         // Adaptive candidate_m: larger pool for better neighbor selection
         // Rule: candidate_m ≈ 2-3x neighbor_k
-        let candidate_m = (neighbor_k * 3).max(30).min(128);
+        let candidate_m = (neighbor_k * 3).clamp(30, 128);
 
         // Adaptive optical compression
         // Priority 1: Use dataset size if available (2√N rule)
@@ -123,7 +123,7 @@ impl EnergyParams {
         } else if builder.use_dims_reduction {
             // Dimensionality-based heuristic (fallback)
             let tokens = (80.0 / dim_reduction_ratio).ceil() as usize;
-            let tokens = tokens.max(40).min(200);
+            let tokens = tokens.clamp(40, 200);
             warn!(
                 "Using dim-reduction heuristic: optical_tokens={} (consider setting expected_nitems for better scaling)",
                 tokens
@@ -175,7 +175,7 @@ impl EnergyParams {
     pub fn compute_adaptive_tokens(nitems: usize) -> usize {
         let sqrt_n = (nitems as f64).sqrt();
         let tokens = (sqrt_n * 2.0).round() as usize;
-        tokens.max(100).min(2000)
+        tokens.clamp(100, 2000)
     }
 
     /// Creates EnergyParams with minimal compression for maximum resolution.
@@ -211,8 +211,8 @@ impl EnergyParams {
 
         Self {
             optical_tokens: Some(100), // Aggressive compression
-            neighbor_k: builder.lambda_k.max(15).min(30),
-            candidate_m: (builder.lambda_k * 2).max(30).min(80),
+            neighbor_k: builder.lambda_k.clamp(15, 30),
+            candidate_m: (builder.lambda_k * 2).clamp(30, 80),
 
             // Fewer diffusion steps for speed
             steps: 3,
@@ -762,7 +762,7 @@ impl EnergyMaps for ArrowSpace {
 // ------- helpers with logging -------
 
 /// Compute 2D bounding box for projected points.
-fn minmax2d(xy: &Vec<f64>) -> (f64, f64, f64, f64) {
+fn minmax2d(xy: &[f64]) -> (f64, f64, f64, f64) {
     trace!("Computing 2D bounds over {} points", xy.len() / 2);
     let mut minx = f64::INFINITY;
     let mut maxx = f64::NEG_INFINITY;
@@ -780,7 +780,7 @@ fn minmax2d(xy: &Vec<f64>) -> (f64, f64, f64, f64) {
 }
 
 /// Remove high-norm items from a set using quantile-based trimming.
-fn trim_high_norm(dm: &DenseMatrix<f64>, idx: &Vec<usize>, q: f64) -> Vec<usize> {
+fn trim_high_norm(dm: &DenseMatrix<f64>, idx: &[usize], q: f64) -> Vec<usize> {
     trace!(
         "Trimming high-norm items: {} candidates, quantile={:.2} [parallel]",
         idx.len(),
@@ -817,7 +817,7 @@ fn trim_high_norm(dm: &DenseMatrix<f64>, idx: &Vec<usize>, q: f64) -> Vec<usize>
 }
 
 /// Compute element-wise mean of selected matrix rows.
-fn mean_rows(dm: &DenseMatrix<f64>, idx: &Vec<usize>) -> Vec<f64> {
+fn mean_rows(dm: &DenseMatrix<f64>, idx: &[usize]) -> Vec<f64> {
     let f = dm.shape().1;
     if idx.is_empty() {
         trace!("mean_rows: empty index, returning zero vector");
@@ -826,12 +826,12 @@ fn mean_rows(dm: &DenseMatrix<f64>, idx: &Vec<usize>) -> Vec<f64> {
     trace!("Computing mean of {} rows", idx.len());
     let mut acc = vec![0.0; f];
     for &i in idx {
-        for c in 0..f {
-            acc[c] += *dm.get((i, c));
+        for (c, a) in acc.iter_mut().enumerate() {
+            *a += *dm.get((i, c));
         }
     }
-    for c in 0..f {
-        acc[c] /= idx.len() as f64;
+    for a in &mut acc {
+        *a /= idx.len() as f64;
     }
     acc
 }
@@ -842,7 +842,7 @@ fn mean_rows(dm: &DenseMatrix<f64>, idx: &Vec<usize>) -> Vec<f64> {
 // }
 
 /// Compute unit direction vector from a to b.
-fn unit_diff(a: Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
+fn unit_diff(a: Vec<f64>, b: &[f64]) -> Vec<f64> {
     let mut d: Vec<f64> = a.iter().zip(b.iter()).map(|(x, y)| x - y).collect();
     let n = (d.iter().map(|v| v * v).sum::<f64>()).sqrt().max(1e-9);
     for v in d.iter_mut() {
@@ -852,7 +852,7 @@ fn unit_diff(a: Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
 }
 
 /// Compute local standard deviation between two vectors.
-fn local_std(a: Vec<f64>, b: &Vec<f64>) -> f64 {
+fn local_std(a: Vec<f64>, b: &[f64]) -> f64 {
     let diffs: Vec<f64> = a.iter().zip(b.iter()).map(|(x, y)| x - y).collect();
     let mean = diffs.iter().sum::<f64>() / diffs.len().max(1) as f64;
     let var =
@@ -861,13 +861,13 @@ fn local_std(a: Vec<f64>, b: &Vec<f64>) -> f64 {
 }
 
 /// Add a scaled direction vector to a base vector.
-fn add_scaled(a: &Vec<f64>, dir: &Vec<f64>, t: f64) -> Vec<f64> {
+fn add_scaled(a: &[f64], dir: &[f64], t: f64) -> Vec<f64> {
     a.iter().zip(dir.iter()).map(|(x, d)| x + t * d).collect()
 }
 
 /// Compute element-wise difference between two vectors.
 #[allow(dead_code)]
-fn vec_diff(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
+fn vec_diff(a: &[f64], b: &[f64]) -> Vec<f64> {
     a.iter().zip(b.iter()).map(|(x, y)| x - y).collect()
 }
 
@@ -892,16 +892,16 @@ fn topk_by_l2(dm: &DenseMatrix<f64>, i: usize, k: usize) -> Vec<usize> {
 }
 
 /// Compute robust scale estimate using Median Absolute Deviation (MAD).
-fn robust_scale(x: &Vec<f64>) -> f64 {
+fn robust_scale(x: &[f64]) -> f64 {
     if x.is_empty() {
         trace!("robust_scale: empty vector, returning 1.0");
         return 1.0;
     }
-    let mut v = x.clone();
+    let mut v = x.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
     let median = v[v.len() / 2];
     let mut devs: Vec<f64> = v.iter().map(|t| (t - median).abs()).collect();
-    devs.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Equal));
+    devs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
     let mad = devs[devs.len() / 2];
     let scale = (1.4826 * mad).max(1e-9);
     trace!(
@@ -1119,10 +1119,10 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         energy_params: EnergyParams,
     ) -> (ArrowSpace, GraphLaplacian) {
         assert!(
-            self.use_dims_reduction == true,
+            self.use_dims_reduction,
             "When using build_energy, dim reduction is needed"
         );
-        if self.prebuilt_spectral == true {
+        if self.prebuilt_spectral {
             panic!(
                 "Spectral mode not compatible with build_energy, please do not enable for energy search"
             );
@@ -1165,7 +1165,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         }
 
         // Step 3: Bootstrap Laplacian on centroids
-        let l0: GraphLaplacian = ArrowSpace::bootstrap_centroid_laplacian(&centroids, &self);
+        let l0: GraphLaplacian = ArrowSpace::bootstrap_centroid_laplacian(&centroids, self);
 
         assert_eq!(centroids.shape().0, l0.nnodes, "l0 is still non-projected");
 
@@ -1196,7 +1196,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             ArrowSpace::subcentroids_from_dense_matrix(sub_centroids.clone());
         subcentroid_space.taumode = aspace.taumode;
         subcentroid_space.projection_matrix = aspace.projection_matrix.clone();
-        subcentroid_space.reduced_dim = aspace.reduced_dim.clone();
+        subcentroid_space.reduced_dim = aspace.reduced_dim;
         // safeguard to clear signals
         subcentroid_space.signals = sprs::CsMat::empty(sprs::CSR, 0);
 
@@ -1407,7 +1407,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         );
 
         trace!("Bootstrapping F×F Laplacian for taumode computation");
-        let l_boot = ArrowSpace::bootstrap_centroid_laplacian(sub_centroids, &self);
+        let l_boot = ArrowSpace::bootstrap_centroid_laplacian(sub_centroids, self);
 
         assert_eq!(
             l_boot.matrix.rows(),

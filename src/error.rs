@@ -62,10 +62,9 @@ impl fmt::Display for ArrowSpaceError {
                  optimal eps. The query item may also be out of context for the \
                  dataset (undecidable)."
             ),
-            Self::NonFiniteQuery => write!(
-                f,
-                "query item contains non-finite values (NaN or Infinity)"
-            ),
+            Self::NonFiniteQuery => {
+                write!(f, "query item contains non-finite values (NaN or Infinity)")
+            }
             Self::DimensionMismatch { expected, got } => write!(
                 f,
                 "dimension mismatch: expected {expected} features, got {got}"

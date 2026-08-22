@@ -360,14 +360,17 @@ impl Eq for ScoredItem {}
 
 impl PartialOrd for ScoredItem {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        // Reverse for min-heap (smallest score at top)
-        other.score.partial_cmp(&self.score)
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for ScoredItem {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+        // Reverse for min-heap (smallest score at top)
+        other
+            .score
+            .partial_cmp(&self.score)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -531,16 +534,18 @@ impl ArrowSpace {
         let extra_reduced = proj_data["extra_reduced_dim"].as_bool().unwrap();
         debug!("extra_reduced_dim from proj_data: {}", extra_reduced);
         assert!(
-            extra_reduced == false,
+            !extra_reduced,
             "Reconstructing with extra dim reduction is not implemented yet"
         );
 
         let has_projection = proj_data["pj_mtx_original_dim"].as_usize().is_some();
         debug!("projection present in proj_data: {}", has_projection);
 
-        let mut aspace = Self::default();
-        aspace.nitems = nrows;
-        aspace.nfeatures = ncols;
+        let mut aspace = Self {
+            nitems: nrows,
+            nfeatures: ncols,
+            ..Self::default()
+        };
 
         if has_projection {
             let original_dim = proj_data["pj_mtx_original_dim"]
@@ -639,7 +644,7 @@ impl ArrowSpace {
         let taumode = config
             .get("taumode")
             .and_then(|v| match v {
-                ConfigValue::TauMode(t) => Some(t.clone()),
+                ConfigValue::TauMode(t) => Some(*t),
                 _ => None,
             })
             .unwrap_or_default();
@@ -965,11 +970,9 @@ impl ArrowSpace {
         }
 
         // Eigen mode — validate dimension before computation
-        let valid_dim = if self.projection_matrix.is_some() {
-            let proj = self.projection_matrix.as_ref().unwrap();
-            query.len() == proj.original_dim || query.len() == proj.reduced_dim
-        } else {
-            query.len() == self.nfeatures
+        let valid_dim = match self.projection_matrix.as_ref() {
+            Some(proj) => query.len() == proj.original_dim || query.len() == proj.reduced_dim,
+            None => query.len() == self.nfeatures,
         };
         if !valid_dim {
             return Err(ArrowSpaceError::DimensionMismatch {
@@ -978,9 +981,9 @@ impl ArrowSpace {
             });
         }
 
-        let tau = TauMode::select_tau(&query, self.taumode);
+        let tau = TauMode::select_tau(query, self.taumode);
         let raw_lambda = TauMode::compute_synthetic_lambda(
-            &query,
+            query,
             self.projection_matrix.clone(),
             &gl.matrix,
             tau,
@@ -991,12 +994,12 @@ impl ArrowSpace {
             if relative_eq!(raw_lambda, 0.0, epsilon = 1e-12) {
                 return Err(ArrowSpaceError::DegenerateLambda { raw: raw_lambda });
             }
-            return Ok(self.normalise_query_lambda(raw_lambda));
+            Ok(self.normalise_query_lambda(raw_lambda))
         } else {
             if relative_eq!(raw_lambda, 0.0, epsilon = 1e-12) {
                 return Err(ArrowSpaceError::DegenerateLambda { raw: raw_lambda });
             }
-            return Ok(raw_lambda);
+            Ok(raw_lambda)
         }
     }
 
@@ -1351,14 +1354,14 @@ impl ArrowSpace {
                             index: i,
                             score: lambda_score,
                         });
-                    } else if let Some(&min) = heap.peek() {
-                        if lambda_score > min.score {
-                            heap.pop();
-                            heap.push(ScoredItem {
-                                index: i,
-                                score: lambda_score,
-                            });
-                        }
+                    } else if let Some(&min) = heap.peek()
+                        && lambda_score > min.score
+                    {
+                        heap.pop();
+                        heap.push(ScoredItem {
+                            index: i,
+                            score: lambda_score,
+                        });
                     }
 
                     (heap, sem_best, high_sem)
@@ -1377,11 +1380,11 @@ impl ArrowSpace {
                     for item in h2 {
                         if h1.len() < k {
                             h1.push(item);
-                        } else if let Some(&min) = h1.peek() {
-                            if item.score > min.score {
-                                h1.pop();
-                                h1.push(item);
-                            }
+                        } else if let Some(&min) = h1.peek()
+                            && item.score > min.score
+                        {
+                            h1.pop();
+                            h1.push(item);
                         }
                     }
 
@@ -1597,22 +1600,18 @@ impl ArrowSpace {
         );
 
         // projection matrix
-        if self.projection_matrix.is_some() {
+        if let Some(proj) = self.projection_matrix.as_ref() {
             config.insert(
                 "pj_mtx_original_dim".to_string(),
-                ConfigValue::OptionUsize(Some(
-                    self.projection_matrix.as_ref().unwrap().original_dim,
-                )),
+                ConfigValue::OptionUsize(Some(proj.original_dim)),
             );
             config.insert(
                 "pj_mtx_reduced_dim".to_string(),
-                ConfigValue::OptionUsize(Some(
-                    self.projection_matrix.as_ref().unwrap().reduced_dim,
-                )),
+                ConfigValue::OptionUsize(Some(proj.reduced_dim)),
             );
             config.insert(
                 "pj_mtx_seed".to_string(),
-                ConfigValue::OptionU64(Some(self.projection_matrix.as_ref().unwrap().seed)),
+                ConfigValue::OptionU64(Some(proj.seed)),
             );
 
             config.insert(
@@ -1632,10 +1631,7 @@ impl ArrowSpace {
             config.insert("extra_reduced_dim".to_string(), ConfigValue::Bool(false));
         }
 
-        config.insert(
-            "taumode".to_string(),
-            ConfigValue::TauMode(self.taumode.clone()),
-        );
+        config.insert("taumode".to_string(), ConfigValue::TauMode(self.taumode));
 
         config.insert(
             "n_clusters".to_string(),
@@ -1720,15 +1716,15 @@ impl ArrowSpace {
         let projection_matrix = if let (Some(orig), Some(red), Some(seed)) = (
             config
                 .get("pj_mtx_original_dim")
-                .and_then(|v| Some(v.as_usize()))
+                .map(|v| v.as_usize())
                 .unwrap_or(None),
             config
                 .get("pj_mtx_reduced_dim")
-                .and_then(|v| Some(v.as_usize()))
+                .map(|v| v.as_usize())
                 .unwrap_or(None),
             config
                 .get("pj_mtx_seed")
-                .and_then(|v| Some(v.as_u64()))
+                .map(|v| v.as_u64())
                 .unwrap_or(None),
         ) {
             info!(
@@ -1742,7 +1738,7 @@ impl ArrowSpace {
 
         let reduced_dim = config
             .get("pj_mtx_reduced_dim")
-            .and_then(|v| Some(v.as_usize()))
+            .map(|v| v.as_usize())
             .unwrap_or(None);
 
         // 5. Extract other fields from metadata
@@ -1858,6 +1854,6 @@ impl<'a> IntoIterator for &'a mut ArrowItem {
 pub fn densematrix_to_vecvec(matrix: &DenseMatrix<f64>) -> Vec<Vec<f64>> {
     let (rows, cols) = matrix.shape();
     (0..rows)
-        .map(|r| (0..cols).map(|c| matrix.get((r, c)).clone()).collect())
+        .map(|r| (0..cols).map(|c| *matrix.get((r, c))).collect())
         .collect()
 }

@@ -54,7 +54,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use log::{info, trace};
-use rand::{rngs::StdRng, rngs::SysRng, RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng, rngs::SysRng};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -214,11 +214,7 @@ impl InlineSampler for DensityAdaptiveSampler {
 
         trace!(
             "Row {}: dist²={:.4}, sat={:.2}, rate={:.4}, keep={}",
-            self.current_idx,
-            nearest_dist_sq,
-            saturation,
-            adaptive_rate,
-            keep
+            self.current_idx, nearest_dist_sq, saturation, adaptive_rate, keep
         );
 
         keep

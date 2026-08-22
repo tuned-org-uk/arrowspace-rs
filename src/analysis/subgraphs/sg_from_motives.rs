@@ -125,7 +125,7 @@ impl SubgraphsMotive for GraphLaplacian {
         );
 
         // 1. Run energy motif detection (subcentroid space → item space).
-        let item_motifs: Vec<Vec<usize>> = self.spot_motives_energy(&aspace, &cfg.motives);
+        let item_motifs: Vec<Vec<usize>> = self.spot_motives_energy(aspace, &cfg.motives);
 
         info!(
             "Motif detection returned {} item-space candidates",

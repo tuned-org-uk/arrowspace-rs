@@ -4,4 +4,5 @@
 //! * Motives spotting
 
 pub mod motives;
+pub mod sequencing;
 pub mod subgraphs;
