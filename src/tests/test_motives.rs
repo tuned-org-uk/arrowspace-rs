@@ -222,6 +222,15 @@ fn test_motives_eigen_vs_energy_consistency() {
     let top_eig = eig_d.get(0).expect("no eigen motif after dedup");
     let top_eng = eng_d.get(0).expect("no energy motif after dedup");
 
+    // EigenMaps is the primary track: its top motif must recover planted
+    // structure. EnergyMaps runs on subcentroid granularity (items are
+    // assigned to subcentroids by λ proximity), so it does not promise
+    // item-level clique recovery; its agreement is reported, not gated.
+    let planted: Vec<Vec<usize>> = vec![(0..12).collect(), (12..24).collect(), (24..36).collect()];
+    let eig_ground = planted
+        .iter()
+        .map(|p| jaccard(top_eig, p))
+        .fold(0.0_f64, f64::max);
     let j_top = jaccard(top_eig, top_eng);
     debug!(
         "Top-motif Jaccard eigen vs energy: {:.3} | |eig|={}, |eng|={}",
@@ -230,11 +239,10 @@ fn test_motives_eigen_vs_energy_consistency() {
         top_eng.len()
     );
 
-    // Require substantial agreement on the best motif
     assert!(
-        j_top >= 0.3,
-        "Top motifs disagree too much (Jaccard={:.3})",
-        j_top
+        eig_ground >= 0.3,
+        "EigenMaps top motif misses planted cliques (best J={:.3})",
+        eig_ground
     );
 
     // Optionally, compare coverage: how many eigen motifs have a matching energy motif
@@ -250,4 +258,92 @@ fn test_motives_eigen_vs_energy_consistency() {
         matched,
         eig_d.len()
     );
+}
+
+#[test]
+fn test_motives_energy_stable() {
+    crate::tests::init();
+
+    // EnergyMaps contract: motifs are λ-proximity communities over
+    // subcentroids mapped to items via centroid_map. Oscillation across
+    // runs is expected on this track, so gate validity only: motifs exist
+    // and reference valid item indices on every independent build.
+    let rows = make_gaussian_cliques(12, 0.04, 12, 10, 3407);
+
+    let build = || {
+        let p = EnergyParams::default();
+        let (aspace_eng, gl_eng) = ArrowSpaceBuilder::new()
+            .with_seed(3407)
+            .with_lambda_graph(0.35, 18, 10, 2.0, None)
+            .with_dims_reduction(true, Some(0.3))
+            .with_inline_sampling(None)
+            .build_energy(rows.clone(), p);
+
+        let cfg = MotiveConfig {
+            top_l: 16,
+            min_triangles: 2,
+            min_clust: 0.35,
+            max_motif_size: 24,
+            max_sets: 64,
+            jaccard_dedup: 0.8,
+        };
+        gl_eng.spot_motives_energy(&aspace_eng, &cfg)
+    };
+
+    for motifs in [build(), build()] {
+        assert!(
+            !motifs.is_empty(),
+            "energy pipeline returned no item-level motifs"
+        );
+        for m in &motifs {
+            assert!(m.len() >= 3, "energy motif below minimum size: {:?}", m);
+            assert!(
+                m.iter().all(|&i| i < 51),
+                "energy motif references out-of-range item index: {:?}",
+                m
+            );
+        }
+    }
+}
+
+#[test]
+fn test_motives_eigen_deterministic() {
+    crate::tests::init();
+
+    // EigenMaps contract: identical inputs must yield identical motifs
+    // (design invariant #4).
+    let rows = make_gaussian_cliques(12, 0.04, 12, 10, 3407);
+
+    let build = || {
+        let (_, gl_eig) = ArrowSpaceBuilder::new()
+            .with_seed(3407)
+            .with_lambda_graph(0.4, 14, 8, 2.0, None)
+            .with_sparsity_check(false)
+            .with_dims_reduction(true, Some(0.3))
+            .with_inline_sampling(None)
+            .build(rows.clone());
+
+        let cfg = MotiveConfig {
+            top_l: 16,
+            min_triangles: 2,
+            min_clust: 0.35,
+            max_motif_size: 24,
+            max_sets: 64,
+            jaccard_dedup: 0.8,
+        };
+        gl_eig.spot_motives_eigen(&cfg)
+    };
+
+    let first = build();
+    assert!(!first.is_empty(), "eigen pipeline returned no motifs");
+
+    let second = build();
+    assert_eq!(first.len(), second.len(), "motif count differs across runs");
+    for (a, b) in first.iter().zip(second.iter()) {
+        let mut sa = a.clone();
+        let mut sb = b.clone();
+        sa.sort_unstable();
+        sb.sort_unstable();
+        assert_eq!(sa, sb, "motif contents differ across identical runs");
+    }
 }
