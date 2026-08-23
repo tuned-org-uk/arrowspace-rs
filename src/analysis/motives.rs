@@ -308,6 +308,33 @@ impl Motives for GraphLaplacian {
         }
         let n_sc = rows;
 
+        // The energy pipeline hands us the F×F bootstrap Laplacian used for
+        // taumode λ read-outs; its nodes enumerate FEATURES, while
+        // aspace.centroid_map enumerates SUBCENTROIDS. Motif detection must run
+        // in subcentroid space so that projection onto items joins matching
+        // namespaces: rebuild the X×X subcentroid Laplacian from stored
+        // coordinates whenever dimensions disagree.
+        let rebuilt: Option<GraphLaplacian> = match &aspace.sub_centroids {
+            Some(sc) if sc.shape().0 >= 2 && sc.shape().0 != rows => {
+                let (x, _) = sc.shape();
+                let mut params = self.graph_params.clone();
+                params.k = params.k.min(x - 1);
+                params.topk = params.topk.min(4).min(x - 1);
+                Some(crate::laplacian::build_laplacian_matrix(
+                    sc.clone(),
+                    &params,
+                    Some(x),
+                    true,
+                ))
+            }
+            _ => None,
+        };
+
+        let (neigh_source, n_sc): (&GraphLaplacian, usize) = match &rebuilt {
+            Some(g) => (g, g.matrix.shape().0),
+            None => (self, n_sc),
+        };
+
         info!(
             "Spotting energy motifs: top_l={}, min_tri={}, min_clust={:.2}, max_size={}, n_sc={}",
             cfg.top_l, cfg.min_triangles, cfg.min_clust, cfg.max_motif_size, n_sc
@@ -317,7 +344,7 @@ impl Motives for GraphLaplacian {
         let neigh_idx: Vec<Vec<usize>> = (0..n_sc)
             .into_par_iter()
             .map(|i| {
-                let mut ids: Vec<usize> = self
+                let mut ids: Vec<usize> = neigh_source
                     .neighbors_of(i)
                     .into_iter()
                     .filter_map(|(j, w)| {
