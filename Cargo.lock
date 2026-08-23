@@ -1730,9 +1730,9 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "smartcore"
-version = "0.6.5"
+version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de2d995ca48c669b6a38f36d200e109af698db902c4a0f266f4aa16a5ceddbc3"
+checksum = "f8f76b16922035a57f7dc7bcde71159e7679dc085b529f879a8d6c49251568dd"
 dependencies = [
  "approx 0.5.1",
  "cfg-if",
@@ -1794,7 +1794,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys",
