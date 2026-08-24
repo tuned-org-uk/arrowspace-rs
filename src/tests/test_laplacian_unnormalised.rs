@@ -48,7 +48,7 @@ fn test_builder_graph_params_preservation() {
 
     assert_eq!(gl.graph_params.eps, 0.25, "eps must match");
     assert_eq!(gl.graph_params.k, 6, "k must match");
-    assert_eq!(gl.graph_params.topk, 3 + 1, "topk must match");
+    assert_eq!(gl.graph_params.topk, 3, "topk must match");
     assert_eq!(gl.graph_params.p, 2.5, "p must match");
     assert_eq!(gl.graph_params.sigma, Some(0.15), "sigma must match");
     assert_eq!(

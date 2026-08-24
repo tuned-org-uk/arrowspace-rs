@@ -15,6 +15,7 @@ mod test_motives;
 mod test_querying_proj;
 mod test_reduction;
 mod test_sequencing;
+mod test_smartcore_percolation;
 mod test_taumode;
 
 use std::sync::Once;
@@ -48,3 +49,4 @@ static CLUSTERING_TEST_DATA: Lazy<Vec<Vec<f64>>> = Lazy::new(|| {
     // generate synthetic data
     generate_test_data(99, 500, 12345)
 });
+
