@@ -786,20 +786,6 @@ impl ArrowSpaceBuilder {
         self
     }
 
-    /// Define the results number of k-neighbours from the
-    ///  max number of neighbours connections (`GraphParams::k` -> result_k)
-    /// Check if the passed cap_k is reasonable and define an euristics to
-    ///  select a proper value.
-    fn define_result_k(&mut self) {
-        // normalise values for small values,
-        // leave to the user for higher values
-        if self.lambda_k <= 5 {
-            self.lambda_topk = 3;
-        } else if self.lambda_k < 10 {
-            self.lambda_topk = 4;
-        };
-    }
-
     // -------------------- Build --------------------
 
     /// Build the ArrowSpace and the selected Laplacian (if any).
@@ -820,9 +806,6 @@ impl ArrowSpaceBuilder {
         let n_features = rows.first().map(|r| r.len()).unwrap_or(0);
         self.nfeatures = n_features;
         let start = std::time::Instant::now();
-
-        // set baseline for topk
-        self.define_result_k();
 
         // generate random seed if not provided
         if self.clustering_seed.is_none() {
@@ -1075,9 +1058,6 @@ impl ArrowSpaceBuilder {
         let n_features = rows.shape().1;
         self.nfeatures = n_features;
         let start = std::time::Instant::now();
-
-        // set baseline for topk
-        self.define_result_k();
 
         // generate random seed if not provided
         if self.clustering_seed.is_none() {

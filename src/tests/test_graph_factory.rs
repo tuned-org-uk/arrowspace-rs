@@ -262,7 +262,7 @@ fn test_builder_parameter_preservation() {
     // Verify all parameters are preserved
     assert_eq!(gl.graph_params.eps, 0.123, "eps must match");
     assert_eq!(gl.graph_params.k, 7, "k must match");
-    assert_eq!(gl.graph_params.topk, 3 + 1, "topk must match");
+    assert_eq!(gl.graph_params.topk, 3, "topk must match");
     assert_eq!(gl.graph_params.p, 3.5, "p must match");
     assert_eq!(gl.graph_params.sigma, Some(0.456), "sigma must match");
     assert_eq!(
