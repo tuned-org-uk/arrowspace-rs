@@ -10,6 +10,7 @@ mod test_energy_builder;
 mod test_energy_search;
 mod test_graph_factory;
 mod test_laplacian;
+mod test_laplacian_scaling;
 mod test_laplacian_unnormalised;
 mod test_motives;
 mod test_querying_proj;
@@ -49,4 +50,3 @@ static CLUSTERING_TEST_DATA: Lazy<Vec<Vec<f64>>> = Lazy::new(|| {
     // generate synthetic data
     generate_test_data(99, 500, 12345)
 });
-

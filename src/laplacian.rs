@@ -11,23 +11,14 @@
 //! 6. **Laplacian construction**: Builds L = D - A where D is degree matrix and A is adjacency matrix
 //!
 //! ## Compute Laplacian Complexity
-//! 1. **Build fastpair (CosinePair) structure**: `O(n × d × log n)`
-//! 2. **k-NN queries**: `O(n × k × log n × d)`
-//! - n queries (one per item)
-//! - Each query returns k neighbors
-//! - Each neighbor evaluation: `O(d)` for distance computation
-//! - Tree traversal: `O(log n)` expected depth
+//! 1. **Build lazy CosinePair structure**: `O(n × d)` row-norm precompute
+//!    (no all-pairs scan - see issue #141)
+//! 2. **k-NN queries**: exact cosine distance per candidate pair
+//!    - n queries (one per item), each scanning all n rows: `O(n × d)` per query
+//!    - Aggregate query cost: `O(n² × d)`, parallelised across rows with rayon
 //!
-//! **Total: `O(n × d × log n + n × k × d × log n)` = `O(n × k × d × log n)`**
-//!
-//! ## Speedup Factor
-//! Compared to `O(n_2)`: `n / (k × log n)`
-//!
-//! For typical values:
-//! - **n = 10,000 items, k = 10 neighbors, d = 384 features**
-//! - **Old**: 10,000² × 384 = **3.84 × 10¹⁰** operations
-//! - **New**: 10,000 × 10 × 384 × log₂(10,000) ≈ **5.1 × 10⁷** operations
-//! - **Speedup**: ~**750x faster!**
+//! **Total: `O(n² × d)`** with a small constant: no pairwise structures are
+//! materialised and memory stays `O(n × d + n × topk)`.
 
 use crate::graph::{GraphLaplacian, GraphParams};
 
@@ -206,26 +197,32 @@ fn _build_adjacency(
     params: &GraphParams,
     n: usize,
 ) -> Vec<Vec<(usize, f64)>> {
-    // Step 2: Build CosinePair structure - O(n × d × log n)
-    info!("Building CosinePair data structure");
+    // Step 2: Build lazy CosinePair structure - O(n × d) row-norm precompute.
+    // The eager constructor runs a Theta(n^2) init scan whose precomputed
+    // pair structures this function never reads: query_row_top_k recomputes
+    // distances from samples + row norms (issue #141).
+    info!("Building lazy CosinePair data structure");
     #[allow(clippy::unnecessary_mut_passed)]
-    let fastpair = CosinePair::with_top_k(items, params.topk + 1).unwrap();
+    let fastpair = CosinePair::lazy(items, params.topk + 1).unwrap();
     debug!("CosinePair structure built for {} items", n);
 
-    // Compute node degrees for sparsification scoring**
-    // This is fast: just count neighbors per node from k-NN results
-    info!("Computing degrees for inline sparsification");
-    let degrees: Vec<usize> = (0..n)
+    // Step 3: single kNN pass per row - candidates within eps are stored,
+    // degrees and weights derive from these lists with no re-query.
+    info!("Computing k-NN with lazy CosinePair: k={}", params.topk + 1);
+    let candidates: Vec<Vec<(f64, usize)>> = (0..n)
         .into_par_iter()
         .map(|i| {
             fastpair
                 .query_row_top_k(i, params.topk + 1)
                 .unwrap()
-                .iter()
-                .filter(|(dist, j)| i != *j && *dist <= params.eps)
-                .count()
+                .into_iter()
+                .filter(|&(distance, j)| i != j && distance <= params.eps)
+                .collect()
         })
         .collect();
+
+    // Compute node degrees for sparsification scoring from candidate lists
+    let degrees: Vec<usize> = candidates.iter().map(Vec::len).collect();
 
     let avg_degree = degrees.iter().sum::<usize>() as f64 / n as f64;
     let sparsify = avg_degree > 10.0; // Only sparsify if dense enough
@@ -239,32 +236,26 @@ fn _build_adjacency(
         debug!("Skipping sparsification (avg degree {:.1})", avg_degree);
     }
 
-    // Step 3: k-NN queries with **inline sparsification** - O(n × k × d × log n)
-    info!("Computing k-NN with CosinePair: k={}", params.topk + 1);
-    let adj_rows: Vec<Vec<(usize, f64)>> = (0..n)
+    // Step 4: weight assignment with inline sparsification - O(n × topk)
+    let adj_rows: Vec<Vec<(usize, f64)>> = candidates
         .into_par_iter()
-        .map(|i| {
-            let neighbors = fastpair.query_row_top_k(i, params.topk + 1).unwrap();
-
+        .enumerate()
+        .map(|(i, row_candidates)| {
             // Collect valid neighbors with weights
-            let mut valid_neighbors: Vec<(usize, f64, f64)> = neighbors
-                .iter()
+            let mut valid_neighbors: Vec<(usize, f64, f64)> = row_candidates
+                .into_iter()
                 .filter_map(|(distance, j)| {
-                    if i != *j && *distance <= params.eps {
-                        let weight =
-                            1.0 / (1.0 + (distance / params.sigma.unwrap_or(1.0)).powf(params.p));
-                        if weight > 1e-12 {
-                            // **INLINE SPARSIFICATION SCORE**
-                            // Score = weight * sqrt(degree_i * degree_j)
-                            let score = if sparsify {
-                                weight * ((degrees[i] * degrees[*j]) as f64).sqrt()
-                            } else {
-                                weight // No scoring overhead if not sparsifying
-                            };
-                            Some((*j, weight, score))
+                    let weight =
+                        1.0 / (1.0 + (distance / params.sigma.unwrap_or(1.0)).powf(params.p));
+                    if weight > 1e-12 {
+                        // **INLINE SPARSIFICATION SCORE**
+                        // Score = weight * sqrt(degree_i * degree_j)
+                        let score = if sparsify {
+                            weight * ((degrees[i] * degrees[j]) as f64).sqrt()
                         } else {
-                            None
-                        }
+                            weight // No scoring overhead if not sparsifying
+                        };
+                        Some((j, weight, score))
                     } else {
                         None
                     }
