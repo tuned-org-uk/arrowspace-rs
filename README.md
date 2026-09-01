@@ -96,10 +96,16 @@ let (aspace, graph) = ArrowSpaceBuilder::new()
     .with_lambda_graph(0.5, 3, 2.0, sigma: 0.25)
     .build(items);
 
-// prepare query vector
-let query = aspace.prepare_query_item(vec![1.5, 2.5, 2.0], &graph);
-// search the space
-let results = aspace.search_lambda_aware(&query, 1, alpha);
+// prepare query vector (fallible: returns ArrowSpaceError on NaN,
+// wrong dimensions or degenerate lambda)
+let lambda = aspace
+    .try_prepare_query_item(&[1.5, 2.5, 2.0], &graph)
+    .expect("valid query");
+let query = ArrowItem::new(vec![1.5, 2.5, 2.0], lambda);
+// search the space (fallible twin of the deprecated search_lambda_aware)
+let results = aspace
+    .try_search_lambda_aware(&query, 1, alpha)
+    .expect("prepared query");
 println!("{:?}", results);
 
 ```

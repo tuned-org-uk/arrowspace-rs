@@ -23,7 +23,7 @@ use crate::search::taumode::TauMode;
 ///
 /// Controls all stages of energy-aware graph construction: optical compression,
 /// diffusion, sub-centroid splitting, and energy-distance kNN computation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EnergyParams {
     /// Target number of centroids after optical compression. `None` disables compression.
     pub optical_tokens: Option<usize>,
@@ -631,7 +631,9 @@ impl EnergyMaps for ArrowSpace {
         gl_energy: &GraphLaplacian,
         k: usize,
     ) -> Vec<(usize, f64)> {
-        let query_lambda = self.prepare_query_item(query, gl_energy);
+        let query_lambda = self
+            .try_prepare_query_item(query, gl_energy)
+            .expect("search_energy");
 
         // Pre-compute query norm (once)
         let query_norm = query.iter().map(|x| x * x).sum::<f64>().sqrt();
@@ -1272,7 +1274,9 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                 };
 
                 // 1) Compute item's synthetic lambda via taumode
-                let item_lambda = aspace.prepare_query_item(&projected_item, &gl_energy);
+                let item_lambda = aspace
+                    .try_prepare_query_item(&projected_item, &gl_energy)
+                    .expect("build_energy lambda assignment");
 
                 // 2) Find nearest subcentroid by linear synthetic distance in lambda-space
                 //    distance := |lambda_item - lambda_subcentroid|

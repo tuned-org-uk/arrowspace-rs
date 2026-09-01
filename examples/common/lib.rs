@@ -371,7 +371,11 @@ pub fn search_effectiveness_score(
         let query_item = ArrowItem::new(query, 0.0);
 
         // Test lambda-aware search vs regular cosine
-        let lambda_results = aspace.search_lambda_aware(&query_item, k, alpha);
+        let lambda_results = match aspace.try_search_lambda_aware(&query_item, k, alpha) {
+            Ok(results) => results,
+            // unprepared (λ=0) query: skip, same as dimension-incompatible ones
+            Err(_) => continue,
+        };
 
         if lambda_results.is_empty() {
             continue;

@@ -71,10 +71,14 @@ fn main() {
 
     // Pure cosine search (alpha=1.0)
     let mut query_item = ArrowItem::new(query.as_ref(), 0.0);
-    query_item.lambda = aspace_cosine.prepare_query_item(&query_item.item, &gl_cosine);
+    query_item.lambda = aspace_cosine
+        .try_prepare_query_item(&query_item.item, &gl_cosine)
+        .expect("prepare query");
 
     let start = Instant::now();
-    let results_cosine = aspace_cosine.search_lambda_aware(&query_item, k + 1, 1.0);
+    let results_cosine = aspace_cosine
+        .try_search_lambda_aware(&query_item, k + 1, 1.0)
+        .expect("prepared query");
     let search_time_cosine = start.elapsed();
 
     print_results_table("Cosine-Based Results (α=1.0)", &results_cosine, &ids);
@@ -87,7 +91,9 @@ fn main() {
 
     // Lambda-aware search (alpha=0.7)
     info!("\n🔬 Testing λ-aware blend (α=0.7: 70% cosine + 30% energy)...");
-    let results_lambda = aspace_cosine.search_lambda_aware(&query_item, k + 1, 0.7);
+    let results_lambda = aspace_cosine
+        .try_search_lambda_aware(&query_item, k + 1, 0.7)
+        .expect("prepared query");
     print_results_table("λ-Aware Results (α=0.7)", &results_lambda, &ids);
 
     let ids_lambda: Vec<usize> = results_lambda.iter().map(|x| x.0).collect();
@@ -204,7 +210,9 @@ fn main() {
 
     info!("Testing how results change as α decreases (cosine → λ blend):\n");
     for alpha in [1.0, 0.8, 0.6, 0.4, 0.2, 0.0].iter() {
-        let results = aspace_cosine.search_lambda_aware(&query_item, k, *alpha);
+        let results = aspace_cosine
+            .try_search_lambda_aware(&query_item, k, *alpha)
+            .expect("prepared query");
         let top3: Vec<String> = results
             .iter()
             .take(3)
