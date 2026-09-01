@@ -244,11 +244,15 @@ impl EigenMaps for ArrowSpace {
         );
 
         trace!("Preparing query λ with projection and taumode policy");
-        let q_lambda = self.prepare_query_item(item, gl);
+        let q_lambda = self
+            .try_prepare_query_item(item, gl)
+            .expect("EigenMaps::search");
         let q = ArrowItem::new(item, q_lambda);
 
         // λ-aware semantic ranking
-        let results = self.search_lambda_aware(&q, k, alpha);
+        let results = self
+            .try_search_lambda_aware(&q, k, alpha)
+            .expect("EigenMaps::search");
 
         info!(
             "Search complete: {} results returned, top_score={:.6}",

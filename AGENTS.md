@@ -8,6 +8,17 @@ Design background: *The ArrowSpace Algorithm: From Graph Wiring to τ-Mode
 Spectral Search* — L. Moriondo, DOI
 [10.5281/zenodo.21679021](https://zenodo.org/records/21679021).
 
+## 0. Check the Python bindings for downstream usage
+
+Before changing any public API — signatures, enum variants, panic behaviour,
+removals — ALWAYS inspect the Python bindings at
+[pyarrowspace](https://github.com/tuned-org-uk/pyarrowspace) (`src/lib.rs`)
+for actual downstream call sites. The Rust test suite does not cover the FFI
+surface: a signature that is "unused" inside this crate may still be
+load-bearing across the PyO3 boundary. Prefer deprecation over breakage
+(e.g. the `try_*` twins from #122/#153); never assume a method is safe to
+repurpose without grepping the bindings first.
+
 ## 1. The graph Laplacian is the centerpiece
 
 Every capability — search, clustering, partitioning, sequencing, analysis,

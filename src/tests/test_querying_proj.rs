@@ -7,6 +7,10 @@
 //! 4. Lambda-aware similarity search in clustered space
 //! 5. Hybrid search combining semantic and spectral scoring
 
+// Exercises the deprecated panicking wrappers on purpose:
+// the backward-compat surface must keep its documented panic behaviour (#153).
+#![allow(deprecated)]
+
 use log::{debug, warn};
 
 use crate::{

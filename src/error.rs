@@ -7,7 +7,10 @@
 //!
 //! The infallible wrappers (`prepare_query_item`, `search_lambda_aware`, …)
 //! delegate to the `try_*` variants and `.expect()` on `Err`, preserving their
-//! original panic behaviour for existing callers.
+//! original panic behaviour for existing callers. Since #153 they are
+//! `#[deprecated]`: the `try_*` variants are the primary documented entry
+//! points, and the wrappers remain only as a backward-compatibility surface
+//! for downstream callers that have not migrated yet.
 
 use std::fmt;
 

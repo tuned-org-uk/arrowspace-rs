@@ -127,10 +127,12 @@ fn main() {
     // Prepare query as ArrowItem
     // Note: query lambda is set to 0.0 initially; it will be computed for hybrid search
     let mut query_item = ArrowItem::new(query.as_ref(), 0.0);
-    query_item.lambda = aspace.prepare_query_item(&query_item.item, &gl);
+    query_item.lambda = aspace
+        .try_prepare_query_item(&query_item.item, &gl)
+        .expect("prepare query");
 
     println!("\n=============================================");
-    println!("USING search_lambda_aware() METHOD");
+    println!("USING try_search_lambda_aware() METHOD");
     println!("=============================================");
 
     // ----------------------------
@@ -138,10 +140,12 @@ fn main() {
     // ----------------------------
     println!("\n--- Test 1: Pure Cosine Similarity (alpha=1.0) ---");
     let alpha = 1.0;
-    let results_cosine = aspace.search_lambda_aware(&query_item, k + 1, alpha);
+    let results_cosine = aspace
+        .try_search_lambda_aware(&query_item, k + 1, alpha)
+        .expect("prepared query");
 
     println!(
-        "ArrowSpace search_lambda_aware (alpha={}) top-{}+1:",
+        "ArrowSpace try_search_lambda_aware (alpha={}) top-{}+1:",
         alpha, k
     );
     for (rank, (i, s)) in results_cosine.iter().enumerate() {
@@ -165,10 +169,12 @@ fn main() {
     // ----------------------------
     println!("\n--- Test 2: Lambda-Aware Search (alpha=0.9) ---");
     let alpha = 0.9;
-    let results_lambda = aspace.search_lambda_aware(&query_item, k + 5, alpha);
+    let results_lambda = aspace
+        .try_search_lambda_aware(&query_item, k + 5, alpha)
+        .expect("prepared query");
 
     println!(
-        "ArrowSpace search_lambda_aware (alpha={}) top-{}+5:",
+        "ArrowSpace try_search_lambda_aware (alpha={}) top-{}+5:",
         alpha, k
     );
     for (rank, (i, s)) in results_lambda.iter().enumerate() {
@@ -191,7 +197,9 @@ fn main() {
     println!("This shows how results transition from pure cosine to pure lambda-based");
 
     for alpha in [0.8, 0.7, 0.6, 0.55, 0.4].iter() {
-        let results = aspace.search_lambda_aware(&query_item, topk, *alpha);
+        let results = aspace
+            .try_search_lambda_aware(&query_item, topk, *alpha)
+            .expect("prepared query");
 
         println!(
             "\nAlpha={:.1} ({}% cosine, {}% lambda):",
@@ -210,8 +218,10 @@ fn main() {
     println!("\n--- Test 4: Verification Against Manual Implementation ---");
     let alpha = 0.7;
 
-    // Using search_lambda_aware
-    let auto_results = aspace.search_lambda_aware(&query_item, k, alpha);
+    // Using try_search_lambda_aware
+    let auto_results = aspace
+        .try_search_lambda_aware(&query_item, k, alpha)
+        .expect("prepared query");
 
     // Manual implementation for comparison
     let mut manual_results: Vec<(usize, f64)> = (0..n_items)
@@ -227,7 +237,7 @@ fn main() {
     manual_results.truncate(k);
 
     println!("Comparison at alpha={}:", alpha);
-    println!("\nAutomatic (search_lambda_aware):");
+    println!("\nAutomatic (try_search_lambda_aware):");
     for (rank, (i, s)) in auto_results.iter().enumerate() {
         println!("  {}. idx={} ({}) score={:.6}", rank + 1, i, ids[*i], s);
     }
@@ -257,10 +267,12 @@ fn main() {
 
     let iterations = 100;
 
-    // Benchmark search_lambda_aware (parallel)
+    // Benchmark try_search_lambda_aware (parallel)
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = aspace.search_lambda_aware(&query_item, k, 0.7);
+        let _ = aspace
+            .try_search_lambda_aware(&query_item, k, 0.7)
+            .expect("prepared query");
     }
     let parallel_time = start.elapsed();
 
@@ -281,7 +293,7 @@ fn main() {
     let sequential_time = start.elapsed();
 
     println!("Performance over {} iterations:", iterations);
-    println!("  Parallel (search_lambda_aware): {:?}", parallel_time);
+    println!("  Parallel (try_search_lambda_aware): {:?}", parallel_time);
     println!("  Sequential (manual loop):        {:?}", sequential_time);
     println!(
         "  Speedup: {:.2}x",

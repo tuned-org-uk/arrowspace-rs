@@ -4,6 +4,10 @@
 //! typed `ArrowSpaceError` variants instead of panicking, and that the existing
 //! infallible wrappers preserve their panic behaviour for backward compatibility.
 
+// Exercises the deprecated panicking wrappers on purpose:
+// the backward-compat surface must keep its documented panic behaviour (#153).
+#![allow(deprecated)]
+
 use crate::builder::ArrowSpaceBuilder;
 use crate::core::{ArrowItem, ArrowSpace};
 use crate::error::ArrowSpaceError;

@@ -2,8 +2,8 @@
 //!
 //! This module configures and builds `ArrowSpace` instances and their associated
 //! Laplacians from raw item vectors. It supports multiple pipelines:
-//! - EigenMaps (`build` and `build_for_persistence` with `Pipeline::Eigen`)
-//! - EnergyMaps (`build_energy` and `build_for_persistence` with `Pipeline::Energy`)
+//! - EigenMaps (`build` and `build_for_persistence` with `PipelineKind::Eigen`)
+//! - EnergyMaps (`build_energy` and `build_for_persistence` with `PipelineKind::Energy`)
 
 use log::{debug, info, trace, warn};
 use rayon::prelude::*;
@@ -28,12 +28,17 @@ use crate::sampling::{InlineSampler, SamplerType};
 use crate::search::taumode::TauMode;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
+#[deprecated(
+    since = "0.27.0",
+    note = "stringly-typed dispatch; use `PipelineKind` with `build_for_persistence` instead"
+)]
 pub enum Pipeline {
     Eigen,
     Energy,
     Default,
 }
 
+#[allow(deprecated)]
 impl FromStr for Pipeline {
     type Err = ();
 
@@ -43,6 +48,53 @@ impl FromStr for Pipeline {
             "energy" => Ok(Pipeline::Energy),
             "default" => Ok(Pipeline::Default),
             _ => Err(()),
+        }
+    }
+}
+
+/// Error returned when parsing an invalid pipeline name into
+/// [`PipelineKind`] (e.g. a typo like `"engery"`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidPipelineError(String);
+
+impl fmt::Display for InvalidPipelineError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid pipeline `{}`; expected `eigen`, `energy` or `default`",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for InvalidPipelineError {}
+
+/// Typed pipeline selector for [`ArrowSpaceBuilder::build_for_persistence`].
+///
+/// Replaces the stringly-typed dispatch (`"eigen"` / `"energy"`) so an invalid
+/// pipeline fails at compile time, and the energy parameters travel with the
+/// variant instead of an `Option` that is only meaningful for one value.
+///
+/// `FromStr` keeps stringly contexts (CLI, serde) ergonomic:
+/// `"eigen"` → [`PipelineKind::Eigen`], `"energy"`/`"default"` →
+/// [`PipelineKind::Energy`] with [`EnergyParams::default`]; anything else
+/// yields an [`InvalidPipelineError`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum PipelineKind {
+    /// EigenMaps pipeline (cosine kNN + λ-graph Laplacian).
+    Eigen,
+    /// EnergyMaps pipeline; carries the parameters for the energy stages.
+    Energy(EnergyParams),
+}
+
+impl FromStr for PipelineKind {
+    type Err = InvalidPipelineError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "eigen" => Ok(PipelineKind::Eigen),
+            "energy" | "default" => Ok(PipelineKind::Energy(EnergyParams::default())),
+            _ => Err(InvalidPipelineError(s.to_string())),
         }
     }
 }
@@ -1047,11 +1099,17 @@ impl ArrowSpaceBuilder {
     }
 
     /// Same as build but passing a `DenseMatrix` instead of a `Vec<Vec<..>>`
+    ///
+    /// The pipeline is selected with a typed [`PipelineKind`]:
+    /// [`PipelineKind::Eigen`] runs the EigenMaps pipeline;
+    /// [`PipelineKind::Energy`] runs the EnergyMaps pipeline and carries its
+    /// [`EnergyParams`]. Use `"eigen".parse::<PipelineKind>()` in stringly
+    /// contexts (CLI/serde) — an invalid name is an
+    /// [`InvalidPipelineError`], not a runtime panic.
     pub fn build_for_persistence(
         mut self,
         rows: DenseMatrix<f64>,
-        pipeline: &str,
-        energy_params: Option<EnergyParams>,
+        pipeline: PipelineKind,
     ) -> (ArrowSpace, GraphLaplacian) {
         let n_items = rows.shape().0;
         self.nitems = n_items;
@@ -1081,13 +1139,8 @@ impl ArrowSpaceBuilder {
             self.synthesis
         );
 
-        let pipeline = match pipeline.parse::<Pipeline>() {
-            Ok(p) => p,
-            Err(_) => panic!("Invalid pipeline value: {}", pipeline),
-        };
-
         match pipeline {
-            Pipeline::Eigen => {
+            PipelineKind::Eigen => {
                 // ============================================================
                 // Stage 1: Clustering with sampling and optional projection
                 // ============================================================
@@ -1137,14 +1190,10 @@ impl ArrowSpaceBuilder {
 
                 (aspace, gl)
             }
-            Pipeline::Energy | Pipeline::Default => {
+            PipelineKind::Energy(energy_params) => {
                 assert!(
                     self.use_dims_reduction,
                     "When using energy pipeline, dim reduction is needed"
-                );
-                assert!(
-                    energy_params.is_some(),
-                    "if using energy pipeline, energy_params should be some"
                 );
                 if self.prebuilt_spectral {
                     panic!(
@@ -1179,12 +1228,12 @@ impl ArrowSpaceBuilder {
                 }
 
                 // Step 2: Optional optical compression on centroids
-                if let Some(tokens) = energy_params.as_ref().unwrap().optical_tokens {
+                if let Some(tokens) = energy_params.optical_tokens {
                     // mutate centroids with compression
                     centroids = ArrowSpace::optical_compress_centroids(
                         &centroids,
                         tokens,
-                        energy_params.as_ref().unwrap().trim_quantile,
+                        energy_params.trim_quantile,
                     );
                 }
 
@@ -1198,14 +1247,14 @@ impl ArrowSpaceBuilder {
                 let sub_centroids: DenseMatrix<f64> = ArrowSpace::diffuse_and_split_subcentroids(
                     &centroids,
                     &l0,
-                    energy_params.as_ref().unwrap(),
+                    &energy_params,
                 );
 
                 assert_eq!(sub_centroids.shape().1, centroids.shape().1);
 
                 // Step 6: Build Laplacian on sub_centroids using energy dispersion
                 let (gl_energy, _, _) =
-                    self.build_energy_laplacian(&sub_centroids, energy_params.as_ref().unwrap());
+                    self.build_energy_laplacian(&sub_centroids, &energy_params);
 
                 assert_eq!(
                     gl_energy.shape().1,
@@ -1303,7 +1352,9 @@ impl ArrowSpaceBuilder {
                         };
 
                         // 1) Compute item's synthetic lambda via taumode
-                        let item_lambda = aspace.prepare_query_item(&projected_item, &gl_energy);
+                        let item_lambda = aspace
+                            .try_prepare_query_item(&projected_item, &gl_energy)
+                            .expect("energy pipeline lambda assignment");
 
                         // 2) Find nearest subcentroid by linear synthetic distance in lambda-space
                         //    distance := |lambda_item - lambda_subcentroid|

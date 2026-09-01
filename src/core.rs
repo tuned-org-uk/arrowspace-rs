@@ -899,27 +899,37 @@ impl ArrowSpace {
         }
     }
 
-    /// Compute query lambda for mode
+    /// Compute query lambda for mode (deprecated).
     ///
     /// Maps query to nearest subcentroid and returns its lambda.
-    /// Pre-computed subcentroids and lambdas are already stored in ArrowSpace.
     ///
-    /// # Panics
+    /// # Deprecation
     ///
-    /// Panics if the query contains non-finite values, has the wrong dimension,
-    /// or produces a degenerate lambda (~0). Use [`try_prepare_query_item`] to
+    /// Panics if the query contains non-finite values, has the wrong
+    /// dimension, or produces a degenerate lambda (~0). Use
+    /// [`try_prepare_query_item`](ArrowSpace::try_prepare_query_item) to
     /// obtain a typed [`ArrowSpaceError`] instead.
-    ///
-    /// [`try_prepare_query_item`]: ArrowSpace::try_prepare_query_item
+    #[deprecated(
+        since = "0.27.0",
+        note = "panics on non-finite query / dimension mismatch / degenerate lambda; use `try_prepare_query_item`"
+    )]
     pub fn prepare_query_item(&self, query: &[f64], gl: &GraphLaplacian) -> f64 {
         self.try_prepare_query_item(query, gl)
             .expect("prepare_query_item")
     }
 
-    /// Fallible variant of [`prepare_query_item`](ArrowSpace::prepare_query_item).
+    /// Maps a query to its nearest subcentroid and returns its lambda
+    /// (λτ read-out), applying projection and τ-mode policy.
     ///
-    /// Returns a typed [`ArrowSpaceError`] instead of panicking, so that FFI
-    /// bindings can surface catchable exceptions.
+    /// This is the primary query-path entry point: prefer it over the
+    /// deprecated [`prepare_query_item`](ArrowSpace::prepare_query_item)
+    /// wrapper.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed [`ArrowSpaceError`] instead of panicking when the
+    /// query contains non-finite values, has the wrong dimension, or
+    /// produces a degenerate lambda (~0).
     pub fn try_prepare_query_item(
         &self,
         query: &[f64],
@@ -1203,44 +1213,20 @@ impl ArrowSpace {
         );
     }
 
-    /// Lambda-aware top-k search against an ArrowItem query.
-    /// Single-pass parallel dual scoring with `ArrowScore`.
+    /// Lambda-aware top-k search against an ArrowItem query (deprecated).
     ///
     /// Returns indices and scores sorted descending by similarity.
-    /// Algorithm:
-    /// 1. Single parallel scan maintains:
-    ///    - Semantic top-1 (best cosine)
-    ///    - High semantic matches (cosine > 0.95)
-    ///    - Top-k lambda-aware candidates (min-heap)
-    /// 2. Union: high semantic + top-k lambda (deduplicated)
-    /// 3. Replace lowest lambda score with semantic top-1 if needed
     ///
-    /// # Performance
-    /// - O(N) scan with O(k log k) heap operations per thread
-    /// - No full array allocation or sorting
-    /// - Lock-free concurrent top-k tracking via DashMap
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use arrowspace::core::{ArrowItem, ArrowSpace};
-    ///
-    /// let aspace = ArrowSpace::from_items_default(
-    ///     vec![vec![1.0, 0.0], vec![1.0, 1.0], vec![0.0, 1.0]]
-    /// );
-    /// let q = ArrowItem::new(vec![1.0, 0.1], 0.5);
-    /// let res = aspace.search_lambda_aware(&q, 2, 0.7, 0.3);
-    /// assert_eq!(res.len(), 2);
-    /// assert!(res.1 >= 0.0);
-    /// ```
-    ///
-    /// # Panics
+    /// # Deprecation
     ///
     /// Panics if the query lambda is 0.0 (the item was not prepared) or the
-    /// query dimension does not match the index. Use [`try_search_lambda_aware`]
-    /// to obtain a typed [`ArrowSpaceError`] instead.
-    ///
-    /// [`try_search_lambda_aware`]: ArrowSpace::try_search_lambda_aware
+    /// query dimension does not match the index. Use
+    /// [`try_search_lambda_aware`](ArrowSpace::try_search_lambda_aware) to
+    /// obtain a typed [`ArrowSpaceError`] instead.
+    #[deprecated(
+        since = "0.27.0",
+        note = "panics on unprepared (λ=0) or dimension-mismatched queries; use `try_search_lambda_aware`"
+    )]
     #[inline]
     pub fn search_lambda_aware(
         &self,
@@ -1252,10 +1238,36 @@ impl ArrowSpace {
             .expect("search_lambda_aware")
     }
 
-    /// Fallible variant of [`search_lambda_aware`](ArrowSpace::search_lambda_aware).
+    /// λ-aware top-k search against an [`ArrowItem`] query.
     ///
-    /// Returns a typed [`ArrowSpaceError`] instead of panicking, so that FFI
-    /// bindings can surface catchable exceptions.
+    /// Single-pass scoring with `ArrowScore`; returns indices and scores
+    /// sorted descending by similarity (α-blend of cosine and λ-component
+    /// similarity).
+    ///
+    /// This is the primary search entry point: prefer it over the deprecated
+    /// [`search_lambda_aware`](ArrowSpace::search_lambda_aware) wrapper.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed [`ArrowSpaceError`] instead of panicking when the
+    /// query lambda is 0.0 (caller forgot to prepare the query via
+    /// [`try_prepare_query_item`](ArrowSpace::try_prepare_query_item)) or the
+    /// query dimension does not match the index.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use arrowspace::core::{ArrowItem, ArrowSpace};
+    ///
+    /// let aspace = ArrowSpace::from_items_default(
+    ///     vec![vec![1.0, 0.0], vec![1.0, 1.0], vec![0.0, 1.0]]
+    /// );
+    /// let lambda = aspace.try_prepare_query_item(&[1.0, 0.1], &gl).unwrap();
+    /// let q = ArrowItem::new(vec![1.0, 0.1], lambda);
+    /// let res = aspace.try_search_lambda_aware(&q, 2, 0.7).unwrap();
+    /// assert_eq!(res.len(), 2);
+    /// assert!(res[0].1 >= 0.0);
+    /// ```
     #[inline]
     pub fn try_search_lambda_aware(
         &self,
@@ -1439,7 +1451,9 @@ impl ArrowSpace {
         gl: &GraphLaplacian,
         k: usize,
     ) -> Vec<(usize, f64)> {
-        let q_lambda = self.prepare_query_item(query, gl); // f64
+        let q_lambda = self
+            .try_prepare_query_item(query, gl)
+            .expect("search_linear_sorted"); // f64
         self.lambdas_sorted
             .range_bylambda(q_lambda, k, gl.graph_params.p)
     }
@@ -1508,7 +1522,8 @@ impl ArrowSpace {
         let query: ArrowItem = if relative_eq!(query.lambda, 0.0, epsilon = 1e-9) {
             ArrowItem::new(
                 query.item.as_ref(),
-                self.prepare_query_item(&query.item, gl),
+                self.try_prepare_query_item(&query.item, gl)
+                    .expect("range_search"),
             )
         } else {
             query.clone()

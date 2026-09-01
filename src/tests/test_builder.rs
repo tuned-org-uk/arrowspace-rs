@@ -1,11 +1,18 @@
+
+// Exercises the deprecated panicking wrappers on purpose:
+// the backward-compat surface must keep its documented panic behaviour (#153).
+#![allow(deprecated)]
+
 use approx::relative_eq;
 use log::{debug, info};
 use serial_test::serial;
 use smartcore::linalg::basic::arrays::Array;
+use smartcore::linalg::basic::matrix::DenseMatrix;
 
+use crate::maps::energymaps::EnergyParams;
 use crate::tests::init;
 use crate::{
-    builder::ArrowSpaceBuilder,
+    builder::{ArrowSpaceBuilder, PipelineKind},
     sampling::SamplerType,
     tests::test_data::{make_gaussian_blob, make_gaussian_hd, make_moons_hd},
 };
@@ -564,4 +571,95 @@ fn test_builder_unit_norm_diagonal_similarity() {
 
     // Now should be identical
     assert_eq!(aspace_norm.n_clusters, aspace_raw.n_clusters);
+}
+
+// ============================================================================
+// PipelineKind dispatch (issue #154)
+// ============================================================================
+
+#[test]
+fn test_pipeline_kind_from_str_parses_eigen_and_energy() {
+    assert_eq!("eigen".parse::<PipelineKind>().unwrap(), PipelineKind::Eigen);
+    assert_eq!(
+        "energy".parse::<PipelineKind>().unwrap(),
+        PipelineKind::Energy(EnergyParams::default())
+    );
+    // Legacy alias: "default" previously dispatched to the energy arm
+    assert_eq!(
+        "default".parse::<PipelineKind>().unwrap(),
+        PipelineKind::Energy(EnergyParams::default())
+    );
+}
+
+#[test]
+fn test_pipeline_kind_from_str_rejects_typos_with_informative_error() {
+    let err = "engery".parse::<PipelineKind>().unwrap_err();
+    assert!(err.to_string().contains("engery"), "got: {err}");
+    assert!(
+        err.to_string().to_lowercase().contains("eigen"),
+        "error should list valid pipelines, got: {err}"
+    );
+}
+
+#[test]
+fn test_pipeline_kind_from_str_error_is_std_error() {
+    fn assert_error<E: std::error::Error>(_: &E) {}
+    assert_error(&"nope".parse::<PipelineKind>().unwrap_err());
+}
+
+#[test]
+fn test_build_for_persistence_eigen_matches_build() {
+    let rows = make_gaussian_hd(40, 0.5);
+
+    let (aspace_build, gl_build) = ArrowSpaceBuilder::new()
+        .with_lambda_graph(1.0, 5, 3, 2.0, None)
+        .with_dims_reduction(false, None)
+        .with_inline_sampling(None)
+        .with_seed(42)
+        .build(rows.clone());
+
+    let dense = DenseMatrix::from_2d_vec(&rows).unwrap();
+    let (aspace_persist, gl_persist) = ArrowSpaceBuilder::new()
+        .with_lambda_graph(1.0, 5, 3, 2.0, None)
+        .with_dims_reduction(false, None)
+        .with_inline_sampling(None)
+        .with_seed(42)
+        .build_for_persistence(dense, PipelineKind::Eigen);
+
+    assert_eq!(aspace_build.nitems, aspace_persist.nitems);
+    assert_eq!(aspace_build.nfeatures, aspace_persist.nfeatures);
+    assert_eq!(gl_build.nnodes, gl_persist.nnodes);
+    let l1 = aspace_build.lambdas();
+    let l2 = aspace_persist.lambdas();
+    assert_eq!(l1.len(), l2.len());
+    for (a, b) in l1.iter().zip(l2.iter()) {
+        assert!(
+            (a - b).abs() < 1e-12,
+            "lambdas diverge between build and build_for_persistence: {a} vs {b}"
+        );
+    }
+}
+
+#[test]
+fn test_build_for_persistence_energy_smoke() {
+    let rows = make_gaussian_hd(40, 0.5);
+    let dense = DenseMatrix::from_2d_vec(&rows).unwrap();
+
+    let builder = ArrowSpaceBuilder::new()
+        .with_lambda_graph(1.0, 5, 3, 2.0, None)
+        .with_dims_reduction(true, Some(0.3))
+        .with_inline_sampling(None)
+        .with_seed(42);
+
+    let params = EnergyParams::new(&builder);
+    let (aspace, gl) = builder.build_for_persistence(dense, PipelineKind::Energy(params));
+
+    assert!(aspace.nitems > 0);
+    assert_eq!(aspace.nfeatures, 100);
+    assert!(gl.nnodes > 0 && gl.nnz() > 0);
+    assert!(aspace.lambdas.iter().any(|&l| l != 0.0));
+    assert!(
+        aspace.subcentroid_lambdas.is_some(),
+        "energy pipeline must populate subcentroid lambdas"
+    );
 }
