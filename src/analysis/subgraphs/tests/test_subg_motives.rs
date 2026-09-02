@@ -1,10 +1,28 @@
 use crate::analysis::motives::MotiveConfig;
 use crate::analysis::subgraphs::{Subgraph, SubgraphConfig, SubgraphsMotive};
 use crate::builder::ArrowSpaceBuilder;
+use crate::error::ArrowSpaceError;
+use crate::maps::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::tests::test_data::make_gaussian_cliques_multi;
 
 use log::debug;
 use smartcore::linalg::basic::arrays::Array;
+
+/// Build an energy-mode fixture: 300 points, 10 cliques, 100 dims.
+///
+/// `spot_subg_motives` requires an EnergyMaps build (issue #161): the
+/// pipeline needs `sub_centroids` and `centroid_map`, and `build_energy`
+/// requires dimensionality reduction to be enabled.
+fn energy_fixture() -> (crate::core::ArrowSpace, crate::graph::GraphLaplacian) {
+    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 100, 999);
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.4, 12, 8, 2.0, None)
+        .with_seed(999)
+        .with_dims_reduction(true, Some(0.3))
+        .with_inline_sampling(None);
+    let p = EnergyParams::new(&builder);
+    builder.build_energy(rows, p)
+}
 
 #[test]
 fn test_subgraph_from_parent() {
@@ -62,14 +80,36 @@ fn test_subgraph_rayleigh_computation() {
 }
 
 #[test]
+fn test_try_spot_subg_motives_rejects_eigenmaps_build() {
+    crate::init();
+
+    // Issue #161: EigenMaps builds lack sub_centroids/centroid_map; the
+    // energy subgraph path must return a typed error, not degrade to
+    // feature-space motif detection mislabelled as items.
+    let rows = make_gaussian_cliques_multi(48, 0.2, 4, 120, 3407);
+    let (aspace, gl) = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.4, 12, 8, 2.0, None)
+        .with_seed(3407)
+        .build(rows);
+
+    let cfg = SubgraphConfig {
+        min_size: 3,
+        ..Default::default()
+    };
+    let err = gl
+        .try_spot_subg_motives(&aspace, &cfg)
+        .expect_err("EigenMaps builds must be rejected");
+    assert!(
+        matches!(err, ArrowSpaceError::EnergyModeRequired { .. }),
+        "expected EnergyModeRequired, got: {err}"
+    );
+}
+
+#[test]
 fn test_spot_subgraphs_energy_basic() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 100, 999);
-    let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(0.4, 12, 8, 2.0, None)
-        .with_seed(999)
-        .build(rows);
+    let (aspace, gl) = energy_fixture();
 
     let cfg = SubgraphConfig {
         motives: MotiveConfig {
@@ -84,7 +124,9 @@ fn test_spot_subgraphs_energy_basic() {
         min_size: 5,
     };
 
-    let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
+    let subgraphs = gl
+        .try_spot_subg_motives(&aspace, &cfg)
+        .expect("energy build must satisfy energy-mode requirements");
 
     if subgraphs.is_empty() {
         debug!("No subgraphs extracted (may need different params)");
@@ -133,12 +175,7 @@ fn test_spot_subgraphs_energy_basic() {
 fn test_spot_subgraphs_energy_with_item_mapping() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 100, 999);
-    let builder = ArrowSpaceBuilder::new()
-        .with_lambda_graph(0.4, 12, 8, 2.0, None)
-        .with_seed(999);
-
-    let (aspace, gl) = builder.build(rows);
+    let (aspace, gl) = energy_fixture();
 
     let cfg = SubgraphConfig {
         motives: MotiveConfig {
@@ -153,7 +190,9 @@ fn test_spot_subgraphs_energy_with_item_mapping() {
         min_size: 5,
     };
 
-    let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
+    let subgraphs = gl
+        .try_spot_subg_motives(&aspace, &cfg)
+        .expect("energy build must satisfy energy-mode requirements");
 
     if subgraphs.is_empty() {
         debug!("No energy subgraphs extracted");
@@ -210,13 +249,7 @@ fn test_spot_subgraphs_energy_with_item_mapping() {
 fn test_spot_subgraphs_energy_multi_motifs() {
     crate::init();
 
-    // 300 points, 10 cliques, tight clusters, 50 dimensions → expect ~10 motifs
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 100, 999);
-
-    let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(0.35, 14, 10, 2.0, None)
-        .with_seed(999)
-        .build(rows);
+    let (aspace, gl) = energy_fixture();
 
     let cfg = SubgraphConfig {
         motives: MotiveConfig {
@@ -231,7 +264,9 @@ fn test_spot_subgraphs_energy_multi_motifs() {
         min_size: 6,
     };
 
-    let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
+    let subgraphs = gl
+        .try_spot_subg_motives(&aspace, &cfg)
+        .expect("energy build must satisfy energy-mode requirements");
 
     if subgraphs.len() < 2 {
         debug!(
@@ -288,11 +323,7 @@ fn test_spot_subgraphs_energy_multi_motifs() {
 fn test_subgraph_energy_rayleigh_filter() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 100, 999);
-    let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(0.4, 12, 8, 2.0, None)
-        .with_seed(999)
-        .build(rows);
+    let (aspace, gl) = energy_fixture();
 
     // Strict Rayleigh filter to test filtering behavior.
     let cfg_strict = SubgraphConfig {
@@ -308,7 +339,9 @@ fn test_subgraph_energy_rayleigh_filter() {
         min_size: 5,
     };
 
-    let subgraphs_strict = gl.spot_subg_motives(&aspace, &cfg_strict);
+    let subgraphs_strict = gl
+        .try_spot_subg_motives(&aspace, &cfg_strict)
+        .expect("energy build must satisfy energy-mode requirements");
 
     // Relaxed Rayleigh filter.
     let cfg_relaxed = SubgraphConfig {
@@ -316,7 +349,9 @@ fn test_subgraph_energy_rayleigh_filter() {
         ..cfg_strict
     };
 
-    let subgraphs_relaxed = gl.spot_subg_motives(&aspace, &cfg_relaxed);
+    let subgraphs_relaxed = gl
+        .try_spot_subg_motives(&aspace, &cfg_relaxed)
+        .expect("energy build must satisfy energy-mode requirements");
 
     // Relaxed filter should yield >= strict filter results.
     assert!(
@@ -335,11 +370,7 @@ fn test_subgraph_energy_rayleigh_filter() {
 fn test_subgraph_structure_clique_data() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(200, 0.3, 6, 100, 999);
-    let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(0.35, 14, 10, 2.0, None)
-        .with_seed(999)
-        .build(rows);
+    let (aspace, gl) = energy_fixture();
 
     let cfg = SubgraphConfig {
         motives: MotiveConfig {
@@ -354,7 +385,9 @@ fn test_subgraph_structure_clique_data() {
         min_size: 8, // minimum ITEM count
     };
 
-    let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
+    let subgraphs = gl
+        .try_spot_subg_motives(&aspace, &cfg)
+        .expect("energy build must satisfy energy-mode requirements");
 
     if subgraphs.is_empty() {
         debug!("No subgraphs extracted with these strict parameters");

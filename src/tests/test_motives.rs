@@ -1,4 +1,5 @@
 use crate::analysis::motives::{MotiveConfig, Motives};
+use crate::analysis::subgraphs::SubgraphsMotive;
 use crate::builder::ArrowSpaceBuilder;
 use crate::maps::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::tests::test_data::make_gaussian_cliques;
@@ -103,7 +104,9 @@ fn test_motives_energy_basic() {
         jaccard_dedup: 0.8,
     };
 
-    let motifs = gl_energy.spot_motives_energy(&aspace, &cfg);
+    let motifs = gl_energy
+        .try_spot_motives_energy(&aspace, &cfg)
+        .expect("energy build must satisfy energy-mode requirements");
 
     info!("Found {} motifs (energy):", motifs.len());
     for (i, m) in motifs.iter().enumerate() {
@@ -162,7 +165,9 @@ fn test_motives_eigen_vs_energy_consistency() {
         .build_energy(rows, p);
 
     // Energy-aware motifs: discovered on subcentroid graph, mapped to items
-    let motifs_eng = gl_eng.spot_motives_energy(&aspace_eng, &cfg);
+    let motifs_eng = gl_eng
+        .try_spot_motives_energy(&aspace_eng, &cfg)
+        .expect("energy build must satisfy energy-mode requirements");
     debug!("Eigen motifs ({}): {:?}", motifs_eig.len(), motifs_eig);
     debug!("Energy motifs ({}): {:?}", motifs_eng.len(), motifs_eng);
     assert!(
@@ -287,7 +292,9 @@ fn test_motives_energy_stable() {
             max_sets: 64,
             jaccard_dedup: 0.8,
         };
-        gl_eng.spot_motives_energy(&aspace_eng, &cfg)
+        gl_eng
+            .try_spot_motives_energy(&aspace_eng, &cfg)
+            .expect("energy build must satisfy energy-mode requirements")
     };
 
     for motifs in [build(), build()] {
@@ -303,6 +310,99 @@ fn test_motives_energy_stable() {
                 m
             );
         }
+    }
+}
+
+#[test]
+fn test_spot_subg_motives_eigenmaps_must_not_return_feature_indices() {
+    use crate::error::ArrowSpaceError;
+
+    crate::tests::init();
+
+    // Issue #161 regression guard: on an EigenMaps build (no sub_centroids,
+    // no centroid_map) spot_subg_motives used to run motif detection over the
+    // F×F bootstrap Laplacian — whose nodes enumerate FEATURES — and label
+    // the results as item_indices. With N=48 items and F=120 features the
+    // namespaces cannot be confused: the pre-fix failure returned ids in
+    // 9..=117 on this exact fixture. The fix rejects the call instead.
+    let rows = crate::tests::test_data::make_gaussian_cliques_multi(48, 0.2, 4, 120, 3407);
+    let (aspace, gl) = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.4, 12, 8, 2.0, None)
+        .with_seed(3407)
+        .build(rows);
+
+    let cfg = crate::analysis::subgraphs::SubgraphConfig {
+        min_size: 3,
+        ..Default::default()
+    };
+    let err = gl
+        .try_spot_subg_motives(&aspace, &cfg)
+        .expect_err("EigenMaps builds must be rejected, not served feature-space indices");
+    assert!(
+        matches!(err, ArrowSpaceError::EnergyModeRequired { .. }),
+        "expected EnergyModeRequired, got: {err}"
+    );
+}
+
+#[test]
+fn test_try_spot_motives_energy_rejects_eigenmaps_build() {
+    use crate::error::ArrowSpaceError;
+
+    crate::tests::init();
+
+    // Issue #161: the energy path must refuse EigenMaps builds instead of
+    // silently degrading to feature-space motif detection.
+    let rows = make_gaussian_cliques(12, 0.04, 12, 10, 3407);
+    let (aspace, gl) = ArrowSpaceBuilder::new()
+        .with_seed(3407)
+        .with_lambda_graph(0.4, 14, 8, 2.0, None)
+        .with_inline_sampling(None)
+        .build(rows);
+
+    let cfg = MotiveConfig::default();
+    let err = gl
+        .try_spot_motives_energy(&aspace, &cfg)
+        .expect_err("EigenMaps builds must be rejected");
+    assert!(
+        matches!(err, ArrowSpaceError::EnergyModeRequired { .. }),
+        "expected EnergyModeRequired, got: {err}"
+    );
+}
+
+#[test]
+fn test_try_spot_motives_energy_returns_item_space_indices() {
+    crate::tests::init();
+
+    // On a genuine energy build the fallible path succeeds and every motif
+    // index lives in item space (0..nitems), never in subcentroid space.
+    let rows = make_gaussian_cliques(12, 0.04, 12, 10, 3407);
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_seed(3407)
+        .with_lambda_graph(0.35, 18, 10, 2.0, None)
+        .with_dims_reduction(true, Some(0.3))
+        .with_inline_sampling(None);
+    let p = crate::maps::energymaps::EnergyParams::new(&builder);
+    let (aspace, gl) = builder.build_energy(rows, p);
+
+    let cfg = MotiveConfig {
+        top_l: 16,
+        min_triangles: 2,
+        min_clust: 0.35,
+        max_motif_size: 24,
+        max_sets: 64,
+        jaccard_dedup: 0.8,
+    };
+    let motifs = gl
+        .try_spot_motives_energy(&aspace, &cfg)
+        .expect("energy build must satisfy the energy-mode requirements");
+
+    assert!(!motifs.is_empty(), "energy pipeline returned no motifs");
+    for m in &motifs {
+        assert!(
+            m.iter().all(|&i| i < aspace.nitems),
+            "motif {m:?} leaves item space 0..{}",
+            aspace.nitems
+        );
     }
 }
 

@@ -118,14 +118,21 @@ impl Subgraph {
 }
 
 impl SubgraphsMotive for GraphLaplacian {
-    fn spot_subg_motives(&self, aspace: &ArrowSpace, cfg: &SubgraphConfig) -> Vec<Subgraph> {
+    fn try_spot_subg_motives(
+        &self,
+        aspace: &ArrowSpace,
+        cfg: &SubgraphConfig,
+    ) -> Result<Vec<Subgraph>, crate::error::ArrowSpaceError> {
+        use crate::error::ArrowSpaceError;
+
         info!(
             "Spotting subgraphs with motives: topl={}, mintri={}, minsize={}",
             cfg.motives.top_l, cfg.motives.min_triangles, cfg.min_size
         );
 
         // 1. Run energy motif detection (subcentroid space → item space).
-        let item_motifs: Vec<Vec<usize>> = self.spot_motives_energy(aspace, &cfg.motives);
+        //    Propagates EnergyModeRequired if the build is not energy-mode.
+        let item_motifs: Vec<Vec<usize>> = self.try_spot_motives_energy(aspace, &cfg.motives)?;
 
         info!(
             "Motif detection returned {} item-space candidates",
@@ -133,17 +140,18 @@ impl SubgraphsMotive for GraphLaplacian {
         );
 
         // 2. Map item indices → centroid indices for each motif.
-        let centroid_map = if let Some(ref cmap) = aspace.centroid_map {
-            cmap.as_slice()
-        } else if !aspace.cluster_assignments.is_empty() {
-            let temp_map: Vec<usize> = aspace
-                .cluster_assignments
-                .iter()
-                .map(|&opt| opt.unwrap_or(0))
-                .collect();
-            Box::leak(temp_map.into_boxed_slice())
-        } else {
-            panic!("centroid_map or cluster_assignments required for energy subgraphs");
+        //
+        // centroid_map is required: the historical cluster_assignments
+        // fallback joined motifs detected in feature/subcentroid space to an
+        // items→clusters mapping — a different namespace — and could only
+        // produce garbage (issue #161).
+        let centroid_map: &[usize] = match &aspace.centroid_map {
+            Some(cmap) => cmap.as_slice(),
+            None => {
+                return Err(ArrowSpaceError::EnergyModeRequired {
+                    missing: "centroid_map on the ArrowSpace index",
+                });
+            }
         };
 
         let (_f_parent, n_centroids) = self.init_data.shape();
@@ -211,7 +219,14 @@ impl SubgraphsMotive for GraphLaplacian {
             cfg.rayleigh_max
         );
 
-        subgraphs
+        Ok(subgraphs)
+    }
+
+    fn spot_subg_motives(&self, aspace: &ArrowSpace, cfg: &SubgraphConfig) -> Vec<Subgraph> {
+        self.try_spot_subg_motives(aspace, cfg).expect(
+            "spot_subg_motives requires an energy build with sub_centroids \
+             and centroid_map; use try_spot_subg_motives for a typed error",
+        )
     }
 }
 
