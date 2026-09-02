@@ -117,9 +117,28 @@ pub trait Motives {
     /// 2) Map each subcentroid-set to original item indices via ArrowSpace.centroid_map.
     /// 3) Deduplicate and return item-index motifs.
     ///
-    /// Requirements:
+    /// Requirements (enforced — the method returns
+    /// [`ArrowSpaceError::EnergyModeRequired`](crate::error::ArrowSpaceError::EnergyModeRequired)
+    /// instead of degrading):
     /// - self.energy must be true (built via build_energy)
+    /// - aspace.sub_centroids must be Some, so motif detection runs in
+    ///   subcentroid space rather than over the F×F bootstrap Laplacian
+    ///   (whose nodes enumerate features)
     /// - aspace.centroid_map must be Some(Vec<usize>) mapping item -> subcentroid index
+    ///
+    /// Use this fallible variant; the panicking twin
+    /// [`Motives::spot_motives_energy`] is deprecated since 0.27.3.
+    fn try_spot_motives_energy(
+        &self,
+        aspace: &crate::core::ArrowSpace,
+        cfg: &crate::analysis::motives::MotiveConfig,
+    ) -> Result<Vec<Vec<usize>>, crate::error::ArrowSpaceError>;
+
+    /// Panicking twin of [`Motives::try_spot_motives_energy`].
+    #[deprecated(
+        since = "0.27.3",
+        note = "use try_spot_motives_energy; this panics on non-energy builds"
+    )]
     fn spot_motives_energy(
         &self,
         aspace: &crate::core::ArrowSpace,
@@ -296,15 +315,39 @@ impl Motives for GraphLaplacian {
         out
     }
 
-    fn spot_motives_energy(
+    fn try_spot_motives_energy(
         &self,
         aspace: &crate::core::ArrowSpace,
         cfg: &MotiveConfig,
-    ) -> Vec<Vec<usize>> {
+    ) -> Result<Vec<Vec<usize>>, crate::error::ArrowSpaceError> {
+        use crate::error::ArrowSpaceError;
+
+        // Enforce the documented requirements (issue #161). Degrading silently
+        // here ran motif detection over the F×F bootstrap Laplacian — whose
+        // nodes enumerate FEATURES — and returned the ids as item indices.
+        if !self.energy {
+            return Err(ArrowSpaceError::EnergyModeRequired {
+                missing: "energy build (use EnergyMapsBuilder::build_energy)",
+            });
+        }
+        if aspace.sub_centroids.is_none() {
+            return Err(ArrowSpaceError::EnergyModeRequired {
+                missing: "sub_centroids on the ArrowSpace index",
+            });
+        }
+        let cmap = match &aspace.centroid_map {
+            Some(m) => m,
+            None => {
+                return Err(ArrowSpaceError::EnergyModeRequired {
+                    missing: "centroid_map on the ArrowSpace index",
+                });
+            }
+        };
+
         // Operate strictly on the energy Laplacian over subcentroids
         let (rows, cols) = self.matrix.shape();
         if rows == 0 || rows != cols {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let n_sc = rows;
 
@@ -510,24 +553,8 @@ impl Motives for GraphLaplacian {
             sc_results.len()
         );
 
-        // 6) Map to item indices via centroid_map (parallel)
-        let cmap = match &aspace.centroid_map {
-            Some(m) => m,
-            None => {
-                // Return subcentroid motifs if mapping not available
-                let mut out_sc: Vec<Vec<usize>> = sc_results
-                    .into_iter()
-                    .map(|res| {
-                        let mut v: Vec<usize> = res.into_iter().collect();
-                        v.sort_unstable();
-                        v
-                    })
-                    .collect();
-                out_sc.shrink_to_fit();
-                return out_sc;
-            }
-        };
-
+        // 6) Map to item indices via centroid_map (parallel) — the map is
+        // guaranteed present by the requirement checks above.
         // sc_id -> items (parallel build with local buckets, then merge)
         cmap.par_iter().enumerate().for_each(|(_, &sc_idx)| {
             if sc_idx < n_sc {
@@ -614,7 +641,18 @@ impl Motives for GraphLaplacian {
         // Output vecs are already sorted from canonicalisation above.
         let mut out: Vec<Vec<usize>> = deduped_items;
         out.shrink_to_fit();
-        out
+        Ok(out)
+    }
+
+    fn spot_motives_energy(
+        &self,
+        aspace: &crate::core::ArrowSpace,
+        cfg: &MotiveConfig,
+    ) -> Vec<Vec<usize>> {
+        self.try_spot_motives_energy(aspace, cfg).expect(
+            "spot_motives_energy requires an energy build with sub_centroids \
+             and centroid_map; use try_spot_motives_energy for a typed error",
+        )
     }
 
     fn is_clique(&self, set: &HashSet<usize>) -> bool {

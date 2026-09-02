@@ -53,6 +53,21 @@ pub enum ArrowSpaceError {
 
     /// The item matrix passed to the builder is empty.
     EmptyItems,
+
+    /// The operation requires an EnergyMaps build, but the target lacks
+    /// energy-mode bookkeeping.
+    ///
+    /// Triggered by `try_spot_motives_energy` / `try_spot_subg_motives` when
+    /// the Laplacian was not built via `build_energy`, or the index carries no
+    /// `sub_centroids` / `centroid_map`. Running energy motif detection on an
+    /// EigenMaps build would silently operate on feature-space nodes and
+    /// mislabel them as item indices (issue #161), so the operation refuses
+    /// instead of degrading.
+    EnergyModeRequired {
+        /// What is missing, as a human-readable fragment (e.g. `"energy build
+        /// (use build_energy)"`, `"sub_centroids"`, `"centroid_map"`).
+        missing: &'static str,
+    },
 }
 
 impl fmt::Display for ArrowSpaceError {
@@ -73,6 +88,14 @@ impl fmt::Display for ArrowSpaceError {
                 "dimension mismatch: expected {expected} features, got {got}"
             ),
             Self::EmptyItems => write!(f, "items cannot be empty"),
+            Self::EnergyModeRequired { missing } => write!(
+                f,
+                "energy mode required: missing {missing}. Build via \
+                 EnergyMapsBuilder::build_energy so sub_centroids and \
+                 centroid_map are populated; running energy motif detection \
+                 on an EigenMaps build would mislabel feature-space indices \
+                 as item indices."
+            ),
         }
     }
 }

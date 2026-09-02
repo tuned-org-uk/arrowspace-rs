@@ -44,6 +44,9 @@ pub struct Subgraph {
     pub laplacian: GraphLaplacian,
 
     /// Cached Rayleigh cohesion indicator (lower = more cohesive).
+    ///
+    /// Computed only when [`SubgraphConfig::rayleigh_max`] is `Some` at
+    /// extraction time. `None` means "not computed", not "not applicable".
     pub rayleigh: Option<f64>,
 }
 
@@ -51,8 +54,27 @@ pub struct Subgraph {
 pub trait SubgraphsMotive {
     /// Spot subgraphs using energy-mode motif detection with item mapping.
     ///
-    /// This wraps `spotmotivesenergy`, operating on subcentroids and mapping
-    /// back to original item indices via `ArrowSpace.centroid_map`.
+    /// This wraps `try_spot_motives_energy`, operating on subcentroids and
+    /// mapping back to original item indices via `ArrowSpace.centroid_map`.
+    ///
+    /// Requirements (enforced — returns
+    /// [`ArrowSpaceError::EnergyModeRequired`](crate::error::ArrowSpaceError::EnergyModeRequired)
+    /// on violation): the Laplacian must come from `build_energy` and the
+    /// index must carry `sub_centroids` and `centroid_map`. The historical
+    /// `cluster_assignments` fallback was removed in #161: it joins motifs
+    /// detected in one namespace (features or subcentroids) to a mapping in
+    /// another (items → clusters) and cannot produce correct results.
+    fn try_spot_subg_motives(
+        &self,
+        aspace: &ArrowSpace,
+        cfg: &SubgraphConfig,
+    ) -> Result<Vec<Subgraph>, crate::error::ArrowSpaceError>;
+
+    /// Panicking twin of [`SubgraphsMotive::try_spot_subg_motives`].
+    #[deprecated(
+        since = "0.27.3",
+        note = "use try_spot_subg_motives; this panics on non-energy builds"
+    )]
     fn spot_subg_motives(&self, aspace: &ArrowSpace, cfg: &SubgraphConfig) -> Vec<Subgraph>;
 }
 

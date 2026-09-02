@@ -3,6 +3,7 @@ use crate::analysis::subgraphs::{
     CentroidGraphParams, MotiveConfig, SubgraphConfig, SubgraphsCentroid, SubgraphsMotive,
 };
 use crate::builder::ArrowSpaceBuilder;
+use crate::maps::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::tests::test_data::make_gaussian_cliques_multi;
 
 use log::debug;
@@ -72,10 +73,13 @@ fn test_motif_subgraphs_parallel_correctness() {
     crate::init();
 
     let rows = make_gaussian_cliques_multi(200, 0.3, 6, 100, 999);
-    let (aspace, gl) = ArrowSpaceBuilder::new()
+    let mut builder = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.35, 12, 8, 2.0, None)
         .with_seed(999)
-        .build(rows);
+        .with_dims_reduction(true, Some(0.3))
+        .with_inline_sampling(None);
+    let p = EnergyParams::new(&builder);
+    let (aspace, gl) = builder.build_energy(rows, p);
 
     let cfg = SubgraphConfig {
         motives: MotiveConfig {
@@ -90,8 +94,12 @@ fn test_motif_subgraphs_parallel_correctness() {
         min_size: 5,
     };
 
-    let subgraphs1 = gl.spot_subg_motives(&aspace, &cfg);
-    let subgraphs2 = gl.spot_subg_motives(&aspace, &cfg);
+    let subgraphs1 = gl
+        .try_spot_subg_motives(&aspace, &cfg)
+        .expect("energy build must satisfy energy-mode requirements");
+    let subgraphs2 = gl
+        .try_spot_subg_motives(&aspace, &cfg)
+        .expect("energy build must satisfy energy-mode requirements");
 
     // --- Structural invariants: must hold independently on each run ---
     let f_parent = gl.init_data.shape().0;
@@ -338,10 +346,13 @@ fn test_motif_subgraphs_no_loss_or_duplication() {
     crate::init();
 
     let rows = make_gaussian_cliques_multi(250, 0.25, 8, 50, 777);
-    let (aspace, gl) = ArrowSpaceBuilder::new()
+    let mut builder = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.35, 14, 10, 2.0, None)
         .with_seed(777)
-        .build(rows);
+        .with_dims_reduction(true, Some(0.3))
+        .with_inline_sampling(None);
+    let p = EnergyParams::new(&builder);
+    let (aspace, gl) = builder.build_energy(rows, p);
 
     let cfg = SubgraphConfig {
         motives: MotiveConfig {
@@ -356,7 +367,9 @@ fn test_motif_subgraphs_no_loss_or_duplication() {
         min_size: 6,
     };
 
-    let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
+    let subgraphs = gl
+        .try_spot_subg_motives(&aspace, &cfg)
+        .expect("energy build must satisfy energy-mode requirements");
 
     if subgraphs.is_empty() {
         debug!("No subgraphs extracted; skipping duplication check");
@@ -450,10 +463,13 @@ fn test_parallel_stress_large_dataset() {
     crate::init();
 
     let rows = make_gaussian_cliques_multi(500, 0.2, 10, 100, 1234);
-    let (aspace, gl) = ArrowSpaceBuilder::new()
+    let mut builder = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.3, 16, 12, 2.0, None)
         .with_seed(1234)
-        .build(rows);
+        .with_dims_reduction(true, Some(0.3))
+        .with_inline_sampling(None);
+    let p = EnergyParams::new(&builder);
+    let (aspace, gl) = builder.build_energy(rows, p);
 
     let cfg = SubgraphConfig {
         motives: MotiveConfig {
@@ -469,7 +485,9 @@ fn test_parallel_stress_large_dataset() {
     };
 
     // Should complete without hanging or panicking
-    let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
+    let subgraphs = gl
+        .try_spot_subg_motives(&aspace, &cfg)
+        .expect("energy build must satisfy energy-mode requirements");
 
     // Basic sanity checks
     for sg in &subgraphs {
