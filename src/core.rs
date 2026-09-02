@@ -664,6 +664,35 @@ impl ArrowSpace {
             n_clusters, cluster_radius
         );
 
+        // --- Lambda statistics ---
+        let lambda_stat = |key: &str| match config.get(key) {
+            Some(ConfigValue::F64(v)) => Some(*v),
+            Some(ConfigValue::OptionF64(v)) => *v,
+            _ => None,
+        };
+        let (min_lambdas, max_lambdas, range_lambdas) = match (
+            lambda_stat("min_lambdas"),
+            lambda_stat("max_lambdas"),
+            lambda_stat("range_lambdas"),
+        ) {
+            (Some(min), Some(max), Some(range))
+                if min.is_finite()
+                    && max.is_finite()
+                    && range.is_finite()
+                    && range > 0.0
+                    && min <= max =>
+            {
+                (min, max, range)
+            }
+            _ => {
+                warn!(
+                    "ArrowSpace::from_config: lambda statistics missing or inconsistent, \
+                     restoring as un-normalised space"
+                );
+                (-1.0, -1.0, -1.0)
+            }
+        };
+
         // --- Empty data and auxiliary fields ---
         let data = DenseMatrix::new(0, 0, Vec::new(), true).unwrap();
         let signals = sprs::CsMat::zero((0, 0));
@@ -678,9 +707,9 @@ impl ArrowSpace {
             lambdas,
             lambdas_sorted,
             // Normalization fields
-            min_lambdas: -1.0,
-            max_lambdas: -1.0,
-            range_lambdas: -1.0,
+            min_lambdas,
+            max_lambdas,
+            range_lambdas,
             taumode,
             n_clusters,
             cluster_assignments: Vec::new(),
@@ -1655,19 +1684,6 @@ impl ArrowSpace {
         config.insert(
             "cluster_radius".to_string(),
             ConfigValue::F64(self.cluster_radius),
-        );
-
-        config.insert(
-            "min_lambdas".to_string(),
-            ConfigValue::F64(self.min_lambdas),
-        );
-        config.insert(
-            "max_lambdas".to_string(),
-            ConfigValue::F64(self.max_lambdas),
-        );
-        config.insert(
-            "range_lambdas".to_string(),
-            ConfigValue::F64(self.range_lambdas),
         );
 
         config

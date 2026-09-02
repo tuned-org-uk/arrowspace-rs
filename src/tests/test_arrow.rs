@@ -593,3 +593,129 @@ fn test_arrowspace_config_typed_with_projection() {
     assert!(config.get("n_clusters").is_some());
     assert!(config.get("cluster_radius").is_some());
 }
+
+#[test]
+fn test_from_config_restores_lambda_stats() {
+    // Build an ArrowSpace so lambdas are computed and normalised
+    let items = make_gaussian_blob(99, 0.5);
+    let (aspace, gl) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 3, 2, 2.0, None)
+        .with_seed(42)
+        .build(items.clone());
+
+    // Lambda stats must be real (not the -1.0 sentinel) after a normal build
+    assert!(
+        aspace.range_lambdas > 0.0,
+        "built ArrowSpace must have positive range_lambdas, got {}",
+        aspace.range_lambdas
+    );
+
+    // Persist and restore
+    let config = aspace.arrowspace_config_typed();
+    let restored = ArrowSpace::from_config(config);
+
+    // The restored space must carry the original lambda stats
+    assert!(
+        restored.min_lambdas.is_finite(),
+        "from_config must restore min_lambdas, got {}",
+        restored.min_lambdas
+    );
+    assert!(
+        restored.max_lambdas.is_finite(),
+        "from_config must restore max_lambdas, got {}",
+        restored.max_lambdas
+    );
+    assert!(
+        restored.range_lambdas > 0.0,
+        "from_config must restore positive range_lambdas, got {}",
+        restored.range_lambdas
+    );
+    assert!(
+        (restored.min_lambdas - aspace.min_lambdas).abs() < 1e-12,
+        "restored min_lambdas {} != original {}",
+        restored.min_lambdas,
+        aspace.min_lambdas
+    );
+    assert!(
+        (restored.max_lambdas - aspace.max_lambdas).abs() < 1e-12,
+        "restored max_lambdas {} != original {}",
+        restored.max_lambdas,
+        aspace.max_lambdas
+    );
+    assert!(
+        (restored.range_lambdas - aspace.range_lambdas).abs() < 1e-12,
+        "restored range_lambdas {} != original {}",
+        restored.range_lambdas,
+        aspace.range_lambdas
+    );
+
+    // Query-level round-trip: the restored space must prepare query lambdas
+    // exactly like the original (issue #158: restored spaces normalised every
+    // query lambda to 0.0, tripping DegenerateLambda on every search)
+    let query = items[0].clone();
+    let lambda_original = aspace
+        .try_prepare_query_item(&query, &gl)
+        .expect("original space must prepare the query");
+    let lambda_restored = restored
+        .try_prepare_query_item(&query, &gl)
+        .expect("restored space must prepare the query");
+    assert!(
+        lambda_restored.abs() > 1e-12,
+        "restored space must not normalise query lambda to 0.0, got {}",
+        lambda_restored
+    );
+    assert!(
+        (lambda_original - lambda_restored).abs() < 1e-9,
+        "restored query lambda {} != original {}",
+        lambda_restored,
+        lambda_original
+    );
+}
+
+#[test]
+fn test_from_config_without_lambda_stats_keeps_sentinel() {
+    // A config missing the lambda-stats keys restores as un-normalised
+    let mut config = HashMap::new();
+    config.insert("nitems".to_string(), ConfigValue::Usize(3));
+    config.insert("nfeatures".to_string(), ConfigValue::Usize(4));
+
+    let restored = ArrowSpace::from_config(config);
+
+    assert_eq!(restored.min_lambdas, -1.0);
+    assert_eq!(restored.max_lambdas, -1.0);
+    assert_eq!(restored.range_lambdas, -1.0);
+}
+
+#[test]
+fn test_from_config_with_nonpositive_range_keeps_sentinel() {
+    // range_lambdas <= 0 is internally inconsistent: reject the whole triple
+    let mut config = HashMap::new();
+    config.insert("nitems".to_string(), ConfigValue::Usize(3));
+    config.insert("nfeatures".to_string(), ConfigValue::Usize(4));
+    config.insert("min_lambdas".to_string(), ConfigValue::F64(2.0));
+    config.insert("max_lambdas".to_string(), ConfigValue::F64(5.0));
+    config.insert("range_lambdas".to_string(), ConfigValue::F64(-1.0));
+
+    let restored = ArrowSpace::from_config(config);
+
+    assert_eq!(restored.min_lambdas, -1.0);
+    assert_eq!(restored.max_lambdas, -1.0);
+    assert_eq!(restored.range_lambdas, -1.0);
+}
+
+#[test]
+fn test_from_config_with_inverted_min_max_keeps_sentinel() {
+    // min_lambdas > max_lambdas is internally inconsistent: reject the triple
+    let mut config = HashMap::new();
+    config.insert("nitems".to_string(), ConfigValue::Usize(3));
+    config.insert("nfeatures".to_string(), ConfigValue::Usize(4));
+    config.insert("min_lambdas".to_string(), ConfigValue::F64(5.0));
+    config.insert("max_lambdas".to_string(), ConfigValue::F64(2.0));
+    config.insert("range_lambdas".to_string(), ConfigValue::F64(3.0));
+
+    let restored = ArrowSpace::from_config(config);
+
+    assert_eq!(restored.min_lambdas, -1.0);
+    assert_eq!(restored.max_lambdas, -1.0);
+    assert_eq!(restored.range_lambdas, -1.0);
+}
