@@ -24,6 +24,7 @@ use std::fmt;
 /// | `NonFiniteQuery` | The query vector contains `NaN` or `±Infinity`. |
 /// | `DimensionMismatch` | The query vector's length differs from the index's feature count. |
 /// | `EmptyItems` | The item matrix passed to the builder is empty. |
+/// | `InvalidConfig` | The builder configuration is invalid for the requested pipeline (e.g. energy build without dims reduction). |
 #[derive(Clone, Debug, PartialEq)]
 pub enum ArrowSpaceError {
     /// The spectral score (lambda) computed for a query — or stored on a query
@@ -53,6 +54,17 @@ pub enum ArrowSpaceError {
 
     /// The item matrix passed to the builder is empty.
     EmptyItems,
+
+    /// The builder configuration is invalid for the requested pipeline.
+    ///
+    /// Triggered by `try_build_energy` when the builder lacks dims reduction
+    /// or carries the (experimental, unimplemented) spectral flag. Replaces
+    /// the `assert!`/`panic!` the energy build path used before (#155) so
+    /// misconfiguration surfaces as a typed error instead of a process abort.
+    InvalidConfig {
+        /// What is wrong with the configuration, as a human-readable fragment.
+        reason: &'static str,
+    },
 
     /// The operation requires an EnergyMaps build, but the target lacks
     /// energy-mode bookkeeping.
@@ -88,6 +100,9 @@ impl fmt::Display for ArrowSpaceError {
                 "dimension mismatch: expected {expected} features, got {got}"
             ),
             Self::EmptyItems => write!(f, "items cannot be empty"),
+            Self::InvalidConfig { reason } => {
+                write!(f, "invalid configuration: {reason}")
+            }
             Self::EnergyModeRequired { missing } => write!(
                 f,
                 "energy mode required: missing {missing}. Build via \
