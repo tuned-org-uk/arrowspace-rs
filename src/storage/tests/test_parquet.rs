@@ -30,7 +30,7 @@ fn create_forced_multibatch_parquet(
 ) {
     let file = File::create(path).unwrap();
     let props = WriterProperties::builder()
-        .set_max_row_group_size(1024)
+        .set_max_row_group_row_count(Some(1024))
         .build();
 
     let mut writer = ArrowWriter::try_new(file, schema, Some(props)).unwrap();
