@@ -16,7 +16,10 @@ fn test_motives_basic() {
     let rows = make_gaussian_cliques(12, 0.05, 15, 10, 42);
 
     // Build a denser, normalized graph to preserve triangle closures
+    // (seeded: an unseeded builder draws its clustering seed from
+    // rand::rng(), making the motif count a per-run coin flip).
     let (_aspace, gl) = ArrowSpaceBuilder::new()
+        .with_seed(42)
         .with_lambda_graph(0.4, 14, 8, 2.0, None) // k=14, topk=8
         .with_normalisation(true)
         .with_sparsity_check(false)
