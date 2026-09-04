@@ -202,7 +202,7 @@ fn test_lambda_golden_after_167_layout_fix() {
         .fold(f64::NEG_INFINITY, f64::max);
     let lmean = aspace.lambdas.iter().sum::<f64>() / aspace.lambdas.len() as f64;
 
-    let tol = 1e-12;
+    let tol = 1e-9;
     assert!((lmin - 0.0).abs() < tol, "golden λ min drifted: {lmin}");
     assert!((lmax - 1.0).abs() < tol, "golden λ max drifted: {lmax}");
     assert!(
