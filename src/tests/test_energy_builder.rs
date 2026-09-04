@@ -2,6 +2,7 @@
 #![cfg(test)]
 
 use crate::builder::ArrowSpaceBuilder;
+use crate::error::ArrowSpaceError;
 use crate::graph::GraphLaplacian;
 use crate::maps::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::search::taumode::TauMode;
@@ -9,6 +10,59 @@ use log::{debug, info};
 use smartcore::linalg::basic::arrays::Array;
 
 use crate::tests::test_data::{make_gaussian_hd, make_moons_hd};
+
+#[test]
+fn test_try_build_energy_rejects_missing_dims_reduction() {
+    crate::tests::init();
+
+    // Issue #155: a misconfigured builder must produce a typed error, not a
+    // process abort. Dims reduction is off by default, so a fresh builder is
+    // the misconfiguration case.
+    let rows = make_gaussian_hd(100, 0.2);
+    let mut builder = ArrowSpaceBuilder::new().with_seed(3407);
+    let p = EnergyParams::new(&builder);
+
+    let err = builder
+        .try_build_energy(rows, p)
+        .expect_err("default builder lacks dims reduction and must be rejected");
+    assert!(
+        matches!(err, ArrowSpaceError::InvalidConfig { .. }),
+        "expected InvalidConfig, got: {err}"
+    );
+}
+
+#[test]
+fn test_try_build_energy_accepts_valid_config() {
+    crate::tests::init();
+
+    // The fallible path returns the same artifact the panicking twin builds.
+    let rows = make_gaussian_hd(100, 0.2);
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_seed(3407)
+        .with_dims_reduction(true, Some(0.3))
+        .with_inline_sampling(None);
+    let p = EnergyParams::new(&builder);
+
+    let (aspace, gl) = builder
+        .try_build_energy(rows, p)
+        .expect("valid config must build");
+    assert!(aspace.nitems > 0);
+    assert!(gl.energy);
+    assert!(aspace.lambdas.iter().any(|&l| l != 0.0));
+}
+
+#[test]
+#[should_panic(expected = "dim reduction is needed")]
+fn test_build_energy_still_panics_on_misconfiguration() {
+    crate::tests::init();
+
+    // build_energy stays a documented panicking wrapper (load-bearing for the
+    // PyO3 bindings); its failure mode must not change.
+    let rows = make_gaussian_hd(100, 0.2);
+    let mut builder = ArrowSpaceBuilder::new().with_seed(3407);
+    let p = EnergyParams::new(&builder);
+    let _ = builder.build_energy(rows, p);
+}
 
 #[test]
 fn test_energy_build_basic() {
@@ -406,7 +460,7 @@ fn test_build_energy_dimensionality_reduction() {
 }
 
 #[test]
-#[should_panic(expected = "When using build_energy, dim reduction is needed")]
+#[should_panic(expected = "dim reduction is needed")]
 fn test_build_energy_requires_dims_reduction() {
     let rows: Vec<Vec<f64>> = vec![vec![1.0; 128]; 100];
 
