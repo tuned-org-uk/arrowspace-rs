@@ -1051,7 +1051,33 @@ fn node_energy_and_dispersion(
 /// Extends ArrowSpaceBuilder with methods to build energy-aware Laplacian graphs
 /// that remove cosine similarity dependence from both construction and search.
 pub trait EnergyMapsBuilder {
+    /// Build ArrowSpace using the energy-only pipeline (no cosine), with
+    /// configuration validation.
+    ///
+    /// Fallible variant of [`EnergyMapsBuilder::build_energy`]: returns
+    /// [`ArrowSpaceError::InvalidConfig`](crate::error::ArrowSpaceError::InvalidConfig)
+    /// instead of panicking when the builder state cannot run the energy
+    /// pipeline (dims reduction disabled, or the experimental spectral flag
+    /// enabled — see #156 for the spectral feature itself).
+    ///
+    /// # Arguments
+    /// * `rows` - Input dataset (N × F)
+    /// * `energy_params` - Parameters controlling energy pipeline stages
+    ///
+    /// # Returns
+    /// Tuple of (ArrowSpace with energy-computed lambdas, energy-only GraphLaplacian)
+    fn try_build_energy(
+        &mut self,
+        rows: Vec<Vec<f64>>,
+        energy_params: EnergyParams,
+    ) -> Result<(ArrowSpace, GraphLaplacian), crate::error::ArrowSpaceError>;
+
     /// Build ArrowSpace using energy-only pipeline (no cosine).
+    ///
+    /// Panicking twin of [`EnergyMapsBuilder::try_build_energy`]; kept
+    /// non-deprecated because it is load-bearing for the PyO3 bindings.
+    /// Misconfiguration (e.g. dims reduction disabled) aborts the process —
+    /// prefer the `try_` variant in Rust callers.
     ///
     /// # Arguments
     /// * `rows` - Input dataset (N × F)
@@ -1115,19 +1141,27 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
     ///    ranking during search.
     /// 7. ...
     /// 8. ...
-    fn build_energy(
+    fn try_build_energy(
         &mut self,
         rows: Vec<Vec<f64>>,
         energy_params: EnergyParams,
-    ) -> (ArrowSpace, GraphLaplacian) {
-        assert!(
-            self.use_dims_reduction,
-            "When using build_energy, dim reduction is needed"
-        );
+    ) -> Result<(ArrowSpace, GraphLaplacian), crate::error::ArrowSpaceError> {
+        use crate::error::ArrowSpaceError;
+
+        // Configuration validation (#155): typed errors instead of process
+        // aborts. The spectral flag is tracked in #156; until it is
+        // implemented the combination stays rejected.
+        if !self.use_dims_reduction {
+            return Err(ArrowSpaceError::InvalidConfig {
+                reason: "dim reduction is needed: enable with_dims_reduction(true, ..) \
+                         before build_energy",
+            });
+        }
         if self.prebuilt_spectral {
-            panic!(
-                "Spectral mode not compatible with build_energy, please do not enable for energy search"
-            );
+            return Err(ArrowSpaceError::InvalidConfig {
+                reason: "spectral mode is not compatible with build_energy, \
+                         please do not enable it for energy search",
+            });
         }
         self.nitems = rows.len();
         self.nfeatures = rows[0].len();
@@ -1391,7 +1425,18 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             aspace.item_norms.as_ref().unwrap().iter().sum::<f64>() / aspace.nitems as f64
         );
 
-        (aspace, gl_energy)
+        Ok((aspace, gl_energy))
+    }
+
+    fn build_energy(
+        &mut self,
+        rows: Vec<Vec<f64>>,
+        energy_params: EnergyParams,
+    ) -> (ArrowSpace, GraphLaplacian) {
+        self.try_build_energy(rows, energy_params).expect(
+            "build_energy misconfigured: dims reduction is required and spectral mode \
+             is not supported; use try_build_energy for a typed error",
+        )
     }
 
     /// Build the RFxRF (reduced-features) energy laplacian
