@@ -1,3 +1,5 @@
+#![allow(deprecated)] // guards for the spot_motives_eigen compatibility surface (#165)
+
 use crate::analysis::motives::{MotiveConfig, Motives};
 use crate::analysis::subgraphs::SubgraphsMotive;
 use crate::builder::ArrowSpaceBuilder;
@@ -404,6 +406,253 @@ fn test_try_spot_motives_energy_returns_item_space_indices() {
             aspace.nitems
         );
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Issue #165: item-space motifs on the EigenMaps track
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// EigenMaps fixture with namespaces that cannot be confused:
+/// 9 clusters of ~22 unit-norm items each, F=256 features, dims reduction
+/// disabled (mirrors the #165 reproduction layout: unit-norm embeddings,
+/// F > N). Feature-space ids reach 255, item-space ids stop at 198.
+///
+/// Geometry: 9 cluster directions grouped into 3 angular neighbourhoods of
+/// 3 directions each. Intra-neighbourhood angle 0.5 rad (cos distance
+/// ≈ 0.12 < eps 0.5), inter-neighbourhood angle ≈ 1.4 rad (distance ≈ 0.83
+/// > eps), so the reconstructed centroid graph forms exactly 3 disjoint
+/// triangles — one item-space motif per neighbourhood, each a union of
+/// whole clusters.
+///
+/// Hyperparameter regime from a one-off arrowspace_tuner (Optuna) study on
+/// unit-norm corpora of this shape: best eps ∈ [0.45, 0.52], k ∈ [25, 34]
+/// (k≈25 on 200×256, k≈34 on the 1000×128 #165 repro corpus), topk = k/2.
+fn eigen_fixture_165() -> (crate::core::ArrowSpace, crate::graph::GraphLaplacian) {
+    // Directions: 3 neighbourhoods × 3 directions; within a neighbourhood
+    // directions fan out by 0.4 rad around the neighbourhood's own axis
+    // (cos distance ≈ 0.08 < eps 0.5), neighbourhoods sit 2.5 rad apart
+    // (distance ≥ 1.24 > eps).
+    let mut dirs: Vec<Vec<f64>> = Vec::with_capacity(9);
+    for g in 0..3usize {
+        let base = g as f64 * 2.5;
+        for j in 0..3usize {
+            let theta = base + j as f64 * 0.4;
+            let mut d = vec![0.0; 256];
+            d[0] = theta.cos();
+            d[1] = theta.sin();
+            dirs.push(d);
+        }
+    }
+    // Points: direction + per-dim noise small enough that cluster members
+    // stay within the (squared-L2) cluster radius: 2·256·σ² ≈ 0.002.
+    let mut rng = rand::rngs::StdRng::seed_from_u64(3407);
+    use rand::SeedableRng;
+    use rand_distr::{Distribution, Normal};
+    let mut rows: Vec<Vec<f64>> = Vec::with_capacity(200);
+    for d in &dirs {
+        for _ in 0..22 {
+            let mut v: Vec<f64> = Vec::with_capacity(256);
+            for k in 0..256 {
+                let noise = Normal::new(0.0, 0.002).unwrap().sample(&mut rng);
+                v.push(d[k] + noise);
+            }
+            let norm = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+            rows.push(v.into_iter().map(|x| x / norm).collect());
+        }
+    }
+
+    ArrowSpaceBuilder::new()
+        .with_seed(3407)
+        .with_lambda_graph(0.5, 25, 12, 2.0, None)
+        .with_cluster_max_clusters(9)
+        .with_cluster_radius(0.01)
+        .with_dims_reduction(false, None)
+        .with_sparsity_check(false)
+        .with_inline_sampling(None)
+        .build(rows)
+}
+
+fn cfg_165() -> MotiveConfig {
+    MotiveConfig {
+        top_l: 24,
+        min_triangles: 1,
+        min_clust: 0.1,
+        max_motif_size: 60,
+        max_sets: 64,
+        jaccard_dedup: 0.8,
+    }
+}
+
+#[test]
+fn test_try_spot_motives_eigen_returns_item_space_indices() {
+    crate::tests::init();
+
+    // Issue #165: the eigen track must offer the same item-space contract as
+    // try_spot_motives_energy — motif ids are item indices, never feature ids.
+    let (aspace, gl) = eigen_fixture_165();
+    let motifs = gl
+        .try_spot_motives_eigen(&aspace, &cfg_165())
+        .expect("pipeline EigenMaps build must satisfy the item-space requirements");
+
+    assert!(
+        !motifs.is_empty(),
+        "EigenMaps item-space path returned no motifs"
+    );
+    for m in &motifs {
+        assert!(m.len() >= 3, "item motif below minimum size: {:?}", m);
+        assert!(
+            m.iter().all(|&i| i < aspace.nitems),
+            "motif {m:?} leaves item space 0..{}",
+            aspace.nitems
+        );
+    }
+}
+
+#[test]
+fn test_try_spot_motives_eigen_motifs_are_cluster_unions() {
+    crate::tests::init();
+
+    // The item-space eigen path detects on the centroid graph and expands via
+    // the item→cluster map, so every returned motif must be a union of whole
+    // clusters: if item i is in a motif, every item assigned to cluster_of(i)
+    // must be in the same motif. Feature-space ids cannot satisfy this.
+    let (aspace, gl) = eigen_fixture_165();
+    let motifs = gl
+        .try_spot_motives_eigen(&aspace, &cfg_165())
+        .expect("pipeline EigenMaps build must satisfy the item-space requirements");
+    assert!(!motifs.is_empty());
+
+    for m in &motifs {
+        let members: std::collections::HashSet<usize> = m.iter().copied().collect();
+        for &i in m {
+            let ci = aspace
+                .cluster_of(i)
+                .expect("motif item must carry a cluster assignment");
+            for j in 0..aspace.nitems {
+                if aspace.cluster_of(j) == Some(ci) {
+                    assert!(
+                        members.contains(&j),
+                        "motif {m:?} splits cluster {ci} (missing item {j})"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_try_spot_motives_featurespace_replicates_current_behaviour() {
+    crate::tests::init();
+
+    // The featurespace variant is the one true implementation behind the
+    // deprecated spot_motives_eigen twin (bit-for-bit: the twin delegates),
+    // and its ids live in the node space of this Laplacian — the F×F
+    // bootstrap over feature dimensions, NOT items (issue #165).
+    let (aspace, gl) = eigen_fixture_165();
+    let cfg = cfg_165();
+
+    let now = gl
+        .try_spot_motives_featurespace(&cfg)
+        .expect("featurespace spotting operates on the Laplacian as given");
+    #[allow(deprecated)]
+    let legacy = gl.spot_motives_eigen(&cfg);
+
+    let (rows, _) = gl.shape();
+    assert!(rows > aspace.nitems, "fixture must keep F > N");
+
+    for motifs in [&now, &legacy] {
+        assert!(!motifs.is_empty(), "featurespace path found no motifs");
+        for m in motifs {
+            assert!(m.len() >= 3, "motif below minimum size: {m:?}");
+            assert!(
+                m.windows(2).all(|w| w[0] < w[1]),
+                "motif not sorted-unique: {m:?}"
+            );
+            for &i in m {
+                assert!(
+                    i < rows,
+                    "feature-space id {i} leaves matrix node space ({rows}) in {m:?}"
+                );
+            }
+        }
+    }
+
+    // Feature-space and item-space namespaces genuinely differ on this
+    // fixture: some featurespace id must be outside item space, proving the
+    // #165 confusion is possible here and that the two methods are distinct.
+    let max_feature_id = now.iter().flatten().copied().max().unwrap_or(0);
+    assert!(
+        max_feature_id >= aspace.nitems,
+        "featurespace motifs unexpectedly fit in item space (max id {max_feature_id})"
+    );
+}
+
+#[test]
+fn test_try_spot_motives_eigen_rejects_energy_build() {
+    use crate::error::ArrowSpaceError;
+
+    crate::tests::init();
+
+    // Mirror of the #161 enforcement in the other direction: the eigen
+    // item-space entry point refuses EnergyMaps builds (which already have
+    // try_spot_motives_energy with finer subcentroid resolution).
+    let rows = make_gaussian_cliques(12, 0.04, 12, 10, 3407);
+    let p = crate::maps::energymaps::EnergyParams::new(&ArrowSpaceBuilder::new());
+    let (aspace, gl) = ArrowSpaceBuilder::new()
+        .with_seed(3407)
+        .with_lambda_graph(0.35, 18, 10, 2.0, None)
+        .with_dims_reduction(true, Some(0.3))
+        .with_inline_sampling(None)
+        .build_energy(rows, p);
+
+    let err = gl
+        .try_spot_motives_eigen(&aspace, &MotiveConfig::default())
+        .expect_err("energy builds must be routed to try_spot_motives_energy");
+    assert!(
+        matches!(err, ArrowSpaceError::EigenModeRequired { .. }),
+        "expected EigenModeRequired, got: {err}"
+    );
+}
+
+#[test]
+fn test_try_spot_motives_eigen_requires_cluster_bookkeeping() {
+    use crate::error::ArrowSpaceError;
+
+    crate::tests::init();
+
+    // Without the item→cluster bookkeeping there is no safe projection to
+    // item space; the call must refuse instead of serving feature-space ids
+    // (#161 lesson applied to the eigen track).
+    let (mut aspace, gl) = eigen_fixture_165();
+    aspace.cluster_assignments = Vec::new();
+
+    let err = gl
+        .try_spot_motives_eigen(&aspace, &cfg_165())
+        .expect_err("missing cluster_assignments must be rejected, not degraded");
+    assert!(
+        matches!(err, ArrowSpaceError::EigenModeRequired { .. }),
+        "expected EigenModeRequired, got: {err}"
+    );
+}
+
+#[test]
+fn test_try_spot_motives_eigen_deterministic() {
+    crate::tests::init();
+
+    // Design invariant #4: identical inputs → identical outputs.
+    let run = || {
+        let (aspace, gl) = eigen_fixture_165();
+        gl.try_spot_motives_eigen(&aspace, &cfg_165())
+            .expect("pipeline EigenMaps build must satisfy the item-space requirements")
+    };
+
+    let first = run();
+    let second = run();
+    assert!(!first.is_empty());
+    assert_eq!(
+        first, second,
+        "item-space eigen motifs differ across identical runs"
+    );
 }
 
 #[test]

@@ -24,6 +24,8 @@ use std::fmt;
 /// | `NonFiniteQuery` | The query vector contains `NaN` or `±Infinity`. |
 /// | `DimensionMismatch` | The query vector's length differs from the index's feature count. |
 /// | `EmptyItems` | The item matrix passed to the builder is empty. |
+/// | `EnergyModeRequired` | Energy motif/subgraph spotting lacks energy-mode bookkeeping. |
+/// | `EigenModeRequired` | Item-space eigen motif spotting lacks EigenMaps bookkeeping. |
 #[derive(Clone, Debug, PartialEq)]
 pub enum ArrowSpaceError {
     /// The spectral score (lambda) computed for a query — or stored on a query
@@ -68,6 +70,24 @@ pub enum ArrowSpaceError {
         /// (use build_energy)"`, `"sub_centroids"`, `"centroid_map"`).
         missing: &'static str,
     },
+
+    /// The operation requires an EigenMaps build with item→cluster
+    /// bookkeeping, but the target lacks it.
+    ///
+    /// Triggered by `try_spot_motives_eigen` (issue #165) when the Laplacian
+    /// is an EnergyMaps bootstrap map (the energy track has its own
+    /// `try_spot_motives_energy`), or when the index carries no
+    /// `cluster_assignments` / `n_clusters` to project centroid-space motifs
+    /// onto items. Without that projection the only indices available are
+    /// the feature-space nodes of the F×F bootstrap Laplacian, and serving
+    /// them as item indices is the #161 failure family — so the operation
+    /// refuses instead of degrading.
+    EigenModeRequired {
+        /// What is missing, as a human-readable fragment (e.g. `"eigen build
+        /// (use ArrowSpaceBuilder::build)"`, `"cluster_assignments"`,
+        /// `"centroid coordinates in init_data"`).
+        missing: &'static str,
+    },
 }
 
 impl fmt::Display for ArrowSpaceError {
@@ -95,6 +115,16 @@ impl fmt::Display for ArrowSpaceError {
                  centroid_map are populated; running energy motif detection \
                  on an EigenMaps build would mislabel feature-space indices \
                  as item indices."
+            ),
+            Self::EigenModeRequired { missing } => write!(
+                f,
+                "eigen mode required: missing {missing}. Build via \
+                 ArrowSpaceBuilder::build so cluster_assignments and \
+                 n_clusters are populated and centroid coordinates live in \
+                 init_data; running item-space motif detection without them \
+                 would mislabel feature-space indices as item indices \
+                 (issue #165). For EnergyMaps builds use \
+                 try_spot_motives_energy instead."
             ),
         }
     }

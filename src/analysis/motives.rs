@@ -17,7 +17,7 @@
 //!
 //! ```ignore
 //! use arrowspace::graph::GraphLaplacian;
-//! use arrowspace::motives::{Motives, MotiveConfig};
+//! use arrowspace::analysis::motives::{Motives, MotiveConfig};
 //!
 //! let gl: GraphLaplacian = /* ... */;
 //! let cfg = MotiveConfig {
@@ -28,7 +28,10 @@
 //!     max_sets: 128,
 //!     jaccard_dedup: 0.8,
 //! };
-//! let motifs: Vec<Vec<usize>> = gl.spot_motives(&cfg);
+//! // Feature-space ensembles (nodes of this Laplacian, as built):
+//! let motifs = gl.try_spot_motives_featurespace(&cfg)?;
+//! // Item-space motifs on an EigenMaps build (needs the ArrowSpace index):
+//! let item_motifs = gl.try_spot_motives_eigen(&aspace, &cfg)?;
 //! ```
 //!
 //! # References
@@ -40,7 +43,7 @@
 use crate::graph::GraphLaplacian;
 use log::{debug, info};
 use rayon::prelude::*;
-use smartcore::linalg::basic::arrays::Array;
+use smartcore::linalg::basic::arrays::{Array, Array2};
 use std::collections::HashSet;
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -82,10 +85,28 @@ impl Default for MotiveConfig {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// Trait for detecting graph motifs (triangles, near-cliques) via local density and spectral cohesion.
+///
+/// # Node spaces
+///
+/// The pipeline hands out two different Laplacians, and motif ids live in the
+/// node space of the graph they were detected on (issue #165):
+///
+/// - The EigenMaps / energy-bootstrap `GraphLaplacian.matrix` is **F×F over
+///   feature dimensions** — its node ids are feature indices.
+/// - Item-space motifs are detected on the centroid (or subcentroid) graph and
+///   expanded to **item indices** via the index bookkeeping
+///   (`cluster_assignments` / `centroid_map`): use
+///   [`Motives::try_spot_motives_eigen`] or [`Motives::try_spot_motives_energy`].
 pub trait Motives {
-    /// Spot motifs in the graph using triangle density, clustering coefficient, and optional Rayleigh validation.
+    /// Spot motifs on this Laplacian's own nodes (deprecated, feature-space).
     ///
-    /// Returns a list of motif node-index sets, each represented as a `Vec<usize>` sorted ascending.
+    /// On a pipeline-built EigenMaps (or energy bootstrap) graph the returned
+    /// ids are **feature-dimension indices** of the F×F Laplacian, not item
+    /// indices, even though `GraphLaplacian::nnodes` reports the item count
+    /// (issue #165). For item-space ids use [`Motives::try_spot_motives_eigen`]
+    /// (eigen track) or [`Motives::try_spot_motives_energy`] (energy track);
+    /// this exact feature-space behaviour, as a fallible call, is
+    /// [`Motives::try_spot_motives_featurespace`].
     ///
     /// # Arguments
     ///
@@ -110,7 +131,59 @@ pub trait Motives {
     /// - Triangle-based clustering: <https://arxiv.org/abs/1606.06235>
     /// - Local clustering: <https://en.wikipedia.org/wiki/Clustering_coefficient>
     /// - Rayleigh quotient & cuts: MIT OCW, Cheeger inequality notes
+    #[deprecated(
+        since = "0.27.4",
+        note = "returns this Laplacian's node ids as-is (feature-space ids on pipeline builds); use try_spot_motives_eigen for item-space motifs, or try_spot_motives_featurespace for the same feature-space behaviour as a fallible call"
+    )]
     fn spot_motives_eigen(&self, cfg: &MotiveConfig) -> Vec<Vec<usize>>;
+
+    /// Fallible, explicitly-named twin of the deprecated
+    /// [`Motives::spot_motives_eigen`]: runs the identical detection on this
+    /// Laplacian's own nodes and reproduces its output exactly.
+    ///
+    /// # Node space
+    ///
+    /// The returned ids are **node ids of `self.matrix`**. On pipeline-built
+    /// EigenMaps graphs that matrix is the F×F bootstrap Laplacian, so the ids
+    /// enumerate **feature dimensions, not items** (issue #165). Use this
+    /// variant for feature-space analysis (dimension ensembles); use
+    /// [`Motives::try_spot_motives_eigen`] for item-space motifs.
+    ///
+    /// Never fails on a well-formed Laplacian — the `Result` keeps the
+    /// `try_*` surface uniform and leaves room for validation without a
+    /// future signature change.
+    fn try_spot_motives_featurespace(
+        &self,
+        cfg: &MotiveConfig,
+    ) -> Result<Vec<Vec<usize>>, crate::error::ArrowSpaceError>;
+
+    /// Item-space motif spotting for the EigenMaps track (issue #165),
+    /// mirroring [`Motives::try_spot_motives_energy`]:
+    ///
+    /// 1. Rebuild the X×X Laplacian over cluster centroids from the
+    ///    coordinates the pipeline stored in `init_data` (same feature space
+    ///    the bootstrap graph was assembled from — no raw-data bypass).
+    /// 2. Spot motifs on the centroid graph.
+    /// 3. Expand each centroid set to **item indices** via
+    ///    `ArrowSpace.cluster_assignments`, then deduplicate.
+    ///
+    /// Requirements (enforced — returns
+    /// [`ArrowSpaceError::EigenModeRequired`](crate::error::ArrowSpaceError::EigenModeRequired)
+    /// instead of degrading):
+    /// - `self.energy` must be false (built via `build`; EnergyMaps graphs
+    ///   already have the finer-grained [`Motives::try_spot_motives_energy`])
+    /// - `aspace.n_clusters >= 2` and `aspace.cluster_assignments` populated
+    ///   for every item (one entry per raw-data row)
+    /// - centroid coordinates matching `n_clusters` present in `init_data`
+    ///
+    /// The returned sets are item indices in `0..aspace.nitems`; each motif is
+    /// a union of whole clusters (every item assigned to a detected centroid
+    /// is included).
+    fn try_spot_motives_eigen(
+        &self,
+        aspace: &crate::core::ArrowSpace,
+        cfg: &MotiveConfig,
+    ) -> Result<Vec<Vec<usize>>, crate::error::ArrowSpaceError>;
 
     /// EnergyMaps-aware motif spotting:
     /// 1) Spot motifs on the subcentroid Laplacian (self).
@@ -161,7 +234,10 @@ pub trait Motives {
 // ──────────────────────────────────────────────────────────────────────────────
 
 impl Motives for GraphLaplacian {
-    fn spot_motives_eigen(&self, cfg: &MotiveConfig) -> Vec<Vec<usize>> {
+    fn try_spot_motives_featurespace(
+        &self,
+        cfg: &MotiveConfig,
+    ) -> Result<Vec<Vec<usize>>, crate::error::ArrowSpaceError> {
         info!(
             "Spotting motifs: top_l={}, min_tri={}, min_clust={:.2}, max_size={}",
             cfg.top_l, cfg.min_triangles, cfg.min_clust, cfg.max_motif_size
@@ -312,7 +388,142 @@ impl Motives for GraphLaplacian {
             })
             .collect();
         out.shrink_to_fit();
-        out
+        Ok(out)
+    }
+
+    #[allow(deprecated)]
+    fn spot_motives_eigen(&self, cfg: &MotiveConfig) -> Vec<Vec<usize>> {
+        self.try_spot_motives_featurespace(cfg)
+            .expect("feature-space spotting operates on the Laplacian as given and never fails")
+    }
+
+    fn try_spot_motives_eigen(
+        &self,
+        aspace: &crate::core::ArrowSpace,
+        cfg: &MotiveConfig,
+    ) -> Result<Vec<Vec<usize>>, crate::error::ArrowSpaceError> {
+        use crate::error::ArrowSpaceError;
+
+        // Item-space contract for the eigen track (issue #165), mirroring
+        // try_spot_motives_energy: detection runs on the X-node centroid
+        // graph and centroid sets expand to ITEM indices through the
+        // item→cluster bookkeeping. Serving the F×F bootstrap node ids as
+        // item indices is the #161 failure family, so missing structure is
+        // refused instead of degrading.
+        if self.energy {
+            return Err(ArrowSpaceError::EigenModeRequired {
+                missing: "eigen build (use ArrowSpaceBuilder::build); \
+                          EnergyMaps graphs must use try_spot_motives_energy",
+            });
+        }
+        if aspace.n_clusters < 2 {
+            return Err(ArrowSpaceError::EigenModeRequired {
+                missing: "at least 2 clusters (n_clusters)",
+            });
+        }
+        if aspace.cluster_assignments.len() != aspace.nitems {
+            return Err(ArrowSpaceError::EigenModeRequired {
+                missing: "cluster_assignments on the ArrowSpace index",
+            });
+        }
+
+        // Centroid coordinates: recompute the X×F centroid matrix from the
+        // index's own rows (`aspace.data`) and the pipeline's item→cluster
+        // assignment. This mirrors the energy track, which rebuilds its
+        // subcentroid graph from stored coordinates (see #161): detection
+        // runs on a Laplacian over the same clustered structure the pipeline
+        // produced — no parallel data path is introduced, and the
+        // reconstruction is deterministic.
+        //
+        // (gl.init_data would be the natural source — it stores the F×X
+        // bootstrap input — but its columns cannot currently be read back as
+        // centroid coordinates: run_incremental_clustering_with_sampling
+        // feeds a row-major flat buffer to DenseMatrix::from_iterator with
+        // axis=1, which reinterprets it as column-major. Tracked as an open
+        // question on the #165 PR; until that layout question is resolved,
+        // init_data is not a usable coordinate source.)
+        let n_c = aspace.n_clusters;
+        let (data_rows, n_feats) = aspace.data.shape();
+        if data_rows != aspace.nitems || n_feats < 2 {
+            return Err(ArrowSpaceError::EigenModeRequired {
+                missing: "the raw data matrix (aspace.data) matching nitems \
+                          with a feature axis of at least 2",
+            });
+        }
+        let mut sums = vec![vec![0.0f64; n_feats]; n_c];
+        let mut counts = vec![0usize; n_c];
+        for (it, assign) in aspace.cluster_assignments.iter().enumerate() {
+            if let Some(c) = assign
+                && *c < n_c
+            {
+                counts[*c] += 1;
+                for (k, x) in aspace.data.get_row(it).iterator(0).enumerate() {
+                    sums[*c][k] += x;
+                }
+            }
+        }
+        for c in 0..n_c {
+            if counts[c] == 0 {
+                return Err(ArrowSpaceError::EigenModeRequired {
+                    missing: "a non-empty cluster for every centroid \
+                              (cluster_assignments values in 0..n_clusters)",
+                });
+            }
+            let inv = 1.0 / counts[c] as f64;
+            for x in sums[c].iter_mut() {
+                *x *= inv;
+            }
+        }
+        // Assemble X×F row-major (centroid-major flat, axis=0) — the buffer
+        // order DenseMatrix::from_iterator needs to interpret as rows.
+        let mut flat: Vec<f64> = Vec::with_capacity(n_c * n_feats);
+        for row in &sums {
+            flat.extend_from_slice(row);
+        }
+        let centroids = smartcore::linalg::basic::matrix::DenseMatrix::<f64>::from_iterator(
+            flat.iter().copied(),
+            n_c,
+            n_feats,
+            0,
+        );
+
+        // Rebuild the X×X Laplacian over centroids with the pipeline's own
+        // graph parameters (clamped to the smaller node count, as in the
+        // energy path). nnodes is pinned to the centroid count so the
+        // rebuilt struct's node space is unambiguous.
+        let mut params = self.graph_params.clone();
+        params.k = params.k.min(n_c - 1);
+        params.topk = params.topk.min(4).min(n_c - 1);
+        let centroid_graph =
+            crate::laplacian::build_laplacian_matrix(centroids, &params, Some(n_c), false);
+
+        info!(
+            "Spotting eigen motifs (item space): top_l={}, min_tri={}, min_clust={:.2}, max_size={}, n_clusters={}",
+            cfg.top_l, cfg.min_triangles, cfg.min_clust, cfg.max_motif_size, n_c
+        );
+
+        let c_sets = centroid_graph.motif_node_sets(cfg, n_c);
+
+        info!("Eigen motifs: {} centroid motifs found", c_sets.len());
+
+        // cluster → items, built sequentially in ascending item order so the
+        // projection is deterministic by construction (invariant #4).
+        let mut c_to_items: Vec<Vec<usize>> = vec![Vec::new(); n_c];
+        for (it, assign) in aspace.cluster_assignments.iter().enumerate() {
+            if let Some(c) = assign
+                && *c < n_c
+            {
+                c_to_items[*c].push(it);
+            }
+        }
+
+        let out = project_node_sets_to_items(c_sets, &c_to_items, cfg);
+
+        info!(
+            "Eigen motifs: {} item-level motifs after mapping",
+            out.len()
+        );
+        Ok(out)
     }
 
     fn try_spot_motives_energy(
@@ -383,15 +594,108 @@ impl Motives for GraphLaplacian {
             cfg.top_l, cfg.min_triangles, cfg.min_clust, cfg.max_motif_size, n_sc
         );
 
+        // Steps 1–5 (triangle seeding + deterministic greedy expansion) and
+        // steps 6–7 (projection onto items + canonical dedup) are shared with
+        // the eigen item-space track (issue #165); see motif_node_sets and
+        // project_node_sets_to_items.
+        let sc_results = neigh_source.motif_node_sets(cfg, n_sc);
+
+        info!(
+            "Energy motifs: {} subcentroid motifs found",
+            sc_results.len()
+        );
+
+        // 6) Map to item indices via centroid_map — built sequentially in
+        // ascending item order, so each subcentroid's item list is sorted and
+        // the grouping is deterministic by construction (invariant #4).
+        // The map is guaranteed present by the requirement checks above.
+        let mut sc_to_items: Vec<Vec<usize>> = vec![Vec::new(); n_sc];
+        for (it, &sc) in cmap.iter().enumerate() {
+            if sc < n_sc {
+                sc_to_items[sc].push(it);
+            }
+        }
+
+        let mut out: Vec<Vec<usize>> = project_node_sets_to_items(sc_results, &sc_to_items, cfg);
+        out.shrink_to_fit();
+
+        info!(
+            "Energy motifs: {} item-level motifs after mapping",
+            out.len()
+        );
+
+        // Output vecs are already sorted from canonicalisation above.
+        Ok(out)
+    }
+
+    fn spot_motives_energy(
+        &self,
+        aspace: &crate::core::ArrowSpace,
+        cfg: &MotiveConfig,
+    ) -> Vec<Vec<usize>> {
+        self.try_spot_motives_energy(aspace, cfg).expect(
+            "spot_motives_energy requires an energy build with sub_centroids \
+             and centroid_map; use try_spot_motives_energy for a typed error",
+        )
+    }
+
+    fn is_clique(&self, set: &HashSet<usize>) -> bool {
+        let sz = set.len();
+        if sz < 2 {
+            return false;
+        }
+        // Parallel short-circuit check
+
+        set.par_iter().all(|&u| {
+            let nbrs: HashSet<usize> = self.neighbors_of(u).iter().map(|(j, _)| *j).collect();
+            let need = sz - 1;
+            let have = nbrs.intersection(set).count();
+            have == need
+        })
+    }
+
+    /// unused: potential improvements using rayleigh energy boundaries
+    fn rayleigh_indicator(&self, set: &HashSet<usize>) -> f64 {
+        // Active computation space derived from the Laplacian itself
+        let (rows, cols) = self.matrix.shape();
+        if rows == 0 || rows != cols || set.is_empty() {
+            return f64::INFINITY;
+        }
+        let n = rows;
+        if set.iter().any(|&u| u >= n) {
+            return f64::INFINITY;
+        }
+        let mut x = vec![0.0f64; n];
+        for &i in set {
+            x[i] = 1.0;
+        }
+        self.rayleigh_quotient(&x)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Shared machinery for the item-space tracks (#161, #165)
+// ──────────────────────────────────────────────────────────────────────────────
+
+impl GraphLaplacian {
+    /// Steps 1–5 of the item-space motif pipeline: triangle-based seeding and
+    /// greedy expansion over the first `n` nodes of this Laplacian, followed
+    /// by Jaccard dedup. Returns motif sets in this graph's node space
+    /// (centroids / subcentroids); projection onto items is
+    /// [`project_node_sets_to_items`].
+    ///
+    /// Fully deterministic per design invariant #4 — see the notes on the
+    /// seed sort and the expansion loop.
+    fn motif_node_sets(&self, cfg: &MotiveConfig, n: usize) -> Vec<HashSet<usize>> {
         // 1) Neighbors with clamped indices (parallel)
-        let neigh_idx: Vec<Vec<usize>> = (0..n_sc)
+        let neigh_idx: Vec<Vec<usize>> = (0..n)
             .into_par_iter()
             .map(|i| {
-                let mut ids: Vec<usize> = neigh_source
+                let mut ids: Vec<usize> = self
                     .neighbors_of(i)
                     .into_iter()
                     .filter_map(|(j, w)| {
-                        if j < n_sc && j != i && w > 0.0 {
+                        if j < n && j != i && w > 0.0 {
                             Some(j)
                         } else {
                             None
@@ -407,10 +711,10 @@ impl Motives for GraphLaplacian {
             .collect();
 
         // 2) Triangle stats (parallel)
-        let (tri_count, clust) = triangle_stats_sorted(&neigh_idx, n_sc);
+        let (tri_count, clust) = triangle_stats_sorted(&neigh_idx, n);
 
         debug!(
-            "Energy triangle stats: max_tri={}, max_clust={:.3}",
+            "Triangle stats: max_tri={}, max_clust={:.3}",
             tri_count.iter().copied().max().unwrap_or(0),
             clust.iter().cloned().fold(0.0f64, f64::max)
         );
@@ -422,7 +726,7 @@ impl Motives for GraphLaplacian {
         // unstable. We finish with a sequential sort_by_key so that seeds with
         // identical (tri_count, clust) scores always appear in ascending node-index
         // order, giving the greedy expansion in step 4 a fully reproducible input.
-        let mut seeds: Vec<usize> = (0..n_sc)
+        let mut seeds: Vec<usize> = (0..n)
             .into_par_iter()
             .filter(|&i| tri_count[i] >= cfg.min_triangles && clust[i] >= cfg.min_clust)
             .collect();
@@ -437,9 +741,9 @@ impl Motives for GraphLaplacian {
             )
         });
 
-        debug!("Energy motifs seeds (subcentroids): {:?}", seeds);
+        debug!("Motif seeds (graph nodes): {:?}", seeds);
 
-        // 4) Parallel greedy expansions per seed in subcentroid space.
+        // 4) Parallel greedy expansions per seed in node space.
         //
         // Each expansion is independent, so par_iter is safe here.
         // The two sources of non-determinism fixed below are:
@@ -530,163 +834,94 @@ impl Motives for GraphLaplacian {
             })
             .collect();
 
-        // 5) Global dedup in subcentroid space
-        let mut sc_results: Vec<HashSet<usize>> = Vec::new();
+        // 5) Global dedup in node space
+        let mut results: Vec<HashSet<usize>> = Vec::new();
         for opt in expansions.into_iter().flatten() {
             let mut keep = true;
-            for res in &sc_results {
+            for res in &results {
                 if jaccard(&opt, res) >= cfg.jaccard_dedup {
                     keep = false;
                     break;
                 }
             }
             if keep {
-                sc_results.push(opt);
-                if sc_results.len() >= cfg.max_sets {
+                results.push(opt);
+                if results.len() >= cfg.max_sets {
                     break;
                 }
             }
         }
 
-        info!(
-            "Energy motifs: {} subcentroid motifs found",
-            sc_results.len()
-        );
-
-        // 6) Map to item indices via centroid_map (parallel) — the map is
-        // guaranteed present by the requirement checks above.
-        // sc_id -> items (parallel build with local buckets, then merge)
-        cmap.par_iter().enumerate().for_each(|(_, &sc_idx)| {
-            if sc_idx < n_sc {
-                // local push via interior mutability avoided; collect pairs then group
-                // fallback: lightweight locking-free grouping by preallocating pairs
-            }
-        });
-        // Simpler and safe: collect pairs and group
-        let sc_item_pairs: Vec<(usize, usize)> = cmap
-            .par_iter()
-            .enumerate()
-            .filter_map(|(it, &sc)| if sc < n_sc { Some((sc, it)) } else { None })
-            .collect();
-        let mut sc_to_items: Vec<Vec<usize>> = vec![Vec::new(); n_sc];
-        for (sc, it) in sc_item_pairs {
-            sc_to_items[sc].push(it);
-        }
-
-        // Project each subcentroid motif to items (parallel)
-        let item_sets: Vec<HashSet<usize>> = sc_results
-            .par_iter()
-            .map(|s_sc| {
-                let mut s_items = HashSet::new();
-                for &sc in s_sc {
-                    for &it in &sc_to_items[sc] {
-                        s_items.insert(it);
-                    }
-                }
-                s_items
-            })
-            .filter(|s_items| s_items.len() >= 3)
-            .collect();
-
-        // 7) Final item-level dedup (sequential, fully deterministic)
-        //
-        // Non-determinism source: `item_sets` is produced by `sc_results.par_iter()`
-        // in step 6, whose delivery order is scheduler-dependent. The sequential dedup
-        // loop below is order-sensitive — different input orderings evict different
-        // sets on Jaccard ties, changing the final count between runs.
-        //
-        // Fix: canonicalise every set into a sorted Vec<usize> and sort the whole
-        // input slice before dedup. This gives the dedup loop a stable, reproducible
-        // input regardless of how Rayon delivered the parallel results.
-
-        // Canonicalise: HashSet → sorted Vec so both content and ordering are stable.
-        let mut item_sets_sorted: Vec<Vec<usize>> = item_sets
-            .into_iter()
-            .map(|set| {
-                let mut v: Vec<usize> = set.into_iter().collect();
-                v.sort_unstable(); // canonical form for each set
-                v
-            })
-            .collect();
-
-        // Sort the collection itself so dedup always sees the same input order.
-        // Lexicographic order on sorted Vecs is deterministic and cheap here
-        // since item_sets_sorted is bounded by cfg.max_sets (typically ≤ 60).
-        item_sets_sorted.sort_unstable();
-
-        let mut deduped_items: Vec<Vec<usize>> = Vec::new();
-        for item in item_sets_sorted {
-            let item_set: HashSet<usize> = item.iter().copied().collect();
-            let mut keep = true;
-            for cmp in &deduped_items {
-                let cmp_set: HashSet<usize> = cmp.iter().copied().collect();
-                if jaccard(&item_set, &cmp_set) >= cfg.jaccard_dedup {
-                    keep = false;
-                    break;
-                }
-            }
-            if keep {
-                deduped_items.push(item); // already sorted, no re-sort needed
-                if deduped_items.len() >= cfg.max_sets {
-                    break;
-                }
-            }
-        }
-
-        info!(
-            "Energy motifs: {} item-level motifs after mapping",
-            deduped_items.len()
-        );
-
-        // Output vecs are already sorted from canonicalisation above.
-        let mut out: Vec<Vec<usize>> = deduped_items;
-        out.shrink_to_fit();
-        Ok(out)
+        results
     }
+}
 
-    fn spot_motives_energy(
-        &self,
-        aspace: &crate::core::ArrowSpace,
-        cfg: &MotiveConfig,
-    ) -> Vec<Vec<usize>> {
-        self.try_spot_motives_energy(aspace, cfg).expect(
-            "spot_motives_energy requires an energy build with sub_centroids \
-             and centroid_map; use try_spot_motives_energy for a typed error",
-        )
-    }
-
-    fn is_clique(&self, set: &HashSet<usize>) -> bool {
-        let sz = set.len();
-        if sz < 2 {
-            return false;
-        }
-        // Parallel short-circuit check
-
-        set.par_iter().all(|&u| {
-            let nbrs: HashSet<usize> = self.neighbors_of(u).iter().map(|(j, _)| *j).collect();
-            let need = sz - 1;
-            let have = nbrs.intersection(set).count();
-            have == need
+/// Steps 6–7 of the item-space motif pipeline: expand node sets (centroids /
+/// subcentroids) to item indices through `node_to_items` (whose buckets are
+/// sorted ascending by item index), drop sets with fewer than 3 items, and
+/// deduplicate. Returns item-index sets, each sorted ascending.
+///
+/// Determinism note (inherited from #161): `item_sets` is produced by a
+/// parallel map, whose delivery order is scheduler-dependent, while the
+/// sequential dedup pass is order-sensitive — different input orderings evict
+/// different sets on Jaccard ties. Canonicalising every set into a sorted Vec
+/// and sorting the whole slice before dedup gives the loop a stable,
+/// reproducible input regardless of how Rayon delivered the results.
+fn project_node_sets_to_items(
+    node_sets: Vec<HashSet<usize>>,
+    node_to_items: &[Vec<usize>],
+    cfg: &MotiveConfig,
+) -> Vec<Vec<usize>> {
+    // Project each node motif to items (parallel)
+    let item_sets: Vec<HashSet<usize>> = node_sets
+        .par_iter()
+        .map(|s_nodes| {
+            let mut s_items = HashSet::new();
+            for &nd in s_nodes {
+                for &it in &node_to_items[nd] {
+                    s_items.insert(it);
+                }
+            }
+            s_items
         })
+        .filter(|s_items| s_items.len() >= 3)
+        .collect();
+
+    // Canonicalise: HashSet → sorted Vec so both content and ordering are stable.
+    let mut item_sets_sorted: Vec<Vec<usize>> = item_sets
+        .into_iter()
+        .map(|set| {
+            let mut v: Vec<usize> = set.into_iter().collect();
+            v.sort_unstable(); // canonical form for each set
+            v
+        })
+        .collect();
+
+    // Sort the collection itself so dedup always sees the same input order.
+    // Lexicographic order on sorted Vecs is deterministic and cheap here
+    // since item_sets_sorted is bounded by cfg.max_sets (typically ≤ 60).
+    item_sets_sorted.sort_unstable();
+
+    let mut deduped_items: Vec<Vec<usize>> = Vec::new();
+    for item in item_sets_sorted {
+        let item_set: HashSet<usize> = item.iter().copied().collect();
+        let mut keep = true;
+        for cmp in &deduped_items {
+            let cmp_set: HashSet<usize> = cmp.iter().copied().collect();
+            if jaccard(&item_set, &cmp_set) >= cfg.jaccard_dedup {
+                keep = false;
+                break;
+            }
+        }
+        if keep {
+            deduped_items.push(item); // already sorted, no re-sort needed
+            if deduped_items.len() >= cfg.max_sets {
+                break;
+            }
+        }
     }
 
-    /// unused: potential improvements using rayleigh energy boundaries
-    fn rayleigh_indicator(&self, set: &HashSet<usize>) -> f64 {
-        // Active computation space derived from the Laplacian itself
-        let (rows, cols) = self.matrix.shape();
-        if rows == 0 || rows != cols || set.is_empty() {
-            return f64::INFINITY;
-        }
-        let n = rows;
-        if set.iter().any(|&u| u >= n) {
-            return f64::INFINITY;
-        }
-        let mut x = vec![0.0f64; n];
-        for &i in set {
-            x[i] = 1.0;
-        }
-        self.rayleigh_quotient(&x)
-    }
+    deduped_items
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

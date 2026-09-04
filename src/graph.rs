@@ -129,7 +129,17 @@ pub struct GraphLaplacian {
     pub init_data: DenseMatrix<f64>, // clustered centroids: XxF matrix where X <= max_clusters
     // store the fully computed sparse graph laplacian
     pub matrix: CsMat<f64>,
-    // number of the nodes of the *original raw data*
+    /// Number of nodes of the *original raw data* (the item count at build
+    /// time), NOT the size of `matrix`'s node space.
+    ///
+    /// On pipeline-built EigenMaps graphs (and on the EnergyMaps bootstrap
+    /// graph) `matrix` is the F×F Laplacian whose nodes enumerate *feature
+    /// dimensions* while `nnodes` still reports the item count (issue #165).
+    /// Never read raw `matrix` node ids as item indices: use
+    /// [`Motives::try_spot_motives_eigen`](crate::analysis::motives::Motives::try_spot_motives_eigen),
+    /// [`Motives::try_spot_motives_energy`](crate::analysis::motives::Motives::try_spot_motives_energy)
+    /// or `try_spot_subg_motives`, which project centroid-space nodes onto
+    /// items through the index bookkeeping.
     pub nnodes: usize,
     pub graph_params: GraphParams,
     pub energy: bool, // false if it is an eigenmap, true if it is an energymap
