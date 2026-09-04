@@ -4,6 +4,97 @@ All notable changes to `arrowspace` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [SemVer](https://semver.org/).
 
+## [0.27.4]
+
+This release closes the second half of the motif-namespace failure family:
+`spot_motives_eigen` returned **feature-space** node ids of the F×F bootstrap
+Laplacian while `GraphLaplacian::nnodes` advertised the item count (#165).
+The eigen track now has the same item-space contract the energy track got in
+0.27.3 (#161), and the historical feature-space behaviour keeps a properly
+named, fallible entry point. **No signature changes or removals**; one
+additive `ArrowSpaceError` variant — the Python bindings must add one
+`map_arrow_error` arm when they bump to 0.27.4 (they currently pin 0.27.3
+and are unaffected until then).
+
+### Added — item-space motifs for the EigenMaps track (#165)
+
+`Motives::try_spot_motives_eigen(&gl, &aspace, &cfg) ->
+Result<Vec<Vec<usize>>, ArrowSpaceError>` mirrors
+`try_spot_motives_energy` for EigenMaps builds:
+
+1. Rebuilds the X×X Laplacian over cluster centroids from the index's own
+   rows (`aspace.data`) and the pipeline's `cluster_assignments` — the same
+   clustered structure the bootstrap graph was assembled from, no raw-data
+   bypass of L (invariant #1).
+2. Runs triangle-based motif detection on the centroid graph.
+3. Expands each centroid set to **item indices** and deduplicates, like the
+   energy path. Returned ids live in `0..aspace.nitems`; every motif is a
+   union of whole clusters.
+
+```rust
+// before (0.27.3): feature ids, easy to misread as items (nnodes says 1000)
+let motifs = gl.spot_motives_eigen(&cfg);          // ids in 0..F-1
+
+// after: item-space motifs on the eigen track
+let motifs = gl.try_spot_motives_eigen(&aspace, &cfg)?;   // ids in 0..nitems-1
+```
+
+Requirements are enforced (no silent degradation, per the #161 lesson):
+the Laplacian must be an eigen build (`energy == false`), `n_clusters >= 2`,
+`cluster_assignments` must cover **every** item with an in-range cluster id
+(`Some(c)`, `c < n_clusters` — outliers or out-of-range ids are refused
+rather than silently dropped from the projection), and every centroid must
+be non-empty. Violations return the new
+`ArrowSpaceError::EigenModeRequired { missing }`.
+
+Also added: `Motives::try_spot_motives_featurespace(&gl, &cfg) -> Result<...>`
+— detection over the Laplacian's own nodes (feature ids on pipeline builds)
+under an explicit name, as a fallible call. Use it for feature-space /
+dimension-ensemble analysis.
+
+### Deprecated
+
+- `Motives::spot_motives_eigen` — the name hid its node space: the ids are
+  feature indices on pipeline builds while `nnodes` reports items (#165).
+  It now delegates to `try_spot_motives_featurespace`. Callers keep
+  compiling with a warning; the bindings are unaffected because they do not
+  enable `deny(warnings)`.
+
+### Fixed — feature-space motif detection is now deterministic
+
+`spot_motives_eigen` / `try_spot_motives_featurespace` used an unstable
+seed sort and walked the expansion frontier through `HashSet` iteration
+order, so two calls on the same Laplacian could return different motif sets
+when candidates tied on triangle gain (observed: 14 vs 22 motifs on one
+fixture). Both now run the same deterministic detector as the item-space
+tracks (sorted frontier, lowest-index tie-break, invariant #4). This is a
+determinism bugfix, not a behaviour redefinition: on tie-free graphs the
+output is unchanged, and 0.27.3's output was not reproducible to begin with.
+The long-standing `test_motives_eigen_deterministic` guard is now robust
+instead of passing by luck.
+
+### Fixed — documented node spaces
+
+- `GraphLaplacian::nnodes` is now documented as the **original item count,
+  not the matrix's node space**: on pipeline EigenMaps builds `matrix` is
+  the F×F feature bootstrap (`matrix.shape() == (F, F)`) while `nnodes`
+  still reports `n_items` (#165).
+- The `Motives` trait docs state the node space of every entry point
+  (feature ids vs item ids).
+
+### Note for the Python bindings
+
+`map_arrow_error` in pyarrowspace matches `ArrowSpaceError` exhaustively;
+when bumping to 0.27.4 it needs one arm:
+
+```rust
+ArrowSpaceError::EigenModeRequired { .. } => PyValueError::new_err(format!("{}", e)),
+```
+
+(and, optionally, a `spot_motives_eigen_items` method wrapping
+`try_spot_motives_eigen`, mirroring the existing `spot_motives_energy`
+wrapper).
+
 ## [0.27.0] — breaking
 
 This release deprecates the panic-as-API query surface and replaces the last
