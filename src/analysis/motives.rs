@@ -344,13 +344,12 @@ impl Motives for GraphLaplacian {
         // produced — no parallel data path is introduced, and the
         // reconstruction is deterministic.
         //
-        // (gl.init_data would be the natural source — it stores the F×X
-        // bootstrap input — but its columns cannot currently be read back as
-        // centroid coordinates: run_incremental_clustering_with_sampling
-        // feeds a row-major flat buffer to DenseMatrix::from_iterator with
-        // axis=1, which reinterprets it as column-major (issue #167). Until
-        // that layout fix lands in its own breaking release, init_data is
-        // not a usable coordinate source.)
+        // (init_data stores the F×X bootstrap input and its columns are true
+        // centroid coordinates again since the #167 layout fix — but the
+        // reconstruction below stays the canonical source: it is independent
+        // of init_data's orientation (pipeline F×X vs storage X×F) and of
+        // the normalise flag, which would hand back StandardScaler'd
+        // coordinates instead of the raw cluster means.)
         let (data_rows, n_feats) = aspace.data.shape();
         if data_rows != aspace.nitems || n_feats < 2 {
             return Err(ArrowSpaceError::EigenModeRequired {

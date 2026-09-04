@@ -972,17 +972,33 @@ impl ArrowSpace {
         if let (Some(subcentroids), Some(sc_lambdas)) =
             (&self.sub_centroids, &self.subcentroid_lambdas)
         {
+            // Queries arrive in original feature space (F) or already in the
+            // reduced space (r); subcentroid rows live in the reduced space.
+            // Project unprojected queries exactly like the indexing path does
+            // (builder Step 8) — comparing across dimensions would silently
+            // truncate the zip below and mis-map the query (exposed by the
+            // clustered_dm layout fix, issue #167).
+            let sc_dim = subcentroids.shape().1;
+            let projected_query: Vec<f64>;
+            let query_ref: &[f64] =
+                if self.projection_matrix.is_some() && query.len() == self.nfeatures {
+                    projected_query = self.project_query(query);
+                    &projected_query
+                } else if query.len() == sc_dim {
+                    query
+                } else {
+                    return Err(ArrowSpaceError::DimensionMismatch {
+                        expected: sc_dim,
+                        got: query.len(),
+                    });
+                };
+
             let mut best_idx = 0;
             let mut best_dist = f64::INFINITY;
 
             // Find nearest subcentroid
             for sc_idx in 0..subcentroids.shape().0 {
-                let query = if self.extra_reduced_dim {
-                    &self.project_query(query)
-                } else {
-                    query
-                };
-                let dist: f64 = query
+                let dist: f64 = query_ref
                     .iter()
                     .zip(subcentroids.get_row(sc_idx).iterator(0))
                     .map(|(a, b)| (a - b).powi(2))

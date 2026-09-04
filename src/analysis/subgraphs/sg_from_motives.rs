@@ -246,5 +246,5 @@ fn extract_columns(matrix: &DenseMatrix<f64>, col_indices: &[usize]) -> DenseMat
         }
     }
 
-    DenseMatrix::from_iterator(data.into_iter(), rows, n_sub, 1)
+    DenseMatrix::from_iterator(data.into_iter(), rows, n_sub, 0)
 }

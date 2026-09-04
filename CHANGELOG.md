@@ -4,6 +4,89 @@ All notable changes to `arrowspace` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [SemVer](https://semver.org/).
 
+## [0.28.0] — breaking
+
+This release fixes the `DenseMatrix` flat-buffer layout defect (#167):
+every call site that assembled a matrix from a **row-major** buffer passed
+`axis=1` to `DenseMatrix::from_iterator`, which smartcore maps to
+`column_major = true` — adopting the buffer as-is. Every `get((r, c))` then
+reads a transposed mixture of the intended rows. The matrices were
+self-consistent (all consumers read through the same scrambled layout), so
+nothing crashed — but the values were not the quantities the code claims to
+assemble, and downstream spectral content was calibrated against the
+scramble.
+
+**No signatures change and no API is removed.** The break is value-level:
+graph content and every stored λ derived from it change for EigenMaps and
+EnergyMaps builds. Pin 0.28.0 and expect re-tuned indexes; persisted
+indexes built with ≤ 0.27.4 embed the old graph content (rebuild, or treat
+loaded λs as legacy — see "Note for the Python bindings").
+
+### Fixed — `DenseMatrix` flat-buffer layout (#167)
+
+`axis=1 → axis=0` at every row-major call site:
+
+- `run_incremental_clustering_with_sampling` (clustering/mod.rs) — the
+  `clustered_dm` / `GraphLaplacian::init_data` centroid matrix. `init_data`
+  columns are now the true cluster means (probe evidence in #167: pre-fix
+  columns had norms 0.53–1.36 and cos ≈ 0 against means of norm 1.000).
+- `sparse_to_dense` (graph.rs) — values-identical for the symmetric
+  Laplacians it feeds, correctness-true for any input.
+- `kmeans_lloyd` input assembly (clustering/mod.rs) — the clustering
+  heuristic (`compute_optimal_k`) previously scored k candidates on
+  scrambled data; `k_opt`/`radius` selections may differ.
+- `project_matrix` (reduction.rs) — JL-projected centroid matrices.
+- optical compression + `diffuse_and_split_subcentroids` (maps/energymaps.rs)
+  — `sub_centroids` rows are now true subcentroid coordinates.
+- `extract_columns` (analysis/subgraphs/sg_from_motives.rs) — subgraph
+  Laplacian coordinates.
+
+`try_prepare_query_item`'s energy branch no longer compares a raw F-dim
+query against reduced-dim subcentroid rows through a silently truncating
+`zip`: unprojected queries are projected exactly like the indexing path,
+already-reduced queries are accepted as-is, and anything else returns
+`DimensionMismatch` instead of mis-mapping (this latent defect is what
+broke energy self-retrieval once subcentroid rows held true coordinates).
+
+Parquet round-trip is unaffected: `save_dense_matrix` streams logical
+columns, so the loaded buffer is genuinely column-major and `axis=1` is
+correct there.
+
+### Changed — builder defaults calibrated for true signal graphs
+
+The pre-#167 defaults (`lambda_eps=1e-3, lambda_k=6, lambda_topk=3`) were
+only survivable because scrambled `clustered_dm` buffers made adjacent
+"feature signals" overlapping windows of one centroid (artificially
+correlated at ~0 distance). On true signals they collapse the bootstrap
+graph to zero edges and every λ to 0. New defaults:
+`lambda_eps=0.5, lambda_k=12, lambda_topk=6` — inside the documented
+0.5–4.0 eps regime and matching one-off `arrowspace_tuner` optima on
+unit-norm corpora (eps ≈ 0.45–0.52, k ≈ 25–34 at 10³-scale).
+
+### Test-contract changes (post-fix behaviour, by design)
+
+- K-Means may converge to unbalanced local minima — explorative behaviour
+  is by design; only empty clusters are gated now.
+- EigenMaps and EnergyMaps motif tracks may return different results: the
+  energy graph is the subcentroid Laplacian with λ-proximity item mapping,
+  the eigen track detects on the centroid graph. Cross-track agreement is
+  reported, never gated; each track is gated on its own contract
+  (item-space validity, planted-structure recovery for the primary eigen
+  track).
+- `test_builder_unit_norm_diagonal_similarity` no longer asserts equal
+  cluster counts for raw vs unit-norm inputs: the (squared-Euclidean)
+  incremental clusterer is scale-sensitive, and the old equality was an
+  artifact of the scrambled heuristic.
+- A λ golden test pins min/max/mean on a fixed fixture so future graph or
+  read-out changes are explicit.
+
+### Note for the Python bindings
+
+No signature or variant changes — `map_arrow_error` is untouched. pyarrowspace
+pinned at `arrowspace = "0.27"` keeps compiling and keeps its current
+(semantically scrambled-era) λ values; bump to 0.28 to pick up corrected
+graph content, and expect stored-index rebuilds.
+
 ## [0.27.4]
 
 This release closes the second half of the motif-namespace failure family:

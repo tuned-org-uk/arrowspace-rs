@@ -196,7 +196,7 @@ pub fn project_matrix(
         flat.extend(row);
     }
 
-    DenseMatrix::from_iterator(flat.into_iter(), n_rows, target_dim, 1)
+    DenseMatrix::from_iterator(flat.into_iter(), n_rows, target_dim, 0)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
