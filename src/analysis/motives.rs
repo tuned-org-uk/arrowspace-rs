@@ -160,9 +160,13 @@ pub trait Motives {
     /// Item-space motif spotting for the EigenMaps track (issue #165),
     /// mirroring [`Motives::try_spot_motives_energy`]:
     ///
-    /// 1. Rebuild the X×X Laplacian over cluster centroids from the
-    ///    coordinates the pipeline stored in `init_data` (same feature space
-    ///    the bootstrap graph was assembled from — no raw-data bypass).
+    /// 1. Rebuild the X×X Laplacian over cluster centroids from the index's
+    ///    own rows (`aspace.data`) and the pipeline's item→cluster
+    ///    assignment — the same clustered structure the bootstrap graph was
+    ///    assembled from, no raw-data bypass. (Centroid coordinates are
+    ///    reconstructed rather than read from `gl.init_data`: see issue
+    ///    #167 for the `clustered_dm` layout defect that makes `init_data`
+    ///    columns unusable as coordinates today.)
     /// 2. Spot motifs on the centroid graph.
     /// 3. Expand each centroid set to **item indices** via
     ///    `ArrowSpace.cluster_assignments`, then deduplicate.
@@ -172,9 +176,13 @@ pub trait Motives {
     /// instead of degrading):
     /// - `self.energy` must be false (built via `build`; EnergyMaps graphs
     ///   already have the finer-grained [`Motives::try_spot_motives_energy`])
-    /// - `aspace.n_clusters >= 2` and `aspace.cluster_assignments` populated
-    ///   for every item (one entry per raw-data row)
-    /// - centroid coordinates matching `n_clusters` present in `init_data`
+    /// - `aspace.n_clusters >= 2`
+    /// - `aspace.cluster_assignments` carries one entry per raw-data row and
+    ///   **every** entry is `Some(c)` with `c < n_clusters` — outliers or
+    ///   out-of-range ids would silently drop items from the projection, so
+    ///   the call refuses instead
+    /// - `aspace.data` is present with a feature axis of at least 2
+    /// - every centroid is non-empty after the assignment validation
     ///
     /// The returned sets are item indices in `0..aspace.nitems`; each motif is
     /// a union of whole clusters (every item assigned to a detected centroid
@@ -243,139 +251,16 @@ impl Motives for GraphLaplacian {
             cfg.top_l, cfg.min_triangles, cfg.min_clust, cfg.max_motif_size
         );
 
+        // Nodes of this Laplacian as built: on pipeline EigenMaps graphs the
+        // F×F bootstrap enumerates feature dimensions (issue #165 contract).
         let n = self.init_data.shape().0;
 
-        // 1) Build top-L neighbor lists per node (parallel)
-        let neigh: Vec<Vec<(usize, f64)>> = (0..n)
-            .into_par_iter()
-            .map(|i| {
-                let mut nb: Vec<(usize, f64)> = self.neighbors_of(i);
-                nb.sort_unstable_by(|a, b| {
-                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                if nb.len() > cfg.top_l {
-                    nb.truncate(cfg.top_l);
-                }
-                nb
-            })
-            .collect();
-
-        // Sorted neighbor-only vectors for faster intersections
-        let neigh_idx: Vec<Vec<usize>> = neigh
-            .par_iter()
-            .map(|v| {
-                let mut ids: Vec<usize> = v.iter().map(|(j, _)| *j).collect();
-                ids.sort_unstable();
-                ids
-            })
-            .collect();
-
-        // 2) Triangle stats (parallel per node)
-        let (tri_count, clust) = triangle_stats_sorted(&neigh_idx, n);
-
-        debug!(
-            "Triangle stats: max_tri={}, max_clust={:.3}",
-            tri_count.iter().max().unwrap_or(&0),
-            clust.iter().cloned().fold(0.0f64, f64::max)
-        );
-
-        // 3) Seed selection and sorting (parallel filter, then sort)
-        let mut seeds: Vec<usize> = (0..n)
-            .into_par_iter()
-            .filter(|&i| tri_count[i] >= cfg.min_triangles && clust[i] >= cfg.min_clust)
-            .collect();
-        seeds.par_sort_unstable_by_key(|&i| {
-            std::cmp::Reverse((tri_count[i], (clust[i] * 1e6) as i64))
-        });
-
-        info!("Seeds identified: {}", seeds.len());
-        debug!("Motives Seeds used: {:?}", seeds);
-
-        // 4) Greedy expansions per seed in parallel, with local state
-        let expansions: Vec<Option<HashSet<usize>>> = seeds
-            .par_iter()
-            .map(|&s| {
-                // Skip seeds that are trivially dominated later during global dedup
-                let mut seeds_hashset: HashSet<usize> = HashSet::from([s]);
-
-                loop {
-                    if seeds_hashset.len() >= cfg.max_motif_size {
-                        break;
-                    }
-
-                    // Frontier
-                    let mut cand = HashSet::new();
-                    for &u in &seeds_hashset {
-                        for &v in &neigh_idx[u] {
-                            if !seeds_hashset.contains(&v) {
-                                cand.insert(v);
-                            }
-                        }
-                    }
-                    if cand.is_empty() {
-                        break;
-                    }
-
-                    // Select by triangle gain
-                    let mut best_u: Option<usize> = None;
-                    let mut best_gain: i64 = -1;
-
-                    for u in cand {
-                        // neighbors of u inside seeds_hashset
-                        let mut s_nbrs: Vec<usize> = neigh_idx[u]
-                            .iter()
-                            .copied()
-                            .filter(|v| seeds_hashset.contains(v))
-                            .collect();
-                        s_nbrs.sort_unstable();
-                        let mut edges = 0i64;
-                        for i in 0..s_nbrs.len() {
-                            // count links among s_nbrs
-                            let ui = s_nbrs[i];
-                            // two-pointer count intersection between neigh_idx[ui] and s_nbrs[(i+1)..]
-                            edges += count_edges_among(&neigh_idx[ui], &s_nbrs, i + 1) as i64;
-                        }
-                        if edges > best_gain {
-                            best_gain = edges;
-                            best_u = Some(u);
-                        }
-                    }
-
-                    match best_u {
-                        Some(u) => {
-                            let mut s2 = seeds_hashset.clone();
-                            s2.insert(u);
-                            seeds_hashset = s2;
-                        }
-                        None => break,
-                    }
-                }
-
-                if seeds_hashset.len() >= 3 {
-                    Some(seeds_hashset)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // 5) Global Jaccard dedup (sequential for deterministic ordering)
-        let mut results: Vec<HashSet<usize>> = Vec::new();
-        for opt in expansions.into_iter().flatten() {
-            let mut keep = true;
-            for res in &results {
-                if jaccard(&opt, res) >= cfg.jaccard_dedup {
-                    keep = false;
-                    break;
-                }
-            }
-            if keep {
-                results.push(opt);
-                if results.len() >= cfg.max_sets {
-                    break;
-                }
-            }
-        }
+        // Shared deterministic detector (invariant #4): identical seeding,
+        // expansion and dedup as the item-space tracks. This replaces the
+        // legacy body whose HashSet frontier + unstable seed sort made two
+        // calls on the same Laplacian diverge on ties (0.27.3 behaviour was
+        // not reproducible; see CHANGELOG).
+        let results = self.motif_node_sets(cfg, n);
 
         info!("Motifs found: {}", results.len());
 
@@ -421,10 +306,34 @@ impl Motives for GraphLaplacian {
                 missing: "at least 2 clusters (n_clusters)",
             });
         }
+        // Full assignment validation BEFORE any accumulation: the item-space
+        // contract is that every raw-data item participates in the projection.
+        // A None (outlier) or an out-of-range cluster id would silently drop
+        // that item from `sums` and `c_to_items`, yielding motifs that are
+        // not unions of whole clusters — refuse instead of degrading.
         if aspace.cluster_assignments.len() != aspace.nitems {
             return Err(ArrowSpaceError::EigenModeRequired {
                 missing: "cluster_assignments on the ArrowSpace index",
             });
+        }
+        let n_c = aspace.n_clusters;
+        for assign in aspace.cluster_assignments.iter() {
+            match assign {
+                None => {
+                    return Err(ArrowSpaceError::EigenModeRequired {
+                        missing: "a cluster assignment for every item \
+                                  (item without cluster; outliers cannot be \
+                                  projected in item space)",
+                    });
+                }
+                Some(c) if *c >= n_c => {
+                    return Err(ArrowSpaceError::EigenModeRequired {
+                        missing: "cluster_assignments values within \
+                                  0..n_clusters",
+                    });
+                }
+                Some(_) => {}
+            }
         }
 
         // Centroid coordinates: recompute the X×F centroid matrix from the
@@ -439,10 +348,9 @@ impl Motives for GraphLaplacian {
         // bootstrap input — but its columns cannot currently be read back as
         // centroid coordinates: run_incremental_clustering_with_sampling
         // feeds a row-major flat buffer to DenseMatrix::from_iterator with
-        // axis=1, which reinterprets it as column-major. Tracked as an open
-        // question on the #165 PR; until that layout question is resolved,
-        // init_data is not a usable coordinate source.)
-        let n_c = aspace.n_clusters;
+        // axis=1, which reinterprets it as column-major (issue #167). Until
+        // that layout fix lands in its own breaking release, init_data is
+        // not a usable coordinate source.)
         let (data_rows, n_feats) = aspace.data.shape();
         if data_rows != aspace.nitems || n_feats < 2 {
             return Err(ArrowSpaceError::EigenModeRequired {

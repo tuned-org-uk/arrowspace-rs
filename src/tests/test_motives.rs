@@ -636,6 +636,49 @@ fn test_try_spot_motives_eigen_requires_cluster_bookkeeping() {
 }
 
 #[test]
+fn test_try_spot_motives_eigen_rejects_unassigned_items() {
+    use crate::error::ArrowSpaceError;
+
+    crate::tests::init();
+
+    // A None assignment (outlier) would silently drop that item from the
+    // centroid sums and from the cluster→items projection, yielding motifs
+    // that are not unions of whole clusters. The call must refuse (review
+    // on PR #166), not produce a partial item-space projection.
+    let (mut aspace, gl) = eigen_fixture_165();
+    aspace.cluster_assignments[0] = None;
+
+    let err = gl
+        .try_spot_motives_eigen(&aspace, &cfg_165())
+        .expect_err("unassigned items must be rejected, not silently dropped");
+    assert!(
+        matches!(err, ArrowSpaceError::EigenModeRequired { .. }),
+        "expected EigenModeRequired, got: {err}"
+    );
+}
+
+#[test]
+fn test_try_spot_motives_eigen_rejects_out_of_range_assignments() {
+    use crate::error::ArrowSpaceError;
+
+    crate::tests::init();
+
+    // An assignment beyond n_clusters has no centroid to accumulate into and
+    // no bucket in the cluster→items map; the projection would be partial.
+    // The call must refuse instead of degrading (review on PR #166).
+    let (mut aspace, gl) = eigen_fixture_165();
+    aspace.cluster_assignments[0] = Some(aspace.n_clusters + 5);
+
+    let err = gl
+        .try_spot_motives_eigen(&aspace, &cfg_165())
+        .expect_err("out-of-range cluster ids must be rejected, not silently dropped");
+    assert!(
+        matches!(err, ArrowSpaceError::EigenModeRequired { .. }),
+        "expected EigenModeRequired, got: {err}"
+    );
+}
+
+#[test]
 fn test_try_spot_motives_eigen_deterministic() {
     crate::tests::init();
 

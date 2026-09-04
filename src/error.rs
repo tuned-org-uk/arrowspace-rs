@@ -88,16 +88,17 @@ pub enum ArrowSpaceError {
     ///
     /// Triggered by `try_spot_motives_eigen` (issue #165) when the Laplacian
     /// is an EnergyMaps bootstrap map (the energy track has its own
-    /// `try_spot_motives_energy`), or when the index carries no
-    /// `cluster_assignments` / `n_clusters` to project centroid-space motifs
-    /// onto items. Without that projection the only indices available are
-    /// the feature-space nodes of the F×F bootstrap Laplacian, and serving
-    /// them as item indices is the #161 failure family — so the operation
-    /// refuses instead of degrading.
+    /// `try_spot_motives_energy`), or when the index cannot project
+    /// centroid-space motifs onto items: `cluster_assignments` missing or
+    /// not covering every item with an in-range cluster id, `n_clusters < 2`,
+    /// or `aspace.data` absent. Without that projection the only indices
+    /// available are the feature-space nodes of the F×F bootstrap Laplacian,
+    /// and serving them as item indices is the #161 failure family — so the
+    /// operation refuses instead of degrading.
     EigenModeRequired {
         /// What is missing, as a human-readable fragment (e.g. `"eigen build
-        /// (use ArrowSpaceBuilder::build)"`, `"cluster_assignments"`,
-        /// `"centroid coordinates in init_data"`).
+        /// (use ArrowSpaceBuilder::build)"`, `"a cluster assignment for
+        /// every item"`, `"cluster_assignments values within 0..n_clusters"`).
         missing: &'static str,
     },
 }
@@ -134,11 +135,11 @@ impl fmt::Display for ArrowSpaceError {
             Self::EigenModeRequired { missing } => write!(
                 f,
                 "eigen mode required: missing {missing}. Build via \
-                 ArrowSpaceBuilder::build so cluster_assignments and \
-                 n_clusters are populated and centroid coordinates live in \
-                 init_data; running item-space motif detection without them \
-                 would mislabel feature-space indices as item indices \
-                 (issue #165). For EnergyMaps builds use \
+                 ArrowSpaceBuilder::build so cluster_assignments cover every \
+                 item with an in-range cluster id and n_clusters >= 2; \
+                 running item-space motif detection without the item→cluster \
+                 bookkeeping would mislabel feature-space indices as item \
+                 indices (issue #165). For EnergyMaps builds use \
                  try_spot_motives_energy instead."
             ),
         }

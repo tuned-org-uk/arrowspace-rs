@@ -41,23 +41,37 @@ let motifs = gl.try_spot_motives_eigen(&aspace, &cfg)?;   // ids in 0..nitems-1
 
 Requirements are enforced (no silent degradation, per the #161 lesson):
 the Laplacian must be an eigen build (`energy == false`), `n_clusters >= 2`,
-`cluster_assignments` populated for every item, and every centroid
-non-empty. Violations return the new
+`cluster_assignments` must cover **every** item with an in-range cluster id
+(`Some(c)`, `c < n_clusters` — outliers or out-of-range ids are refused
+rather than silently dropped from the projection), and every centroid must
+be non-empty. Violations return the new
 `ArrowSpaceError::EigenModeRequired { missing }`.
 
 Also added: `Motives::try_spot_motives_featurespace(&gl, &cfg) -> Result<...>`
-— the exact historical `spot_motives_eigen` behaviour (detection over the
-Laplacian's own nodes, i.e. feature ids on pipeline builds), under an
-explicit name, as a fallible call. Use it for feature-space/dimension
-ensemble analysis.
+— detection over the Laplacian's own nodes (feature ids on pipeline builds)
+under an explicit name, as a fallible call. Use it for feature-space /
+dimension-ensemble analysis.
 
 ### Deprecated
 
-- `Motives::spot_motives_eigen` — unchanged behaviour (it now delegates to
-  `try_spot_motives_featurespace`), but the name hid its node space and the
-  ids are feature indices on pipeline builds while `nnodes` reports items
-  (#165). Callers keep compiling with a warning; the bindings are unaffected
-  because they do not enable `deny(warnings)`.
+- `Motives::spot_motives_eigen` — the name hid its node space: the ids are
+  feature indices on pipeline builds while `nnodes` reports items (#165).
+  It now delegates to `try_spot_motives_featurespace`. Callers keep
+  compiling with a warning; the bindings are unaffected because they do not
+  enable `deny(warnings)`.
+
+### Fixed — feature-space motif detection is now deterministic
+
+`spot_motives_eigen` / `try_spot_motives_featurespace` used an unstable
+seed sort and walked the expansion frontier through `HashSet` iteration
+order, so two calls on the same Laplacian could return different motif sets
+when candidates tied on triangle gain (observed: 14 vs 22 motifs on one
+fixture). Both now run the same deterministic detector as the item-space
+tracks (sorted frontier, lowest-index tie-break, invariant #4). This is a
+determinism bugfix, not a behaviour redefinition: on tie-free graphs the
+output is unchanged, and 0.27.3's output was not reproducible to begin with.
+The long-standing `test_motives_eigen_deterministic` guard is now robust
+instead of passing by luck.
 
 ### Fixed — documented node spaces
 
