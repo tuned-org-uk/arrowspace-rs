@@ -1,6 +1,7 @@
 mod test_arrow;
 mod test_builder;
 pub mod test_data;
+mod test_dense_layout;
 mod test_error;
 mod test_helpers;
 // mod test_dimensional;

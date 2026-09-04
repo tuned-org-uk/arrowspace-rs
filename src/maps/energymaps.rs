@@ -443,7 +443,7 @@ impl EnergyMaps for ArrowSpace {
             rows,
             100.0 * (1.0 - rows as f64 / x as f64)
         );
-        DenseMatrix::<f64>::from_iterator(out.iter().copied(), rows, f, 1)
+        DenseMatrix::<f64>::from_iterator(out.iter().copied(), rows, f, 0)
     }
 
     fn bootstrap_centroid_laplacian(
@@ -617,7 +617,7 @@ impl EnergyMaps for ArrowSpace {
             "Sub-centroid generation: {} → {} centroids ({} splits)",
             x, final_rows, split_count
         );
-        DenseMatrix::<f64>::from_iterator(data.iter().copied(), final_rows, f, 1)
+        DenseMatrix::<f64>::from_iterator(data.iter().copied(), final_rows, f, 0)
     }
 
     /// Look-up query item against lambdas computed at build time

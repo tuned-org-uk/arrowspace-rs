@@ -550,7 +550,7 @@ pub fn kmeans_lloyd(rows: &[Vec<f64>], k: usize, max_iter: usize, seed: u64) -> 
     let k = k.min(n);
 
     // Flatten row-major data
-    let x: DenseMatrix<f64> = DenseMatrix::from_iterator(rows.iter().flatten().copied(), n, f, 1);
+    let x: DenseMatrix<f64> = DenseMatrix::from_iterator(rows.iter().flatten().copied(), n, f, 0);
 
     // Create parameters with explicit seed
     let params = KMeansParameters {
@@ -902,7 +902,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             flat, x_out, nfeatures
         );
 
-        DenseMatrix::from_iterator(flat.iter().copied(), *x_out, nfeatures, 1)
+        DenseMatrix::from_iterator(flat.iter().copied(), *x_out, nfeatures, 0)
     } else {
         warn!("No clusters created; returning zero matrix");
         let inline_sampling = arrowspacebuilder.sampling.as_ref().unwrap();

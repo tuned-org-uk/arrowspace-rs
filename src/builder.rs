@@ -152,10 +152,18 @@ impl Default for ArrowSpaceBuilder {
             // enable synthetic λ with α=0.7 and Median τ by default
             synthesis: TAUDEFAULT,
 
-            // λ-graph parameters
-            lambda_eps: 1e-3,
-            lambda_k: 6,
-            lambda_topk: 3,
+            // λ-graph parameters.
+            // Defaults cover TRUE feature-signal graphs (post-#167): eps in
+            // the documented 0.5–4.0 cosine-distance regime and enough kNN
+            // candidates for the F-node bootstrap. The pre-#167 values
+            // (eps=1e-3, k=6, topk=3) were calibrated against scrambled
+            // clustered_dm buffers (axis=1 reinterpretation), where adjacent
+            // "feature signals" were overlapping windows of one centroid and
+            // thus artificially correlated; on true signals they collapse
+            // the bootstrap graph to zero edges and every λ to 0.
+            lambda_eps: 0.5,
+            lambda_k: 12,
+            lambda_topk: 6,
             lambda_p: 2.0,
             lambda_sigma: None, // means σ := eps inside the builder
             normalise: false,

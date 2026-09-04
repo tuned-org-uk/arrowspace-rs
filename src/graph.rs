@@ -325,7 +325,7 @@ impl GraphFactory {
     }
 }
 
-fn sparse_to_dense(sparse: &CsMat<f64>) -> DenseMatrix<f64> {
+pub(crate) fn sparse_to_dense(sparse: &CsMat<f64>) -> DenseMatrix<f64> {
     let (rows, cols) = sparse.shape();
     let mut data = vec![0.0; rows * cols];
 
@@ -335,7 +335,7 @@ fn sparse_to_dense(sparse: &CsMat<f64>) -> DenseMatrix<f64> {
         }
     }
 
-    DenseMatrix::<f64>::from_iterator(data.iter().copied(), rows, cols, 1)
+    DenseMatrix::<f64>::from_iterator(data.iter().copied(), rows, cols, 0)
 }
 
 impl GraphLaplacian {

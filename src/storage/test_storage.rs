@@ -25,7 +25,7 @@ pub(crate) fn create_test_dense_matrix() -> DenseMatrix<f64> {
 
 pub(crate) fn create_test_dense_matrix_with_size(rows: usize, cols: usize) -> DenseMatrix<f64> {
     let data: Vec<f64> = (0..rows * cols).map(|i| i as f64).collect();
-    DenseMatrix::from_iterator(data.into_iter(), rows, cols, 1)
+    DenseMatrix::from_iterator(data.into_iter(), rows, cols, 0)
 }
 
 pub(crate) fn create_test_sparse_matrix() -> CsMat<f64> {
