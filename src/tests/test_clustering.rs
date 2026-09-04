@@ -226,7 +226,10 @@ fn test_step1_bounds_high_dimensional() {
 #[test]
 fn test_calinski_harabasz_well_separated() {
     use rand::RngExt;
-    let mut rng = rand::rng();
+    use rand::SeedableRng;
+    // Seeded fixture (invariant #4) — unseeded draws make the CH landscape
+    // a per-run coin flip (see test_calinski_harabasz_three_clusters).
+    let mut rng = rand::rngs::StdRng::seed_from_u64(20260905);
     let mut rows = Vec::new();
 
     // Two well-separated Gaussian clusters
@@ -260,7 +263,12 @@ fn test_calinski_harabasz_well_separated() {
 #[test]
 fn test_calinski_harabasz_three_clusters() {
     use rand::RngExt;
-    let mut rng = rand::rng();
+    use rand::SeedableRng;
+    // Seeded fixture (invariant #4): with an unseeded rand::rng() the CH
+    // landscape is a per-run draw — measured over 40 seeds, 38/40 draws
+    // suggest K=3 and 2/40 tail draws land on K=9/10, which is exactly the
+    // intermittent macOS CI failure seen after the #167 layout fix.
+    let mut rng = rand::rngs::StdRng::seed_from_u64(20260904);
     let mut rows = Vec::new();
 
     for _ in 0..50 {
@@ -425,7 +433,9 @@ fn test_threshold_very_tight_clusters() {
 #[test]
 fn test_optimal_k_heuristic_synthetic_three_clusters() {
     use rand::RngExt;
-    let mut rng = rand::rng();
+    use rand::SeedableRng;
+    // Seeded fixture (invariant #4) — see the CH tests for the rationale.
+    let mut rng = rand::rngs::StdRng::seed_from_u64(20260906);
     let mut rows = Vec::new();
 
     for _ in 0..100 {
@@ -477,7 +487,9 @@ fn test_optimal_k_heuristic_synthetic_three_clusters() {
 #[test]
 fn test_optimal_k_heuristic_spherical_clusters() {
     use rand::RngExt;
-    let mut rng = rand::rng();
+    use rand::SeedableRng;
+    // Seeded fixture (invariant #4) — see the CH tests for the rationale.
+    let mut rng = rand::rngs::StdRng::seed_from_u64(20260907);
     let mut rows = Vec::new();
 
     let centers = vec![
