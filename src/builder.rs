@@ -1244,13 +1244,17 @@ impl ArrowSpaceBuilder {
                 assert_eq!(centroids.shape().0, l0.nnodes, "l0 is still non-projected");
 
                 // Step 4: Diffuse and split to create sub_centroids
-                let sub_centroids: DenseMatrix<f64> =
-                    ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &energy_params);
+                let sub_centroids: DenseMatrix<f64> = ArrowSpace::diffuse_and_split_subcentroids(
+                    &centroids,
+                    &l0,
+                    &energy_params,
+                );
 
                 assert_eq!(sub_centroids.shape().1, centroids.shape().1);
 
                 // Step 6: Build Laplacian on sub_centroids using energy dispersion
-                let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids, &energy_params);
+                let (gl_energy, _, _) =
+                    self.build_energy_laplacian(&sub_centroids, &energy_params);
 
                 assert_eq!(
                     gl_energy.shape().1,

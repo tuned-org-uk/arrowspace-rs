@@ -100,8 +100,7 @@ fn cosinepair_knn_finds_both_trio_siblings_exactly() {
             .filter(|(j, _)| *j == sib_a || *j == sib_b)
             .count();
         assert_eq!(
-            found_sibs,
-            2,
+            found_sibs, 2,
             "row {}: exact kNN must contain both siblings {:?}, got {:?}",
             i,
             (sib_a, sib_b),

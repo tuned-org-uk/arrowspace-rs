@@ -1,3 +1,4 @@
+
 // Exercises the deprecated panicking wrappers on purpose:
 // the backward-compat surface must keep its documented panic behaviour (#153).
 #![allow(deprecated)]
@@ -578,10 +579,7 @@ fn test_builder_unit_norm_diagonal_similarity() {
 
 #[test]
 fn test_pipeline_kind_from_str_parses_eigen_and_energy() {
-    assert_eq!(
-        "eigen".parse::<PipelineKind>().unwrap(),
-        PipelineKind::Eigen
-    );
+    assert_eq!("eigen".parse::<PipelineKind>().unwrap(), PipelineKind::Eigen);
     assert_eq!(
         "energy".parse::<PipelineKind>().unwrap(),
         PipelineKind::Energy(EnergyParams::default())

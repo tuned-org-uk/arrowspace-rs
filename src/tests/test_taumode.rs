@@ -1,3 +1,4 @@
+
 // Exercises the deprecated panicking wrappers on purpose:
 // the backward-compat surface must keep its documented panic behaviour (#153).
 #![allow(deprecated)]
