@@ -777,7 +777,15 @@ impl ArrowSpaceBuilder {
 
     /// Set a custom seed for deterministic clustering.
     /// Enable sequential (deterministic) clustering.
-    /// This ensures reproducible results at the cost of parallelization.
+    ///
+    /// # Reproducibility contract (issue #170)
+    ///
+    /// With a seed set, two builds of identical input rows with an identical
+    /// builder configuration return byte-identical λ vectors — bit-exact,
+    /// not approximate. This holds regardless of thread scheduling or global
+    /// rayon pool load: every float reduction in the λ read-out has a fixed
+    /// summation order (no work-stealing-driven grouping). Reproducibility
+    /// is by construction, not by tolerance.
     pub fn with_seed(mut self, seed: u64) -> Self {
         info!("Setting custom clustering seed: {}", seed);
         self.clustering_seed = Some(seed);
@@ -1114,6 +1122,11 @@ impl ArrowSpaceBuilder {
     /// [`EnergyParams`]. Use `"eigen".parse::<PipelineKind>()` in stringly
     /// contexts (CLI/serde) — an invalid name is an
     /// [`InvalidPipelineError`], not a runtime panic.
+    ///
+    /// Reproducibility: with a seed set via [`ArrowSpaceBuilder::with_seed`],
+    /// identical input and configuration produce byte-identical λ vectors
+    /// across builds, whatever the thread scheduling or pool load (#170) —
+    /// stored λ can be verified by exact equality after a rebuild.
     pub fn build_for_persistence(
         mut self,
         rows: DenseMatrix<f64>,
@@ -1252,17 +1265,13 @@ impl ArrowSpaceBuilder {
                 assert_eq!(centroids.shape().0, l0.nnodes, "l0 is still non-projected");
 
                 // Step 4: Diffuse and split to create sub_centroids
-                let sub_centroids: DenseMatrix<f64> = ArrowSpace::diffuse_and_split_subcentroids(
-                    &centroids,
-                    &l0,
-                    &energy_params,
-                );
+                let sub_centroids: DenseMatrix<f64> =
+                    ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &energy_params);
 
                 assert_eq!(sub_centroids.shape().1, centroids.shape().1);
 
                 // Step 6: Build Laplacian on sub_centroids using energy dispersion
-                let (gl_energy, _, _) =
-                    self.build_energy_laplacian(&sub_centroids, &energy_params);
+                let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids, &energy_params);
 
                 assert_eq!(
                     gl_energy.shape().1,
