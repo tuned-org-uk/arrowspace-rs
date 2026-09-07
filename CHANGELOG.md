@@ -4,6 +4,46 @@ All notable changes to `arrowspace` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [SemVer](https://semver.org/).
 
+## [0.28.1] — fixed
+
+### Fixed — Eigen λ bit-reproducibility under pool load (#170)
+
+`TauMode::compute_rayleigh_quotient_from_matrix` reduced the Rayleigh
+numerator with `par_bridge().sum()`: `par_bridge` batches its source by
+dynamic work-stealing, so the f64 addends grouped in a schedule-dependent
+order — and f64 addition is not associative. When the global rayon pool was
+busy, two builds of identical input with identical configuration (same seed,
+`deterministic_clustering = true`) could return λ vectors differing by up to
+~1 ULP, breaking downstream consumers that pin stored λ by exact equality.
+
+The reduction is now deterministic by construction:
+
+- per-row partial terms are computed in parallel (each row's inner sum is a
+  sequential pass over its nonzeros in index order), collected into an
+  index-addressed buffer;
+- the numerator is a sequential fixed-order pass over the per-row terms;
+- the denominator (xᵀx) is a sequential fixed-order pass — the previous
+  parallel indexed reduce split by pool thread count, which made bits vary
+  across machine configurations.
+
+No summation grouping depends on thread scheduling any more: identical
+inputs produce bit-identical λ on any machine, any pool size, any load.
+This is a value-level change in the last bits only (the summation order
+changed); graph structure, clustering and λ semantics are untouched.
+
+The reproducibility contract is now documented on `with_seed` and
+`build_for_persistence`: seeded builds of identical input return
+byte-identical λ vectors, by construction rather than by tolerance.
+
+### Added — regression tests
+
+`test_rayleigh_quotient_bit_reproducible_under_pool_saturation` and
+`test_eigen_build_lambda_bit_reproducible_under_pool_saturation`
+(src/tests/test_lambda_determinism.rs) saturate the global rayon pool with
+CPU-bound work while measuring, and assert bit-identical Rayleigh quotients
+and byte-identical λ vectors across repeated builds. The unit test fails
+reliably on pre-#170 code (last-bit drift on the first loaded call).
+
 ## [0.28.0] — breaking
 
 This release fixes the `DenseMatrix` flat-buffer layout defect (#167):

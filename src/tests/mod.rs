@@ -10,6 +10,7 @@ mod test_eigenmaps;
 mod test_energy_builder;
 mod test_energy_search;
 mod test_graph_factory;
+mod test_lambda_determinism;
 mod test_laplacian;
 mod test_laplacian_scaling;
 mod test_laplacian_unnormalised;

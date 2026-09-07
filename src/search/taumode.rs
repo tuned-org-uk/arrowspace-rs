@@ -320,6 +320,16 @@ impl TauMode {
     /// - graph is F×F Laplacian (features × features)
     /// - item_vector is F-dimensional
     /// - i,j indices reference FEATURES, not items
+    ///
+    /// # Determinism (issue #170)
+    ///
+    /// Identical inputs produce bit-identical results regardless of thread
+    /// scheduling. Per-row partial terms are computed in parallel, but each
+    /// row's inner sum is a sequential pass over its nonzeros in index order,
+    /// and both reductions are sequential fixed-order passes over
+    /// index-addressed buffers. Schedule-dependent batching (`par_bridge`)
+    /// was removed: f64 addition is not associative, so work-stealing-driven
+    /// grouping drifted the quotient in the last bits.
     pub fn compute_rayleigh_quotient_from_matrix(matrix: &CsMat<f64>, vector: &[f64]) -> f64 {
         let n = vector.len();
 
@@ -333,22 +343,31 @@ impl TauMode {
             matrix.shape()
         );
 
-        // Compute x^T M x efficiently using sparse structure
-        let numerator: f64 = matrix
-            .outer_iterator() // Iterate over rows (CSR format)
-            .enumerate() // Get (row_idx, row_view) pairs
-            .par_bridge() // Parallelize
-            .map(|(i, row)| {
+        // x^T M x = Σ_i x_i · (Σ_j M_ij x_j).
+        // Parallelism is per-row only: each row's inner sum accumulates its
+        // nonzeros sequentially in index order (bits independent of the
+        // evaluating thread), and the collected per-row terms are summed in
+        // a fixed sequential order. No reduction grouping depends on
+        // scheduling.
+        let row_terms: Vec<f64> = (0..n)
+            .into_par_iter()
+            .map(|i| {
                 let xi = vector[i];
-
-                // row.iter() gives (col_idx, &value) for non-zero entries ONLY
-                row.iter()
-                    .map(|(j, &mij)| xi * mij * vector[j])
-                    .sum::<f64>()
+                let mut row_sum = 0.0f64;
+                if let Some(row) = matrix.outer_view(i) {
+                    for (j, &mij) in row.iter() {
+                        row_sum += xi * mij * vector[j];
+                    }
+                }
+                row_sum
             })
-            .sum();
+            .collect();
 
-        let denominator: f64 = vector.par_iter().map(|&x| x * x).sum();
+        let numerator: f64 = row_terms.iter().sum();
+
+        // Sequential fixed-order reduction: identical bits on any machine,
+        // any pool size (parallel indexed reduces split by thread count).
+        let denominator: f64 = vector.iter().map(|&x| x * x).sum();
 
         if denominator > 1e-12 {
             (numerator / denominator).max(0.0)
