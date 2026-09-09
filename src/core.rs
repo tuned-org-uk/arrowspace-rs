@@ -1037,12 +1037,28 @@ impl ArrowSpace {
         }
 
         let tau = TauMode::select_tau(query, self.taumode);
-        let raw_lambda = TauMode::compute_synthetic_lambda(
-            query,
-            self.projection_matrix.clone(),
-            &gl.matrix,
-            tau,
-        );
+        // Graph selection mirrors the index-side taumode read-out (issue
+        // #156): when the second-order signals graph is present, index λs are
+        // computed on it — the query λ must be scored against the same graph,
+        // otherwise the two λ distributions disagree and normalisation clamps
+        // out-of-range queries to a degenerate 0.
+        let using_signals = self.signals.shape() != (0, 0);
+        let raw_lambda = if using_signals {
+            trace!("try_prepare_query_item: scoring query against signals graph");
+            TauMode::compute_synthetic_lambda(
+                query,
+                self.projection_matrix.clone(),
+                &self.signals,
+                tau,
+            )
+        } else {
+            TauMode::compute_synthetic_lambda(
+                query,
+                self.projection_matrix.clone(),
+                &gl.matrix,
+                tau,
+            )
+        };
 
         // Normalize if stats are available
         if self.range_lambdas.is_finite() {

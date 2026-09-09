@@ -229,8 +229,12 @@ fn test_search_lambda_aware_hybrid() {
     // Compare regular lambda-aware search vs hybrid search
     let (data, queries) = create_test_data(99, 18);
 
+    // eps=1.0: the second-order signals graph (Laplacian-profile space) needs
+    // the looser cosine regime; at eps=0.3/0.5 it collapses to zero edges and
+    // every λ to 0 (same post-#167 recalibration as the builder defaults, and
+    // the calibration used by every other with_spectral test).
     let (aspace, gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 5, 2, 2.0, None)
+        .with_lambda_graph(1.0, 5, 2, 2.0, None)
         .with_normalisation(true)
         .with_spectral(true)
         .with_sparsity_check(false)

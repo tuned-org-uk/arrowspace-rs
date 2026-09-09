@@ -1,9 +1,190 @@
 use crate::{
     builder::ArrowSpaceBuilder,
+    core::ArrowSpace,
+    graph::{GraphFactory, GraphLaplacian, GraphParams},
+    laplacian::build_laplacian_matrix,
+    maps::eigenmaps::EigenMaps,
+    search::taumode::TauMode,
     tests::test_data::{make_gaussian_blob, make_moons_hd},
 };
 
 use log::debug;
+use smartcore::linalg::basic::arrays::Array2;
+use sprs::CsMat;
+
+/// Exact structural equality for sparse matrices built deterministically.
+fn sparse_matrices_equal(a: &CsMat<f64>, b: &CsMat<f64>) -> bool {
+    a.shape() == b.shape()
+        && a.nnz() == b.nnz()
+        && a.indptr().raw_storage() == b.indptr().raw_storage()
+        && a.indices() == b.indices()
+        && a.data() == b.data()
+}
+
+#[test]
+fn test_signals_laplacian_is_computed_on_retransposed_gl_156() {
+    // Issue #156: signals = compute_graph_laplacian(gl.T)
+    //
+    // The signals structure is a second-order graph Laplacian computed on the
+    // RE-TRANSPOSED (item-space) feature Laplacian: the columns of gl.matrix
+    // (the "eigenvectors" of the feature graph) become the items whose graph
+    // Laplacian is computed. Without the re-transpose the wired profiles are
+    // the Laplacian rows and the results are unusable.
+    //
+    // A hand-built NON-symmetric Laplacian makes the orientation observable:
+    // pipeline-built Laplacians are symmetric, which would mask the choice.
+    crate::tests::init();
+
+    let l_rows: Vec<Vec<f64>> = vec![
+        vec![4.0, -3.0, -1.0, 0.0],
+        vec![0.0, 2.0, -2.0, 0.0],
+        vec![-1.0, 0.0, 3.0, 0.0],
+        vec![0.0, 0.0, 0.0, 1.0],
+    ];
+    let mut tm = sprs::TriMat::new((4, 4));
+    for (i, row) in l_rows.iter().enumerate() {
+        for (j, &v) in row.iter().enumerate() {
+            if v != 0.0 {
+                tm.add_triplet(i, j, v);
+            }
+        }
+    }
+    let matrix: CsMat<f64> = tm.to_csr();
+    // fixture must be genuinely non-symmetric
+    assert_ne!(
+        matrix.get(0, 1).copied().unwrap_or(0.0),
+        matrix.get(1, 0).copied().unwrap_or(0.0),
+        "fixture must be non-symmetric to discriminate orientation"
+    );
+
+    let gl = GraphLaplacian {
+        init_data: crate::graph::sparse_to_dense(&matrix),
+        matrix: matrix.clone(),
+        nnodes: 4,
+        graph_params: GraphParams {
+            eps: 2.0,
+            k: 4,
+            topk: 3,
+            p: 2.0,
+            sigma: Some(1.0),
+            normalise: false,
+            sparsity_check: false,
+        },
+        energy: false,
+    };
+
+    let mut aspace = ArrowSpace::new(
+        vec![vec![1.0, 0.0], vec![0.0, 1.0]],
+        TauMode::Median,
+    );
+    aspace.nfeatures = 4;
+    aspace.nitems = 4;
+    aspace.reduced_dim = None;
+
+    GraphFactory::build_spectral_laplacian(&mut aspace, &gl);
+
+    // Expected: Laplacian of the re-transposed (item-space) Laplacian — the
+    // columns of gl.matrix act as items.
+    let expected_item_space = build_laplacian_matrix(
+        crate::graph::sparse_to_dense(&gl.matrix).transpose(),
+        &gl.graph_params,
+        None,
+        false,
+    )
+    .matrix;
+    // The rejected orientation: Laplacian over the gl.matrix rows directly.
+    let row_space = build_laplacian_matrix(
+        crate::graph::sparse_to_dense(&gl.matrix),
+        &gl.graph_params,
+        None,
+        false,
+    )
+    .matrix;
+
+    assert!(
+        !sparse_matrices_equal(&expected_item_space, &row_space),
+        "fixture is degenerate: item-space and row-space graphs coincide"
+    );
+
+    assert_eq!(aspace.signals.shape(), expected_item_space.shape());
+    assert!(
+        sparse_matrices_equal(&aspace.signals, &expected_item_space),
+        "signals must be the graph Laplacian computed on the re-transposed \
+         (item-space) gl, with gl.matrix columns as items (issue #156)"
+    );
+}
+
+#[test]
+fn test_spectral_signals_second_order_pipeline_properties_156() {
+    // End-to-end guard: with spectral enabled the signals structure is a
+    // usable second-order graph — square, symmetric, distinct from the first-
+    // order Laplacian, deterministic across builds, and usable by the taumode
+    // read-out and search.
+    crate::tests::init();
+
+    let items: Vec<Vec<f64>> = make_moons_hd(60, 0.15, 0.4, 8, 77);
+
+    let build = || {
+        ArrowSpaceBuilder::default()
+            .with_lambda_graph(0.3, 5, 2, 2.0, None)
+            .with_normalisation(true)
+            .with_spectral(true)
+            .with_seed(77)
+            .with_dims_reduction(false, None)
+            .with_inline_sampling(None)
+            .with_sparsity_check(false)
+            .build(items.clone())
+    };
+
+    let (aspace, gl) = build();
+    let (aspace_again, gl_again) = build();
+
+    let f = aspace.nfeatures;
+    assert_eq!(aspace.signals.shape(), (f, f), "signals must be F×F");
+    assert!(aspace.signals.nnz() > 0, "signals must be wired");
+
+    // The second-order graph is built through symmetrisation: it must be
+    // symmetric.
+    for (i, row) in aspace.signals.outer_iterator().enumerate() {
+        for (j, &v) in row.iter() {
+            let mirror = aspace.signals.get(j, i).copied().unwrap_or(0.0);
+            assert!(
+                (v - mirror).abs() <= 1e-12 * (1.0 + v.abs().max(mirror.abs())),
+                "signals must be symmetric: S[{i},{j}]={v} vs S[{j},{i}]={mirror}"
+            );
+        }
+    }
+
+    // Non-vestigial: the second-order graph differs from the first-order one.
+    assert!(
+        !sparse_matrices_equal(&aspace.signals, &gl.matrix),
+        "signals must not coincide with gl.matrix (issue #156)"
+    );
+
+    // Determinism by construction (AGENTS.md #4): same seed → same signals.
+    assert!(
+        sparse_matrices_equal(&aspace.signals, &aspace_again.signals),
+        "identical inputs must produce identical signals"
+    );
+    assert!(sparse_matrices_equal(&gl.matrix, &gl_again.matrix));
+
+    // Usability: the taumode read-out consumes the signals graph and search
+    // retrieves the query's own row as top hit.
+    assert_eq!(aspace.lambdas().len(), items.len());
+    assert!(
+        aspace.lambdas().iter().all(|&l| l >= 0.0),
+        "λ must be non-negative on the signals graph"
+    );
+
+    let query = &items[10];
+    let results = aspace.search(query, &gl, 4, 0.7);
+    assert!(!results.is_empty(), "search must return results");
+    assert_eq!(
+        results[0].0, 10,
+        "self-retrieval must rank the query row first: {:?}",
+        &results[..2.min(results.len())]
+    );
+}
 
 #[test]
 fn test_builder_basic_clustering_with_synthetic_data() {
