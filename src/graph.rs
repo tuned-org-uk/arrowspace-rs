@@ -263,6 +263,16 @@ impl GraphFactory {
 
     /// Build F×F feature similarity matrix
     /// This creates a graph where nodes are features and edges represent feature similarities
+    ///
+    /// # Semantics (issue #156)
+    ///
+    /// The signals structure is the second-order graph Laplacian
+    /// `signals = compute_graph_laplacian(gl.T)`: the feature-space Laplacian
+    /// is re-transposed into item-space and its graph Laplacian is computed,
+    /// so the columns of the feature Laplacian (its "eigenvectors") become the
+    /// items whose Laplacian is wired. Without the re-transpose the wired
+    /// profiles are the Laplacian rows and the results are unusable.
+    ///
     /// # Arguments
     ///
     /// * `aspace` - The data from the ArrowSpace data
@@ -275,11 +285,13 @@ impl GraphFactory {
         );
         debug!("Graph parameters: {:?}", graph_laplacian.graph_params);
 
-        // Convert sparse matrix to dense for signals storage
+        // Re-transpose the feature-space Laplacian into item-space, then
+        // recompute the graph Laplacian on it (issue #156): the eigenvector
+        // profiles become the items of the second-order graph.
         trace!("Building feature-to-feature Laplacian matrix");
 
         aspace.signals = build_laplacian_matrix(
-            sparse_to_dense(&graph_laplacian.matrix),
+            sparse_to_dense(&graph_laplacian.matrix).transpose(),
             &graph_laplacian.graph_params,
             Some(aspace.nitems),
             false,

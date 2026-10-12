@@ -110,7 +110,9 @@ pub trait EigenMaps {
     /// Stage 5: λ-aware nearest-neighbor search with precomputed λ values.
     ///
     /// Prepares query λ by projecting the query vector (if projection was used during
-    /// indexing) and computing its Rayleigh or synthetic λ against the Laplacian. Ranks
+    /// indexing) and computing its Rayleigh or synthetic λ against the same graph the
+    /// index-side read-out used: the second-order signals Laplacian when present
+    /// (spectral builds), otherwise the item Laplacian (issue #156). Ranks
     /// index rows by blending cosine similarity (weighted by alpha) with λ proximity
     /// (weighted by 1 - alpha), using the precomputed index λs.
     ///
