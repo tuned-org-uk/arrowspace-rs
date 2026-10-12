@@ -41,8 +41,8 @@
 //! compile while showing only the essential lines to readers.
 
 use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 use std::collections::HashMap;
-use std::collections::{BinaryHeap, HashSet};
 use std::fmt::Debug;
 
 use approx::relative_eq;
@@ -352,7 +352,7 @@ struct ScoredItem {
 
 impl PartialEq for ScoredItem {
     fn eq(&self, other: &Self) -> bool {
-        self.score == other.score
+        self.index == other.index && self.score.total_cmp(&other.score) == Ordering::Equal
     }
 }
 
@@ -366,11 +366,22 @@ impl PartialOrd for ScoredItem {
 
 impl Ord for ScoredItem {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse for min-heap (smallest score at top)
+        // Reverse for min-heap (lowest score at top). For equal scores, the
+        // highest index is worse so the heap retains lower indices first.
         other
             .score
-            .partial_cmp(&self.score)
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&self.score)
+            .then_with(|| self.index.cmp(&other.index))
+    }
+}
+
+impl ScoredItem {
+    fn is_better_than(self, other: Self) -> bool {
+        match self.score.total_cmp(&other.score) {
+            Ordering::Greater => true,
+            Ordering::Equal => self.index < other.index,
+            Ordering::Less => false,
+        }
     }
 }
 
@@ -433,6 +444,14 @@ pub struct ArrowSpace {
 }
 
 pub const TAUDEFAULT: TauMode = TauMode::Median;
+
+/// Cosine similarity above which an item is surfaced by the semantic recall
+/// pass of `search_lambda_aware_hybrid` (near-duplicates of the query).
+/// Membership threshold only: such items are still scored with the blended
+/// λ-aware score, never the raw cosine (#187).
+/// Not a parameter: the hybrid signature is called directly by the FFI
+/// bindings (pyarrowspace `search_hybrid`).
+const SEMANTIC_THRESHOLD: f64 = 0.9999;
 
 impl Default for ArrowSpace {
     fn default() -> Self {
@@ -1359,7 +1378,36 @@ impl ArrowSpace {
         Ok(results)
     }
 
-    /// A version of `search_lambda_aware` that mix-in results from pure cosine similarity
+    /// Lambda-aware search augmented with a semantic recall pass.
+    ///
+    /// Candidates are the union of the λ-aware top-`k` (as scored by
+    /// [`Self::try_search_lambda_aware`]), every item whose cosine similarity
+    /// exceeds `SEMANTIC_THRESHOLD` (near-duplicates of the query), and the
+    /// single best-cosine item.
+    ///
+    /// Cosine-based sets decide **membership only**: every returned score is
+    /// the blended λ-aware score `alpha * cosine + (1 - alpha) * sim_λ`, the
+    /// same unsigned blend used by [`ArrowItem::lambda_similarity`] and
+    /// [`Self::try_search_lambda_aware`]. The whole ranking therefore lives on
+    /// one score scale and results are comparable across entry points (#187).
+    ///
+    /// The returned vector holds at most `k` items sorted by score descending,
+    /// ties broken by index ascending — deterministic by construction.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use arrowspace::core::{ArrowItem, ArrowSpace};
+    ///
+    /// let aspace = ArrowSpace::from_items_default(
+    ///     vec![vec![1.0, 0.0], vec![1.0, 1.0], vec![0.0, 1.0]]
+    /// );
+    /// let lambda = aspace.try_prepare_query_item(&[1.0, 0.1], &gl).unwrap();
+    /// let q = ArrowItem::new(vec![1.0, 0.1], lambda);
+    /// let res = aspace.search_lambda_aware_hybrid(&q, 2, 0.7);
+    /// assert!(res.len() <= 2);
+    /// assert!(res[0].1 >= 0.0);
+    /// ```
     #[inline]
     pub fn search_lambda_aware_hybrid(
         &self,
@@ -1374,7 +1422,6 @@ impl ArrowSpace {
         }
 
         let beta = 1.0 - alpha;
-        let semantic_threshold = 0.9999;
 
         // Parallel fold-reduce with thread-local state
         let (lambda_heap, semantic_top, high_semantic_vec) = (0..self.nitems)
@@ -1382,9 +1429,9 @@ impl ArrowSpace {
             .fold(
                 || {
                     (
-                        BinaryHeap::with_capacity(k), // Lambda top-k heap
-                        (0usize, f64::NEG_INFINITY),  // Semantic best
-                        Vec::new(),                   // High semantic matches
+                        BinaryHeap::with_capacity(k),                   // Lambda top-k heap
+                        (0usize, f64::NEG_INFINITY, f64::NEG_INFINITY), // Semantic best (idx, cosine, blend)
+                        Vec::new(),                                     // High semantic matches
                     )
                 },
                 |(mut heap, mut sem_best, mut high_sem), i| {
@@ -1395,40 +1442,52 @@ impl ArrowSpace {
                     let lambda_component = query.lambda_component_similarity(&item);
                     let lambda_score = alpha * cosine + beta * lambda_component;
 
-                    // Track semantic best
+                    // Track semantic best (cosine for selection, blended score
+                    // for reporting — see the union below)
                     if cosine > sem_best.1 {
-                        sem_best = (i, cosine);
+                        sem_best = (i, cosine, lambda_score);
                     }
 
-                    // Track high semantic matches
-                    if cosine > semantic_threshold {
-                        high_sem.push((i, cosine));
+                    // Track high semantic matches: cosine decides membership,
+                    // the blended score is what gets reported (#187)
+                    if cosine > SEMANTIC_THRESHOLD {
+                        high_sem.push((i, lambda_score));
                     }
+
+                    let candidate = ScoredItem {
+                        index: i,
+                        score: lambda_score,
+                    };
 
                     // Maintain lambda top-k heap
                     if heap.len() < k {
-                        heap.push(ScoredItem {
-                            index: i,
-                            score: lambda_score,
-                        });
+                        heap.push(candidate);
                     } else if let Some(&min) = heap.peek()
-                        && lambda_score > min.score
+                        && candidate.is_better_than(min)
                     {
                         heap.pop();
-                        heap.push(ScoredItem {
-                            index: i,
-                            score: lambda_score,
-                        });
+                        heap.push(candidate);
                     }
 
                     (heap, sem_best, high_sem)
                 },
             )
             .reduce(
-                || (BinaryHeap::new(), (0, f64::NEG_INFINITY), Vec::new()),
+                || {
+                    (
+                        BinaryHeap::new(),
+                        (0, f64::NEG_INFINITY, f64::NEG_INFINITY),
+                        Vec::new(),
+                    )
+                },
                 |(mut h1, s1, mut hs1), (h2, s2, hs2)| {
-                    // Merge semantic best
-                    let sem = if s1.1 > s2.1 { s1 } else { s2 };
+                    // Merge semantic best; on cosine ties take the lower index
+                    // so the choice does not depend on reduce combine order
+                    let sem = if s1.1 > s2.1 || (s1.1 == s2.1 && s1.0 <= s2.0) {
+                        s1
+                    } else {
+                        s2
+                    };
 
                     // Merge high semantic
                     hs1.extend(hs2);
@@ -1438,7 +1497,7 @@ impl ArrowSpace {
                         if h1.len() < k {
                             h1.push(item);
                         } else if let Some(&min) = h1.peek()
-                            && item.score > min.score
+                            && item.is_better_than(min)
                         {
                             h1.pop();
                             h1.push(item);
@@ -1456,33 +1515,34 @@ impl ArrowSpace {
             high_semantic_vec.len()
         );
 
-        // Union: high semantic + lambda top-k
-        let mut result_set = HashSet::with_capacity(k + high_semantic_vec.len());
-        let mut score_map = std::collections::HashMap::with_capacity(result_set.capacity());
-
-        // Add high semantic matches
-        for (idx, score) in high_semantic_vec {
-            result_set.insert(idx);
-            score_map.insert(idx, score);
+        // Union: high semantic + lambda top-k + semantic best. Cosine-based
+        // sets decide membership only; every candidate is reported with its
+        // blended λ-aware score so the ranking uses a single score scale,
+        // consistent with `lambda_similarity` and `try_search_lambda_aware`
+        // (#187).
+        let mut final_results: Vec<(usize, f64)> = high_semantic_vec;
+        final_results.extend(
+            lambda_heap
+                .into_sorted_vec()
+                .into_iter()
+                .rev()
+                .map(|s| (s.index, s.score)),
+        );
+        // Guard the degenerate empty-index fold: `semantic_top` is unset only
+        // when no item was ever folded in.
+        if semantic_top.1 > f64::NEG_INFINITY {
+            final_results.push((semantic_top.0, semantic_top.2));
         }
 
-        // Add lambda top-k
-        for item in lambda_heap.into_sorted_vec().into_iter().rev() {
-            result_set.insert(item.index);
-            score_map.entry(item.index).or_insert(item.score);
-        }
+        // All sources record the same blended score per index, so a
+        // sorted-index pass deduplicates the union without a hash map.
+        final_results.sort_unstable_by_key(|&(idx, _)| idx);
+        final_results.dedup_by_key(|elem| elem.0);
 
-        // Ensure semantic top-1 is included
-        result_set.insert(semantic_top.0);
-        score_map.entry(semantic_top.0).or_insert(semantic_top.1);
-
-        // Convert to vector and sort
-        let mut final_results: Vec<(usize, f64)> = result_set
-            .into_iter()
-            .map(|idx| (idx, *score_map.get(&idx).unwrap()))
-            .collect();
-
-        final_results.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        // Score-descending order with an explicit index tie-break: the output
+        // order is deterministic regardless of set-merge order, and
+        // `total_cmp` removes the `partial_cmp().unwrap()` NaN panic.
+        final_results.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         final_results.truncate(k);
 
         debug!("Final: {} results", final_results.len());

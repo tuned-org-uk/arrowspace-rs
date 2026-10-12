@@ -190,8 +190,7 @@ fn _main_laplacian(
     triplets
 }
 
-/// From dense NxF to Adjacency matrix (weighted adjacency list)
-/// From dense NxF to Adjacency matrix (weighted adjacency list) with inline sparsification
+/// From dense NxF to adjacency matrix (weighted adjacency list).
 fn _build_adjacency(
     items: &mut DenseMatrix<f64>,
     params: &GraphParams,
@@ -206,8 +205,11 @@ fn _build_adjacency(
     let fastpair = CosinePair::lazy(items, params.topk + 1).unwrap();
     debug!("CosinePair structure built for {} items", n);
 
-    // Step 3: single kNN pass per row - candidates within eps are stored,
-    // degrees and weights derive from these lists with no re-query.
+    // Step 3: single kNN pass per row - candidates within eps are stored and
+    // weighted with no re-query. Do not apply extra hidden sparsification here:
+    // `topk` and `eps` are the graph-shaping parameters, and the full candidate
+    // set must feed L = D - A so λ read-outs remain comparable across adjacent
+    // `topk` values (#186).
     info!("Computing k-NN with lazy CosinePair: k={}", params.topk + 1);
     let candidates: Vec<Vec<(f64, usize)>> = (0..n)
         .into_par_iter()
@@ -221,61 +223,33 @@ fn _build_adjacency(
         })
         .collect();
 
-    // Compute node degrees for sparsification scoring from candidate lists
-    let degrees: Vec<usize> = candidates.iter().map(Vec::len).collect();
+    let avg_degree = candidates.iter().map(Vec::len).sum::<usize>() as f64 / n as f64;
+    debug!(
+        "Building adjacency without hidden sparsification (avg candidate degree {:.1})",
+        avg_degree
+    );
 
-    let avg_degree = degrees.iter().sum::<usize>() as f64 / n as f64;
-    let sparsify = avg_degree > 10.0; // Only sparsify if dense enough
-
-    if sparsify {
-        info!(
-            "Inline sparsification enabled (avg degree {:.1})",
-            avg_degree
-        );
-    } else {
-        debug!("Skipping sparsification (avg degree {:.1})", avg_degree);
-    }
-
-    // Step 4: weight assignment with inline sparsification - O(n × topk)
+    // Step 4: weight assignment - O(n × topk)
     let adj_rows: Vec<Vec<(usize, f64)>> = candidates
         .into_par_iter()
         .enumerate()
-        .map(|(i, row_candidates)| {
+        .map(|(_i, row_candidates)| {
             // Collect valid neighbors with weights
-            let mut valid_neighbors: Vec<(usize, f64, f64)> = row_candidates
+            let valid_neighbors: Vec<(usize, f64)> = row_candidates
                 .into_iter()
                 .filter_map(|(distance, j)| {
                     let weight =
                         1.0 / (1.0 + (distance / params.sigma.unwrap_or(1.0)).powf(params.p));
                     if weight > 1e-12 {
-                        // **INLINE SPARSIFICATION SCORE**
-                        // Score = weight * sqrt(degree_i * degree_j)
-                        let score = if sparsify {
-                            weight * ((degrees[i] * degrees[j]) as f64).sqrt()
-                        } else {
-                            weight // No scoring overhead if not sparsifying
-                        };
-                        Some((j, weight, score))
+                        Some((j, weight))
                     } else {
                         None
                     }
                 })
                 .collect();
 
-            // **INLINE SPARSIFICATION: Keep top 50% by score**
-            if sparsify && valid_neighbors.len() > 2 {
-                valid_neighbors.sort_unstable_by(|a, b| {
-                    b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                let keep_count = (valid_neighbors.len() / 2).max(1);
-                valid_neighbors.truncate(keep_count);
-            }
-
             // Return (neighbor, weight) pairs
             valid_neighbors
-                .into_iter()
-                .map(|(j, w, _)| (j, w))
-                .collect()
         })
         .collect();
 

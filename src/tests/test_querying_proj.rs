@@ -13,6 +13,8 @@
 
 use log::{debug, warn};
 
+use std::collections::HashMap;
+
 use crate::{
     builder::ArrowSpaceBuilder,
     core::ArrowItem,
@@ -260,6 +262,125 @@ fn test_search_lambda_aware_hybrid() {
         results_regular.len(),
         results_hybrid.len()
     );
+}
+
+#[test]
+fn test_hybrid_reports_blended_scores_for_overlapping_candidates() {
+    // #187: an item surfaced by the cosine-based sets (high-cosine
+    // near-duplicates, best-cosine item) must be scored with the blended
+    // λ-aware score, never the raw cosine.
+    init();
+
+    // Exact duplicates of the query direction guarantee overlap between the
+    // high-cosine set and the reported candidates.
+    let data = vec![
+        vec![1.0, 0.0, 0.0],
+        vec![1.0, 0.0, 0.0],
+        vec![1.0, 0.0, 0.0],
+        vec![0.0, 1.0, 0.0],
+        vec![0.0, 0.0, 1.0],
+    ];
+
+    let (aspace, _gl) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(1.0, 2, 2, 2.0, None)
+        .with_seed(3407)
+        .with_sparsity_check(false)
+        .build(data);
+
+    let alpha = 0.7;
+
+    // Query on the duplicated direction with a lambda deliberately offset
+    // from the duplicates' lambda, so blended < cosine for that set.
+    let dup_item = aspace.get_item(0);
+    let query_item = ArrowItem::new(vec![1.0, 0.0, 0.0].as_ref(), dup_item.lambda + 0.25);
+
+    let results = aspace.search_lambda_aware_hybrid(&query_item, 3, alpha);
+    assert_eq!(results.len(), 3);
+
+    // Contract: every reported score equals `lambda_similarity` — the same
+    // blend used by `try_search_lambda_aware`.
+    for (idx, score) in &results {
+        let item = aspace.get_item(*idx);
+        let expected = query_item.lambda_similarity(&item, alpha);
+        assert!(
+            (score - expected).abs() <= 1e-12,
+            "idx={idx}: score={score} != blended={expected}"
+        );
+    }
+
+    // Discriminating check: duplicates have cosine 1.0 but a λ-distinct
+    // query, so their blended score must sit strictly below the cosine. The
+    // pre-fix code reported the raw cosine (1.0) here.
+    let dup_scores: Vec<(usize, f64)> = results
+        .iter()
+        .filter(|(idx, _)| query_item.cosine_similarity(&aspace.get_item(*idx).item) > 0.9999)
+        .map(|(idx, score)| (*idx, *score))
+        .collect();
+    assert!(
+        !dup_scores.is_empty(),
+        "high-cosine duplicates must surface in hybrid results"
+    );
+    for (idx, score) in &dup_scores {
+        assert!(
+            *score < 1.0,
+            "idx={idx}: duplicate scored {score}; raw cosine leaked past the blend"
+        );
+    }
+}
+
+#[test]
+fn test_hybrid_matches_lambda_aware_scores_and_is_deterministic() {
+    // #187: one score scale across entry points, deterministic ordering.
+    init();
+
+    let (data, queries) = create_test_data(99, 18);
+
+    let (aspace, gl) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 5, 2, 2.0, None)
+        .with_normalisation(true)
+        .with_spectral(true)
+        .with_sparsity_check(false)
+        .with_seed(3407)
+        .build(data);
+
+    let query = queries[1].clone();
+    let query_lambda = aspace.prepare_query_item(&query, &gl);
+    let query_item = ArrowItem::new(query.as_ref(), query_lambda);
+
+    let alpha = 0.7;
+    let k = 10;
+
+    let hybrid = aspace.search_lambda_aware_hybrid(&query_item, k, alpha);
+    assert_eq!(hybrid.len(), k);
+
+    // Full ranking from the `try_` entry point: any shared item must carry
+    // the identical blended score.
+    let full = aspace
+        .try_search_lambda_aware(&query_item, aspace.nitems, alpha)
+        .unwrap();
+    let full_scores: HashMap<usize, f64> = full.into_iter().collect();
+
+    for (idx, score) in &hybrid {
+        let expected = full_scores[idx];
+        assert!(
+            (score - expected).abs() <= 1e-12,
+            "idx={idx}: hybrid={score} vs lambda_aware={expected}"
+        );
+    }
+
+    // Sorted by score descending, ties broken by ascending index.
+    for w in hybrid.windows(2) {
+        assert!(
+            w[0].1 > w[1].1 || (w[0].1 == w[1].1 && w[0].0 < w[1].0),
+            "output not ordered by (score desc, index asc): {:?} then {:?}",
+            w[0],
+            w[1]
+        );
+    }
+
+    // Deterministic across runs.
+    let hybrid_again = aspace.search_lambda_aware_hybrid(&query_item, k, alpha);
+    assert_eq!(hybrid, hybrid_again);
 }
 
 #[test]
