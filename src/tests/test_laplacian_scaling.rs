@@ -121,13 +121,11 @@ fn laplacian_build_at_2000x256_stays_under_quadratic_init_budget() {
 /// Oracle independent of smartcore: expected Laplacian entries computed by
 /// brute-force cosine kNN over the raw items. Guards edge semantics of the
 /// builder across the CosinePair lazy switch and any future rewrite.
-#[test]
-fn laplacian_edges_match_brute_force_cosine_knn_oracle() {
-    init();
-
-    let items = XorShift::latent_basins(60, 12, 8, 0.05, 3407);
-    let eps = 0.4;
-    let topk = 4;
+fn assert_laplacian_edges_match_brute_force_cosine_knn_oracle(
+    items: &[Vec<f64>],
+    eps: f64,
+    topk: usize,
+) -> usize {
     let p = params(eps, topk);
     // normalise=true routes items through StandardScaler before graph build;
     // use raw magnitudes so the oracle sees exactly what the graph saw.
@@ -136,7 +134,7 @@ fn laplacian_edges_match_brute_force_cosine_knn_oracle() {
         ..p
     };
 
-    let gl = laplacian_from_items(&items, &p_raw);
+    let gl = laplacian_from_items(items, &p_raw);
 
     let n = items.len();
     let dot = |a: &[f64], b: &[f64]| -> f64 { a.iter().zip(b).map(|(x, y)| x * y).sum() };
@@ -163,7 +161,7 @@ fn laplacian_edges_match_brute_force_cosine_knn_oracle() {
                 .collect();
             // query_row_top_k(topk+1) already EXCLUDES the self row and
             // returns topk+1 real neighbours; the builder filters by eps.
-            knn.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            knn.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
             knn.truncate(topk + 1);
             knn.into_iter()
                 .filter(|&(_, dij)| dij <= eps && weight(dij) > 1e-12)
@@ -186,6 +184,8 @@ fn laplacian_edges_match_brute_force_cosine_knn_oracle() {
         })
         .collect();
 
+    let expected_edges = symmetric.iter().map(|row| row.len()).sum::<usize>() / 2;
+
     for (i, expected) in symmetric.iter().enumerate() {
         for &j in expected {
             assert!(gl.get(i, j) < 0.0, "expected edge {i}->{j} missing from L");
@@ -197,4 +197,37 @@ fn laplacian_edges_match_brute_force_cosine_knn_oracle() {
             assert!(gl.get(i, j) >= 0.0, "unexpected edge {i}->{j} present in L");
         }
     }
+
+    assert_eq!(
+        gl.matrix.nnz(),
+        n + 2 * expected_edges,
+        "L nnz must equal diagonal entries plus symmetric off-diagonal edges"
+    );
+
+    expected_edges
+}
+
+#[test]
+fn laplacian_edges_match_brute_force_cosine_knn_oracle() {
+    init();
+
+    let items = XorShift::latent_basins(60, 12, 8, 0.05, 3407);
+    assert_laplacian_edges_match_brute_force_cosine_knn_oracle(&items, 0.4, 4);
+}
+
+#[test]
+fn laplacian_edges_match_oracle_when_topk_crosses_old_sparsify_threshold() {
+    init();
+
+    let items = XorShift::latent_basins(60, 12, 8, 0.05, 3407);
+    let edges_topk9 = assert_laplacian_edges_match_brute_force_cosine_knn_oracle(&items, 1.0, 9);
+    let edges_topk10 = assert_laplacian_edges_match_brute_force_cosine_knn_oracle(&items, 1.0, 10);
+
+    // #186: the old hidden branch enabled at avg degree > 10, which was
+    // effectively `topk >= 10` when eps did not bind, and then halved each
+    // row. The graph must not lose edges when topk increases by one.
+    assert!(
+        edges_topk10 >= edges_topk9,
+        "topk=10 must not produce fewer edges than topk=9 ({edges_topk10} < {edges_topk9})"
+    );
 }

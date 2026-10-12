@@ -70,6 +70,27 @@ scores are identical to `try_search_lambda_aware` for every shared item,
 output is ordered by (score desc, index asc), and repeated calls return
 identical vectors.
 
+### Fixed — hidden Laplacian sparsification cliff (#186)
+
+`_build_adjacency` no longer applies the implicit "average degree > 10"
+inline sparsification pass. That branch halved each row's candidate list after
+the kNN/eps filter, so in the common eps-saturated regime `topk = 9 -> 10`
+silently changed behaviour from "keep all `topk + 1` candidates" to "keep
+roughly half", often reducing the total edge count and changing the topology
+of L = D − A. Because the switch was not part of `GraphParams`, persisted
+configuration did not record the effective graph-building rule.
+
+The graph-shaping controls are now only the explicit parameters already in
+`GraphParams` (`eps`, `topk`, `sigma`, `p`, normalisation). This is a
+value-level change for builds that previously crossed the hidden threshold
+(usually `topk >= 10` with non-binding `eps`): they will now have the full
+kNN/eps candidate set, more edges, and different λ values. Builds below the
+old threshold are unchanged except for log text.
+
+`laplacian_edges_match_oracle_when_topk_crosses_old_sparsify_threshold` adds
+oracle coverage at the old cliff and asserts that increasing `topk` from 9 to
+10 does not remove edges.
+
 ## [0.28.1] — fixed
 
 ### Fixed — Eigen λ bit-reproducibility under pool load (#170)
