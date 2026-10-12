@@ -4,6 +4,63 @@ All notable changes to `arrowspace` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [SemVer](https://semver.org/).
 
+## [0.28.5] — fixed
+
+### Fixed — Signals Laplacian: correct implementation (#156)
+
+The `signals` structure of spectral builds (`with_spectral(true)`) is the
+second-order graph Laplacian `signals = compute_graph_laplacian(gl.T)`: the
+feature-space Laplacian is re-transposed into item-space and its graph
+Laplacian is recomputed, so the columns of the feature Laplacian (its
+"eigenvectors") become the items whose Laplacian is wired. The previous
+implementation fed the un-transposed Laplacian rows, contradicting both the
+documented semantics ("columns become nodes", v0.23.0) and the
+`ArrowSpace::signals` field contract (`Laplacian(Transpose(FfxFn))`).
+
+The query-side λ read-out now selects the same graph the index-side taumode
+read-out uses: the signals graph when present, otherwise the item Laplacian.
+Previously the query λ was always scored against `gl.matrix` while index λs
+came from `signals` — the two λ distributions disagreed, out-of-range queries
+normalised to exactly 0 and search aborted with `DegenerateLambda`, which made
+spectral builds unusable for search.
+
+Behavioral notes:
+
+- Non-spectral builds are unchanged (signals empty → `gl.matrix` both sides).
+- Spectral builds now need the second-order graph to be wired: the
+  Laplacian-profile space often lives in a looser cosine regime than the
+  centroid-profile space, so `lambda_eps` values below ~1.0 can starve the
+  second-order graph to zero edges (and every λ to 0) — the same
+  post-#167 collapse documented for the bootstrap graph.
+- Search/regression tests that require a usable spectral λ distribution moved
+  to `eps=1.0`; at `eps=0.3` the gaussian fixture's second-order graph had
+  zero edges and the spectral feature was inert.
+- Persistence still does not restore `signals` on reload (a pre-existing gap
+  tracked separately); reloaded spectral indexes fall back to the item
+  Laplacian on both query sides.
+
+### Added — regression tests
+
+`test_signals_laplacian_is_computed_on_retransposed_gl_156` pins the
+orientation contract on a hand-built non-symmetric Laplacian (pipeline
+Laplacians are symmetric and would mask the row/column choice), and
+`test_spectral_signals_second_order_pipeline_properties_156` pins the
+end-to-end contract: F×F symmetric second-order graph, distinct from the
+first-order Laplacian, deterministic across seeded builds, λτ read-out and
+self-retrieval search usable.
+
+### Removed — duplicate storage test files (#169)
+
+`src/storage/test_storage.rs` and `src/storage/test_load_from_storage.rs`
+were dead leftovers of the storage-tests module reorg: the wired copies live
+under `src/storage/tests/` (declared by `src/storage/tests/mod.rs`), and the
+orphan copies were never compiled — their `crate::taumode` / unqualified
+`sorted_index::` imports no longer exist, so they could not compile if they
+were. The older diverged `src/tests/test_load_from_storage.rs` (371-line
+pre-reorg version, also never declared) is removed with them. Both
+`test_storage.rs` copies already carried the #168 `axis=0` fix; the wired one
+keeps it.
+
 ## [0.28.2] — fixed
 
 ### Fixed — `search_lambda_aware_hybrid` mixed score scales (#187)
@@ -90,6 +147,7 @@ old threshold are unchanged except for log text.
 `laplacian_edges_match_oracle_when_topk_crosses_old_sparsify_threshold` adds
 oracle coverage at the old cliff and asserts that increasing `topk` from 9 to
 10 does not remove edges.
+
 
 ## [0.28.1] — fixed
 
