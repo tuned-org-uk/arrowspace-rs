@@ -4,6 +4,72 @@ All notable changes to `arrowspace` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [SemVer](https://semver.org/).
 
+## [0.28.2] — fixed
+
+### Fixed — `search_lambda_aware_hybrid` mixed score scales (#187)
+
+The hybrid pass unioned three candidate sets into one ranking — the λ-aware
+top-k heap, the high-cosine near-duplicate set (cosine > 0.9999), and the
+best-cosine item — but the union inserted candidates with
+`HashMap::entry(..).or_insert(..)` in a fixed order: high-cosine items first
+with their **raw cosine**, then λ top-k and semantic best filling only the
+gaps. An item present in more than one set kept whichever score its first
+set had written, so the returned `Vec<(usize, f64)>` mixed two score scales
+(raw cosine and `alpha·cos + (1−alpha)·sim_λ`) and was sorted and truncated
+on that mixture. Cosine-scored items (≈ 1.0) could outrank or displace
+blended items regardless of `alpha` and λ distance, contradicting the
+documented contract on `ArrowItem::lambda_similarity` ("same unsigned blend
+used by `search_lambda_aware_hybrid`").
+
+**Cosine-based sets now decide membership only.** Every candidate carries its
+blended λ-aware score from the single fold computation (`high_sem` records
+the blend alongside cosine membership; the semantic best tracks cosine for
+selection and the blend for reporting), and the union always reports the
+blend — the same unsigned score as `lambda_similarity` and
+`try_search_lambda_aware`. Ranking, truncation and cross-entry-point
+comparability all operate on one scale.
+
+Union bookkeeping moved from `HashSet`/`HashMap` to a flat
+sort-by-index + dedup pass (all sources record the same per-index blend, so
+the survivor is exact), per the sparse-first/flat-first invariant. Two
+determinism repairs ride along:
+
+- the semantic-best merge breaks cosine ties by lower index instead of
+  reduce-combine order;
+- the λ top-k heap uses the same tie policy, so equal-score candidates are
+  retained by lower index instead of worker merge order;
+- the final sort uses `total_cmp` with an explicit index tie-break
+  (score desc, index asc), replacing `partial_cmp(..).unwrap()` — no NaN
+  panic, no unstable ordering on equal scores.
+
+The 0.9999 cosine cut-off is the named constant `SEMANTIC_THRESHOLD`
+(core.rs). It stays a constant rather than a parameter: the hybrid signature
+is called directly by the pyarrowspace bindings (`search_hybrid`) and must
+not change shape.
+
+### Changed — score semantics for bindings callers
+
+`search_lambda_aware_hybrid` keeps its exact signature
+(`query, k, alpha) -> Vec<(usize, f64)>`, called as `search_hybrid` in
+pyarrowspace), but **the score values can change for any item that also
+appeared in the high-cosine or semantic-best sets**: those now return the
+blended score instead of the raw cosine. Callers comparing hybrid scores
+across versions, or pinning them by equality, should re-baseline after
+upgrading.
+
+### Added — regression tests
+
+`test_hybrid_reports_blended_scores_for_overlapping_candidates` builds an
+exact-duplicate fixture with a λ-offset query, so the overlapping candidates'
+blended score sits strictly below their cosine of 1.0: it fails on pre-#187
+code, where the raw cosine leaked through. It also asserts every reported
+score equals `ArrowItem::lambda_similarity`.
+
+`test_hybrid_matches_lambda_aware_scores_and_is_deterministic` asserts hybrid
+scores are identical to `try_search_lambda_aware` for every shared item,
+output is ordered by (score desc, index asc), and repeated calls return
+identical vectors.
+
 ## [0.28.1] — fixed
 
 ### Fixed — Eigen λ bit-reproducibility under pool load (#170)
