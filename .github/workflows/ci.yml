@@ -40,3 +40,5 @@ jobs:
         run: cargo build --target ${{ matrix.platform.target }}
       - name: Tests
         run: cargo test --release --all-features
+      - name: Examples with all features
+        run: cargo check --release --all-features --examples

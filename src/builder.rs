@@ -19,6 +19,8 @@ use crate::clustering::{
     ClusteredOutput, ClusteringHeuristic, run_incremental_clustering_with_sampling,
 };
 use crate::core::{ArrowSpace, TAUDEFAULT};
+#[cfg(feature = "filter_banks")]
+use crate::filter_bank::FilterBankConfig;
 use crate::graph::GraphLaplacian;
 use crate::maps::eigenmaps::EigenMaps;
 use crate::maps::energymaps::EnergyMaps;
@@ -124,6 +126,10 @@ pub struct ArrowSpaceBuilder {
     // Synthetic index configuration (used `with_synthesis`)
     pub synthesis: TauMode, // (tau_mode)
 
+    // Optional Rayleigh filter-bank output.
+    #[cfg(feature = "filter_banks")]
+    pub(crate) filter_bank: Option<FilterBankConfig>,
+
     /// Max clusters X (default: nfeatures; cap on centroids)
     pub(crate) cluster_max_clusters: Option<usize>,
     /// Squared L2 threshold for new cluster creation (default 1.0)
@@ -170,6 +176,8 @@ impl Default for ArrowSpaceBuilder {
             sparsity_check: false,
             // sampling default
             sampling: Some(SamplerType::Simple(0.6)),
+            #[cfg(feature = "filter_banks")]
+            filter_bank: None,
             // Clustering defaults
             cluster_max_clusters: None, // will be set to nfeatures at build time
             cluster_radius: 1.0,
@@ -679,6 +687,8 @@ impl ArrowSpaceBuilder {
             normalise: self.normalise,
             sparsity_check: self.sparsity_check,
             sampling: self.sampling.clone(),
+            #[cfg(feature = "filter_banks")]
+            filter_bank: self.filter_bank.clone(),
             use_dims_reduction: self.use_dims_reduction,
             rp_eps: self.rp_eps,
             persistence: self.persistence.clone(),
@@ -730,6 +740,19 @@ impl ArrowSpaceBuilder {
     pub fn with_synthesis(mut self, tau_mode: TauMode) -> Self {
         info!("Configuring synthesis with tau mode: {:?}", tau_mode);
         self.synthesis = tau_mode;
+        self
+    }
+
+    /// Enable optional per-item Rayleigh filter-bank outputs.
+    ///
+    /// This is additive: the default is off, existing λτ APIs keep returning
+    /// the scalar λτ, and callers that opt in can read the flat `N × M` band
+    /// buffer from the built [`ArrowSpace`](crate::core::ArrowSpace).
+    #[cfg(feature = "filter_banks")]
+    pub fn with_filter_bank(mut self, config: FilterBankConfig) -> Self {
+        info!("Configuring filter bank with {} bands", config.num_bands);
+        config.validate();
+        self.filter_bank = Some(config);
         self
     }
 
@@ -1056,6 +1079,12 @@ impl ArrowSpaceBuilder {
         aspace.compute_taumode(&gl);
         // create the sorted index
         aspace.build_lambdas_sorted();
+
+        #[cfg(feature = "filter_banks")]
+        if let Some(config) = self.filter_bank.clone() {
+            info!("Computing filter-bank band energies");
+            aspace.compute_filter_bank(&gl, config);
+        }
 
         // Save lambdas if persistence is enabled
         #[cfg(feature = "storage")]

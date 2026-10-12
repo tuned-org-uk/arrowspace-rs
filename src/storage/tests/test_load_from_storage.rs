@@ -130,6 +130,12 @@ fn setup_test_storage(storage_dir: &Path, dataset_name: &str) -> (usize, usize, 
         signals: sprs::CsMat::zero((0, 0)),
         lambdas: lambdas.clone(),
         lambdas_sorted: SortedLambdas::new(),
+        #[cfg(feature = "filter_banks")]
+        filter_bank_config: None,
+        #[cfg(feature = "filter_banks")]
+        band_energies: Vec::new(),
+        #[cfg(feature = "filter_banks")]
+        band_count: 0,
         min_lambdas,
         max_lambdas,
         range_lambdas: max_lambdas - min_lambdas,

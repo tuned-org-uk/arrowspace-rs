@@ -53,6 +53,10 @@ use sprs::CsMat;
 
 use crate::builder::ConfigValue;
 use crate::error::ArrowSpaceError;
+#[cfg(feature = "filter_banks")]
+use crate::filter_bank::{
+    FilterBankConfig, PreparedQuery, compute_band_energies_from_matrix, project_item_for_graph,
+};
 use crate::graph::GraphLaplacian;
 use crate::reduction::ImplicitProjection;
 use crate::search::sorted_index::SortedLambdas;
@@ -411,7 +415,13 @@ pub struct ArrowSpace {
     pub signals: CsMat<f64>,           // Laplacian(Transpose(FfxFn))
     pub lambdas: Vec<f64>,             // N lambdas (every lambda is a lambda for an item-row)
     pub lambdas_sorted: SortedLambdas, // sorted by lambda ascending
-    pub taumode: TauMode,              // tau_mode as in select_tau_mode
+    #[cfg(feature = "filter_banks")]
+    pub filter_bank_config: Option<FilterBankConfig>,
+    #[cfg(feature = "filter_banks")]
+    pub band_energies: Vec<f64>,
+    #[cfg(feature = "filter_banks")]
+    pub band_count: usize,
+    pub taumode: TauMode, // tau_mode as in select_tau_mode
 
     // lambdas normalisation
     pub min_lambdas: f64,
@@ -463,6 +473,12 @@ impl Default for ArrowSpace {
             signals: sprs::CsMat::zero((0, 0)),
             lambdas: Vec::new(),
             lambdas_sorted: SortedLambdas::new(),
+            #[cfg(feature = "filter_banks")]
+            filter_bank_config: None,
+            #[cfg(feature = "filter_banks")]
+            band_energies: Vec::new(),
+            #[cfg(feature = "filter_banks")]
+            band_count: 0,
             // lambdas normalisation
             min_lambdas: -1.0,
             max_lambdas: -1.0,
@@ -517,6 +533,12 @@ impl ArrowSpace {
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
             lambdas: vec![0.0; n_items],        // will be computed later
             lambdas_sorted: SortedLambdas::new(),
+            #[cfg(feature = "filter_banks")]
+            filter_bank_config: None,
+            #[cfg(feature = "filter_banks")]
+            band_energies: Vec::new(),
+            #[cfg(feature = "filter_banks")]
+            band_count: 0,
             // lambdas normalisation
             min_lambdas: -1.0,
             max_lambdas: -1.0,
@@ -725,6 +747,12 @@ impl ArrowSpace {
             signals,
             lambdas,
             lambdas_sorted,
+            #[cfg(feature = "filter_banks")]
+            filter_bank_config: None,
+            #[cfg(feature = "filter_banks")]
+            band_energies: Vec::new(),
+            #[cfg(feature = "filter_banks")]
+            band_count: 0,
             // Normalization fields
             min_lambdas,
             max_lambdas,
@@ -780,6 +808,12 @@ impl ArrowSpace {
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
             lambdas: vec![0.0; n_items],        // will be computed later
             lambdas_sorted: SortedLambdas::new(),
+            #[cfg(feature = "filter_banks")]
+            filter_bank_config: None,
+            #[cfg(feature = "filter_banks")]
+            band_energies: Vec::new(),
+            #[cfg(feature = "filter_banks")]
+            band_count: 0,
             // lambdas normalisation
             min_lambdas: -1.0,
             max_lambdas: -1.0,
@@ -854,6 +888,12 @@ impl ArrowSpace {
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
             lambdas: vec![0.0; n_items],        // will be computed later
             lambdas_sorted: SortedLambdas::new(),
+            #[cfg(feature = "filter_banks")]
+            filter_bank_config: None,
+            #[cfg(feature = "filter_banks")]
+            band_energies: Vec::new(),
+            #[cfg(feature = "filter_banks")]
+            band_count: 0,
             // lambdas normalisation
             min_lambdas: -1.0,
             max_lambdas: -1.0,
@@ -899,6 +939,12 @@ impl ArrowSpace {
             signals: sprs::CsMat::zero((0, 0)),
             lambdas: vec![0.0; nitems],
             lambdas_sorted: SortedLambdas::new(),
+            #[cfg(feature = "filter_banks")]
+            filter_bank_config: None,
+            #[cfg(feature = "filter_banks")]
+            band_energies: Vec::new(),
+            #[cfg(feature = "filter_banks")]
+            band_count: 0,
             min_lambdas: -1.0,
             max_lambdas: -1.0,
             range_lambdas: -1.0,
@@ -1093,6 +1139,47 @@ impl ArrowSpace {
         }
     }
 
+    /// Prepare a query and include optional filter-bank band energies.
+    ///
+    /// This is additive over [`try_prepare_query_item`]: existing callers can
+    /// keep using the scalar λτ method, while downstream heads that need richer
+    /// spectral coordinates can use this method when the builder enabled a
+    /// filter bank.
+    #[cfg(feature = "filter_banks")]
+    pub fn try_prepare_query_item_with_bands(
+        &self,
+        query: &[f64],
+        gl: &GraphLaplacian,
+    ) -> Result<PreparedQuery, ArrowSpaceError> {
+        let lambda = self.try_prepare_query_item(query, gl)?;
+        let band_energies = match &self.filter_bank_config {
+            Some(config) if self.sub_centroids.is_none() => {
+                let graph = self.filter_bank_graph(gl);
+                let projected = project_item_for_graph(query, self.projection_matrix.clone());
+                if projected.len() == graph.rows() {
+                    compute_band_energies_from_matrix(graph, &projected, config)
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        };
+
+        Ok(PreparedQuery {
+            lambda,
+            band_energies,
+        })
+    }
+
+    #[cfg(feature = "filter_banks")]
+    fn filter_bank_graph<'a>(&'a self, gl: &'a GraphLaplacian) -> &'a CsMat<f64> {
+        if self.signals.shape() != (0, 0) {
+            &self.signals
+        } else {
+            &gl.matrix
+        }
+    }
+
     /// Build the sorted index
     pub fn build_lambdas_sorted(&mut self) {
         self.lambdas_sorted.build_from(&self.lambdas);
@@ -1102,6 +1189,60 @@ impl ArrowSpace {
     #[inline]
     pub fn lambdas(&self) -> &[f64] {
         self.lambdas.as_ref()
+    }
+
+    /// Return the number of configured filter-bank bands.
+    #[inline]
+    #[cfg(feature = "filter_banks")]
+    pub fn filter_bank_bands(&self) -> usize {
+        self.band_count
+    }
+
+    /// Return all band energies as a flat row-major `N × M` buffer.
+    #[inline]
+    #[cfg(feature = "filter_banks")]
+    pub fn band_energies(&self) -> &[f64] {
+        &self.band_energies
+    }
+
+    /// Return the band energies for item `i`.
+    #[inline]
+    #[cfg(feature = "filter_banks")]
+    pub fn band_energies_for_item(&self, i: usize) -> &[f64] {
+        assert!(i < self.nitems, "item index out of bounds");
+        if self.band_count == 0 {
+            return &[];
+        }
+        let start = i * self.band_count;
+        let end = start + self.band_count;
+        &self.band_energies[start..end]
+    }
+
+    /// Compute and store per-item filter-bank energies.
+    #[cfg(feature = "filter_banks")]
+    pub fn compute_filter_bank(&mut self, gl: &GraphLaplacian, config: FilterBankConfig) {
+        config.validate();
+        let graph = self.filter_bank_graph(gl);
+        let band_count = config.num_bands;
+
+        let all_bands: Vec<Vec<f64>> = (0..self.nitems)
+            .into_par_iter()
+            .map(|i| {
+                let item = self.get_item(i);
+                let projected = project_item_for_graph(&item.item, self.projection_matrix.clone());
+                compute_band_energies_from_matrix(graph, &projected, &config)
+            })
+            .collect();
+
+        let mut flat = Vec::with_capacity(self.nitems * band_count);
+        for bands in all_bands {
+            debug_assert_eq!(bands.len(), band_count);
+            flat.extend_from_slice(&bands);
+        }
+
+        self.filter_bank_config = Some(config);
+        self.band_count = band_count;
+        self.band_energies = flat;
     }
 
     /// Count how many stored lambdas are approximately zero (~0).
@@ -1908,6 +2049,12 @@ impl ArrowSpace {
             signals: sprs::CsMat::zero((0, 0)),
             lambdas,
             lambdas_sorted: crate::search::sorted_index::SortedLambdas::new(),
+            #[cfg(feature = "filter_banks")]
+            filter_bank_config: None,
+            #[cfg(feature = "filter_banks")]
+            band_energies: Vec::new(),
+            #[cfg(feature = "filter_banks")]
+            band_count: 0,
             min_lambdas,
             max_lambdas,
             range_lambdas,

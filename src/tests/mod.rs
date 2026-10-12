@@ -3,6 +3,8 @@ mod test_builder;
 pub mod test_data;
 mod test_dense_layout;
 mod test_error;
+#[cfg(feature = "filter_banks")]
+mod test_filter_bank;
 mod test_helpers;
 // mod test_dimensional;
 mod test_clustering;

@@ -4,6 +4,32 @@ All notable changes to `arrowspace` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [SemVer](https://semver.org/).
 
+## [0.29.0] — added
+
+### Added — Rayleigh filter-bank coordinates (#183)
+
+The default-off `filter_banks` feature exposes
+`ArrowSpaceBuilder::with_filter_bank(FilterBankConfig)`, which enables an
+optional flat per-item band-energy buffer alongside the existing λτ scalar.
+Without the feature, the public API and scalar λτ search behaviour are
+unchanged.
+
+The implementation keeps the crate's discrete-space invariant: it does not use
+eigendecomposition. It partitions sparse Laplacian graph-vector Rayleigh energy
+into uniform or custom normalised bands, and the band energies sum to the same
+Rayleigh energy used by the λτ read-out.
+
+New APIs:
+
+- feature flag: `filter_banks`
+- `FilterBankConfig::{new, uniform, custom}`
+- `BandEdges::{Uniform, Custom}`
+- `ArrowSpace::band_energies()` for the flat `N × M` buffer
+- `ArrowSpace::band_energies_for_item(i)` for one row
+- `ArrowSpace::filter_bank_bands()` for `M`
+- `ArrowSpace::try_prepare_query_item_with_bands(...)` for query λτ plus
+  query-side band energies
+
 ## [0.28.5] — fixed
 
 ### Fixed — Signals Laplacian: correct implementation (#156)

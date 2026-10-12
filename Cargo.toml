@@ -1,6 +1,6 @@
 [package]
 name = "arrowspace"
-version = "0.28.5"
+version = "0.29.0"
 edition = "2024"
 description = "Graph Wiring for embeddings using physical networks wiring. Provides graph analysis, vector search and a energy-distribution stats."
 authors = ["Lorenzo <tunedconsulting@gmail.com>"]
@@ -56,13 +56,16 @@ once_cell = "1.19"
 
 [features]
 default = []
+filter_banks = []
 storage = ["dep:parquet", "dep:uuid", "dep:arrow", "dep:serde_json", "dep:chrono", "dep:csv"]
 
 [lib]
 name = "arrowspace"
 crate-type = ["rlib"]
 
-[examples]
+[[example]]
+name = "04_filter_bank"
+required-features = ["filter_banks"]
 
 [workspace]
 
