@@ -29,6 +29,24 @@ let (aspace, _) = ArrowSpaceBuilder::new()
     .build(vectors);
 ```
 
+### Optional filter-bank coordinates
+
+`with_filter_bank` adds a short Rayleigh band-energy vector per item. This API
+is behind the default-off `filter_banks` feature, and scalar λτ search behaviour
+is unchanged.
+
+```rust
+use arrowspace::builder::ArrowSpaceBuilder;
+use arrowspace::filter_bank::{BandEdges, FilterBankConfig};
+
+let (aspace, graph) = ArrowSpaceBuilder::new()
+    .with_filter_bank(FilterBankConfig::new(3, BandEdges::Uniform))
+    .build(vectors);
+
+let item_bands = aspace.band_energies_for_item(0);
+let query = aspace.try_prepare_query_item_with_bands(&[1.0, 2.0, 3.0], &graph)?;
+```
+
 ### Requirements
 
 - Rust 1.90+ (edition 2024)
@@ -53,6 +71,7 @@ cargo build --release
 ```bash
 cargo run --example 01_compare_cosine
 cargo run --example 02_proteins_lookup
+cargo run --features filter_banks --example 04_filter_bank
 ```
 
 ### Running Tests

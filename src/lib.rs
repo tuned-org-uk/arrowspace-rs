@@ -15,6 +15,8 @@ pub mod builder;
 pub mod clustering;
 pub mod core;
 pub mod error;
+#[cfg(feature = "filter_banks")]
+pub mod filter_bank;
 pub mod graph;
 pub mod laplacian;
 pub mod maps;
