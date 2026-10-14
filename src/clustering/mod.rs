@@ -595,35 +595,44 @@ pub(crate) fn run_incremental_clustering_with_sampling(
         // ============================================================
         // PHASE 1: Snapshot and decision
         // ============================================================
-        let cent_snap = {
-            let c = centroids.lock().unwrap();
-            c.clone()
-        };
+        // Deterministic driver (#197): rows are processed one at a time,
+        // so no other closure run can mutate the centroid table between
+        // this scan and the Phase 3 lock. Scan under the lock and keep
+        // the result: no per-row full-table clone, and Phase 3 can reuse
+        // the scan instead of re-scanning. The parallel driver keeps the
+        // clone — centroids may grow on another thread mid-scan.
+        let (snap_best_idx, snap_best_dist_sq, snap_len) =
+            if arrowspacebuilder.deterministic_clustering {
+                let c = centroids.lock().unwrap();
+                if c.is_empty() {
+                    (0, f64::INFINITY, 0)
+                } else {
+                    let (idx, dist) = nearest_centroid(row, &c);
+                    (idx, dist, c.len())
+                }
+            } else {
+                let cent_snap = {
+                    let c = centroids.lock().unwrap();
+                    c.clone()
+                };
+                let best = if cent_snap.is_empty() {
+                    (0, f64::INFINITY)
+                } else {
+                    nearest_centroid(row, &cent_snap)
+                };
+                (best.0, best.1, cent_snap.len())
+            };
 
         trace!(
             "Row {}: Snapshot phase - n_centroids_snapshot={}",
-            row_idx,
-            cent_snap.len()
+            row_idx, snap_len
         );
-
-        // Distance from snapshot (decision basis)
-        let (_snap_best_idx, snap_best_dist_sq) = if cent_snap.is_empty() {
-            trace!("Row {}: Snapshot empty, setting dist²=INFINITY", row_idx);
-            (0, f64::INFINITY)
-        } else {
-            let (idx, dist) = nearest_centroid(row, &cent_snap);
-            trace!(
-                "Row {}: Snapshot nearest - idx={}, dist²={:.6}",
-                row_idx, idx, dist
-            );
-            (idx, dist)
-        };
 
         // Sampling (if enabled)
         if arrowspacebuilder.sampling.is_some() {
             trace!("Row {}: Checking sampling filter", row_idx);
             let mut smp = sampler.lock().unwrap();
-            if !smp.should_keep(row, snap_best_dist_sq, cent_snap.len(), max_clusters) {
+            if !smp.should_keep(row, snap_best_dist_sq, snap_len, max_clusters) {
                 trace!("Row {}: REJECTED by sampling filter", row_idx);
                 return;
             }
@@ -648,22 +657,17 @@ pub(crate) fn run_incremental_clustering_with_sampling(
         // Assert: centroids count should be >= snapshot count (monotonically increasing)
         #[cfg(test)]
         assert!(
-            c.len() >= cent_snap.len(),
+            c.len() >= snap_len,
             "Row {}: Centroid count went backwards! snapshot={}, current={}",
             row_idx,
-            cent_snap.len(),
+            snap_len,
             c.len()
         );
 
         // First centroid special case
         if c.is_empty() {
             trace!("Row {}: Creating FIRST centroid", row_idx);
-            assert_eq!(
-                cent_snap.len(),
-                0,
-                "Row {}: Snapshot should be empty",
-                row_idx
-            );
+            assert_eq!(snap_len, 0, "Row {}: Snapshot should be empty", row_idx);
             assert_eq!(
                 snap_best_dist_sq,
                 f64::INFINITY,
@@ -743,8 +747,24 @@ pub(crate) fn run_incremental_clustering_with_sampling(
                 row_idx, snap_best_dist_sq, radius
             );
 
-            // Recompute with current centroids for assignment
-            let (best_idx, current_dist_sq) = nearest_centroid(row, &c);
+            // Recompute with current centroids for assignment. The
+            // deterministic driver reuses the Phase 1 scan: serial
+            // execution guarantees the table is unchanged, so the re-scan
+            // would return the identical pair (#197).
+            #[cfg(test)]
+            if arrowspacebuilder.deterministic_clustering {
+                assert_eq!(
+                    c.len(),
+                    snap_len,
+                    "Row {}: serial driver saw centroid growth since Phase 1",
+                    row_idx
+                );
+            }
+            let (best_idx, current_dist_sq) = if arrowspacebuilder.deterministic_clustering {
+                (snap_best_idx, snap_best_dist_sq)
+            } else {
+                nearest_centroid(row, &c)
+            };
 
             trace!(
                 "Row {}: Recomputed nearest with current - idx={}, dist²={:.6} (was {:.6} in snapshot)",
@@ -786,8 +806,23 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             // Soft outlier policy: after we hit max_clusters, allow a relaxed assignment
             // for points that are "not too far", instead of dropping everything outright.
 
-            // 1) Recompute distance against current centroids under the lock
-            let (best_idx, current_dist_sq) = nearest_centroid(row, &c);
+            // 1) Recompute distance against current centroids under the
+            //    lock — or reuse the Phase 1 scan on the deterministic
+            //    driver, same justification as the assign branch (#197).
+            #[cfg(test)]
+            if arrowspacebuilder.deterministic_clustering {
+                assert_eq!(
+                    c.len(),
+                    snap_len,
+                    "Row {}: serial driver saw centroid growth since Phase 1",
+                    row_idx
+                );
+            }
+            let (best_idx, current_dist_sq) = if arrowspacebuilder.deterministic_clustering {
+                (snap_best_idx, snap_best_dist_sq)
+            } else {
+                nearest_centroid(row, &c)
+            };
 
             // 2) Use a relaxed radius once saturated to keep more outliers
             let relax_factor = 1.5; // tune: 1.2–2.0
