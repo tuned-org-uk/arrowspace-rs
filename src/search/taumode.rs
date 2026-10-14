@@ -257,7 +257,18 @@ impl TauMode {
     /// * `tau` - Normalization parameter
     ///
     /// # Returns
-    /// Synthetic lambda S = τ·E/(E+τ) + (1-τ)·G
+    /// Synthetic lambda S = w·E_b + (1-w)·G where
+    /// - `E_b = E/(E+s)` with energy scale `s = max(τ, 0)` — τ keeps its
+    ///   denominator role bit-identically for every τ ≥ 0;
+    /// - `w = clamp(τ, 0, 1)` — the mixing weight, bounded so S is a
+    ///   convex combination of E_b and G and lands in [0, 1] (#201).
+    ///
+    /// τ plays two roles and #201 split them deliberately: before the fix,
+    /// τ > 1 (data scale above 1, or `Fixed(τ>1)`) made the dispersion
+    /// coefficient `1-τ` negative and raw λ left [0, 1] (median-v1 oracle:
+    /// λ = -1/4 for item [3, 1, 2] at τ = 2). For τ ∈ [0, 1] both roles
+    /// equal τ and every produced bit is unchanged. Non-finite τ converts
+    /// to s = 0, w = 0 (λ = G); τ = 0 gives E_b = 1 and λ = G.
     pub fn compute_synthetic_lambda(
         item_vector: &[f64],
         projection_matrix: Option<ImplicitProjection>,
@@ -299,12 +310,22 @@ impl TauMode {
             || Self::compute_item_dispersion(projected_item.as_slice(), graph),
         );
 
-        // Bounded transformation
-        let e_bounded = e_raw / (e_raw + tau);
+        // Bounded transformation (#201): the two τ roles are separated.
+        // Scale: floored at 0 so the denominator stays positive and E_b
+        // stays in [0, 1] (a negative τ made it negative or non-finite).
+        // Weight: clamped to [0, 1] so the combination is convex — for
+        // τ ∈ [0, 1] both conversions are the identity and no bit moves.
+        let (energy_scale, weight) = if tau.is_finite() {
+            (tau.max(0.0), tau.clamp(0.0, 1.0))
+        } else {
+            (0.0, 0.0)
+        };
+
+        let e_bounded = e_raw / (e_raw + energy_scale);
         let g_clamped = g_raw.clamp(0.0, 1.0);
 
         // Synthetic index
-        let synthetic_lambda = tau * e_bounded + (1.0 - tau) * g_clamped;
+        let synthetic_lambda = weight * e_bounded + (1.0 - weight) * g_clamped;
 
         trace!(
             "Synthetic λ: E_raw={:.6}, G_raw={:.6}, τ={:.6}, S={:.6}",
