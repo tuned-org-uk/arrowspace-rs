@@ -21,6 +21,7 @@ mod test_laplacian_unnormalised;
 mod test_motives;
 mod test_querying_proj;
 mod test_reduction;
+mod test_sampling_seeded;
 mod test_sequencing;
 mod test_smartcore_percolation;
 mod test_tau_contract;

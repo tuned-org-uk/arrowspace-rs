@@ -26,7 +26,7 @@ use crate::maps::eigenmaps::EigenMaps;
 use crate::maps::energymaps::EnergyMaps;
 use crate::maps::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::reduction::{ImplicitProjection, compute_jl_dimension};
-use crate::sampling::{InlineSampler, SamplerType};
+use crate::sampling::{DEFAULT_SAMPLER_SEED, InlineSampler, SamplerType};
 use crate::search::taumode::TauMode;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -207,25 +207,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         let mut aspace = ArrowSpace::new(rows, self.synthesis);
 
         // Configure inline sampler matching builder policy
-        let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
-            match self.sampling.clone() {
-                Some(SamplerType::Simple(r)) => {
-                    debug!("Using Simple sampler with ratio {:.2}", r);
-                    Arc::new(Mutex::new(SamplerType::new_simple(r)))
-                }
-                Some(SamplerType::DensityAdaptive(r)) => {
-                    debug!("Using DensityAdaptive sampler with ratio {:.2}", r);
-                    Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
-                }
-                None => {
-                    debug!("No sampling configured, using full dataset");
-                    Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
-                }
-            }
-        } else {
-            // For small datasets, keep everything
-            Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
-        };
+        let sampler = self.build_sampler(aspace.nitems);
 
         // Auto-compute optimal clustering parameters via heuristic
         info!("Computing clustering parameters (heuristic or manual override)");
@@ -406,21 +388,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         let working_rows = projected_dm.as_ref().unwrap_or(&aspace.data);
 
         // STAGE 3: Configure Sampler
-        let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
-            match self.sampling.clone() {
-                Some(SamplerType::Simple(r)) => {
-                    debug!("Using Simple sampler with ratio {:.2}", r);
-                    Arc::new(Mutex::new(SamplerType::new_simple(r)))
-                }
-                Some(SamplerType::DensityAdaptive(r)) => {
-                    debug!("Using DensityAdaptive sampler with ratio {:.2}", r);
-                    Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
-                }
-                None => Arc::new(Mutex::new(SamplerType::new_simple(1.0))),
-            }
-        } else {
-            Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
-        };
+        let sampler = self.build_sampler(aspace.nitems);
 
         // STAGE 4: Compute Optimal K (now operating on reduced-dim data)
         // Auto-compute optimal clustering parameters via heuristic
@@ -515,25 +483,7 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
         let mut aspace = ArrowSpace::new_from_dense(rows, self.synthesis);
 
         // Configure inline sampler matching builder policy
-        let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
-            match self.sampling.clone() {
-                Some(SamplerType::Simple(r)) => {
-                    debug!("Using Simple sampler with ratio {:.2}", r);
-                    Arc::new(Mutex::new(SamplerType::new_simple(r)))
-                }
-                Some(SamplerType::DensityAdaptive(r)) => {
-                    debug!("Using DensityAdaptive sampler with ratio {:.2}", r);
-                    Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
-                }
-                None => {
-                    debug!("No sampling configured, using full dataset");
-                    Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
-                }
-            }
-        } else {
-            // For small datasets, keep everything
-            Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
-        };
+        let sampler = self.build_sampler(aspace.nitems);
 
         // Auto-compute optimal clustering parameters via heuristic
         info!("Computing clustering parameters (heuristic or manual override)");
@@ -809,6 +759,33 @@ impl ArrowSpaceBuilder {
     /// rayon pool load: every float reduction in the λ read-out has a fixed
     /// summation order (no work-stealing-driven grouping). Reproducibility
     /// is by construction, not by tolerance.
+    /// Build the inline sampler for incremental clustering: the builder's
+    /// configured policy, seeded from the clustering seed (or
+    /// [`DEFAULT_SAMPLER_SEED`] when unset) so repeat builds are
+    /// reproducible (#201 follow-up). Small datasets keep everything.
+    fn build_sampler(&self, n_items: usize) -> Arc<Mutex<dyn InlineSampler>> {
+        let seed = self.clustering_seed.unwrap_or(DEFAULT_SAMPLER_SEED);
+        if n_items > 1000 {
+            match self.sampling.clone() {
+                Some(SamplerType::Simple(r)) => {
+                    debug!("Using Simple sampler with ratio {:.2}", r);
+                    Arc::new(Mutex::new(SamplerType::new_simple(r, seed)))
+                }
+                Some(SamplerType::DensityAdaptive(r)) => {
+                    debug!("Using DensityAdaptive sampler with ratio {:.2}", r);
+                    Arc::new(Mutex::new(SamplerType::new_density_adaptive(r, seed)))
+                }
+                None => {
+                    debug!("No sampling configured, using full dataset");
+                    Arc::new(Mutex::new(SamplerType::new_simple(1.0, seed)))
+                }
+            }
+        } else {
+            // For small datasets, keep everything
+            Arc::new(Mutex::new(SamplerType::new_simple(1.0, seed)))
+        }
+    }
+
     pub fn with_seed(mut self, seed: u64) -> Self {
         info!("Setting custom clustering seed: {}", seed);
         self.clustering_seed = Some(seed);

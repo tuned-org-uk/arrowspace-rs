@@ -23,10 +23,18 @@
 //! - Lower sampling in dense regions (reduces redundancy)
 //! - Considers both distance to nearest centroid and cluster saturation
 //!
+//! # Determinism (issue #201 follow-up)
+//!
+//! Samplers are seeded: the RNG stream is derived from an explicit seed the
+//! builder threads in from its clustering seed (defaulting to
+//! [`DEFAULT_SAMPLER_SEED`]). Same seed + same decision sequence ⇒ same
+//! keeps, so repeat builds are reproducible. The `SamplerType` enum carries
+//! only the rate — the seed never enters stored configs.
+//!
 //! # Trait Design
 //!
 //! The `InlineSampler` trait provides:
-//! - `new(target_rate)`: Constructor with target sampling rate
+//! - `new(target_rate, seed)`: Constructor with target sampling rate and RNG seed
 //! - `should_keep(...)`: Real-time decision for each data point
 //! - Thread-safe implementation via interior mutability
 //!
@@ -54,15 +62,20 @@ use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use log::{info, trace};
-use rand::{RngExt, SeedableRng, rngs::StdRng, rngs::SysRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
 // TRAIT DEFINITION
 // ============================================================================
 
+/// Default RNG seed for samplers when the builder carries no clustering
+/// seed. Same value as the harness-wide convention; builders configured
+/// with `with_seed` thread their own seed instead (#201 follow-up).
+pub const DEFAULT_SAMPLER_SEED: u64 = 3407;
+
 pub trait InlineSampler: Send {
-    fn new(target_rate: f64) -> Self
+    fn new(target_rate: f64, seed: u64) -> Self
     where
         Self: Sized;
 
@@ -92,12 +105,12 @@ pub enum SamplerType {
 }
 
 impl SamplerType {
-    pub fn new_simple(target_rate: f64) -> SimpleRandomSampler {
-        SimpleRandomSampler::new(target_rate)
+    pub fn new_simple(target_rate: f64, seed: u64) -> SimpleRandomSampler {
+        SimpleRandomSampler::new(target_rate, seed)
     }
 
-    pub fn new_density_adaptive(target_rate: f64) -> DensityAdaptiveSampler {
-        DensityAdaptiveSampler::new(target_rate)
+    pub fn new_density_adaptive(target_rate: f64, seed: u64) -> DensityAdaptiveSampler {
+        DensityAdaptiveSampler::new(target_rate, seed)
     }
 }
 
@@ -113,14 +126,14 @@ pub struct SimpleRandomSampler {
 }
 
 impl InlineSampler for SimpleRandomSampler {
-    fn new(target_rate: f64) -> Self {
+    fn new(target_rate: f64, seed: u64) -> Self {
         info!(
             "Simple random sampler with keep rate {:.1}%",
             target_rate * 100.0
         );
         Self {
             keep_rate: target_rate,
-            rng: StdRng::try_from_rng(&mut SysRng).expect("OS entropy source unavailable"),
+            rng: StdRng::seed_from_u64(seed),
             sampled_count: AtomicUsize::new(0),
             discarded_count: AtomicUsize::new(0),
         }
@@ -158,8 +171,6 @@ impl InlineSampler for SimpleRandomSampler {
     }
 }
 
-unsafe impl Send for SimpleRandomSampler {}
-
 // ============================================================================
 // DENSITY-ADAPTIVE SAMPLER
 // ============================================================================
@@ -173,7 +184,7 @@ pub struct DensityAdaptiveSampler {
 }
 
 impl InlineSampler for DensityAdaptiveSampler {
-    fn new(target_rate: f64) -> Self {
+    fn new(target_rate: f64, seed: u64) -> Self {
         info!(
             "Density-adaptive sampler with base rate {:.2}%",
             target_rate * 100.0
@@ -181,7 +192,7 @@ impl InlineSampler for DensityAdaptiveSampler {
         Self {
             base_rate: target_rate,
             current_idx: 0,
-            rng: StdRng::try_from_rng(&mut SysRng).expect("OS entropy source unavailable"),
+            rng: StdRng::seed_from_u64(seed),
             sampled_count: AtomicUsize::new(0),
             discarded_count: AtomicUsize::new(0),
         }

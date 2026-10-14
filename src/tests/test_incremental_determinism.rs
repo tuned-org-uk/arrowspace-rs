@@ -213,7 +213,9 @@ fn deterministic_builder() -> ArrowSpaceBuilder {
 }
 
 fn dummy_sampler() -> Arc<Mutex<dyn InlineSampler>> {
-    Arc::new(Mutex::new(crate::sampling::SimpleRandomSampler::new(1.0)))
+    Arc::new(Mutex::new(crate::sampling::SimpleRandomSampler::new(
+        1.0, 3407,
+    )))
 }
 
 fn assert_reference_parity(
