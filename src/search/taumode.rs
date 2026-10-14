@@ -379,7 +379,96 @@ impl TauMode {
     /// Compute dispersion G using edge-wise energy distribution
     ///
     /// G = Σ(e_ij)² where e_ij = w_ij(x_i - x_j)² / total_edge_energy
-    fn compute_item_dispersion(item_vector: &[f64], spectrum: &CsMat<f64>) -> f64 {
+    ///
+    /// On canonical CSR the directed stored edges are traversed directly
+    /// (#200): rows in ascending `i`, stored columns in ascending `j` — the
+    /// exact (i, j) order of the previous dense lookup loop, so every
+    /// partial sum keeps its bits while traversal cost drops from
+    /// O(F² · log) `get()` lookups to O(nnz). CSC or non-canonical storage
+    /// falls back to the original dense lookup loop, whose `get()`-based
+    /// semantics stay defined for both storage formats.
+    pub(crate) fn compute_item_dispersion(item_vector: &[f64], spectrum: &CsMat<f64>) -> f64 {
+        if spectrum.is_csr() && Self::rows_strictly_ascending(spectrum) {
+            Self::sparse_directed_dispersion(item_vector, spectrum)
+        } else {
+            Self::dense_lookup_dispersion(item_vector, spectrum)
+        }
+    }
+
+    /// Canonical-CSR guard for the sparse fast path: every row's column
+    /// indices strictly ascending — sorted with no duplicates, the ordering
+    /// the fast path's bit-parity relies on. Matrices built by
+    /// `TriMat::to_csr()` always satisfy this (sprs sorts and sums
+    /// duplicates on conversion).
+    fn rows_strictly_ascending(spectrum: &CsMat<f64>) -> bool {
+        (0..spectrum.rows()).all(|i| {
+            spectrum
+                .outer_view(i)
+                .is_none_or(|row| row.indices().windows(2).all(|w| w[0] < w[1]))
+        })
+    }
+
+    /// O(nnz) directed-edge traversal; bit-identical accumulation order to
+    /// [`Self::dense_lookup_dispersion`] for canonical CSR input.
+    fn sparse_directed_dispersion(item_vector: &[f64], spectrum: &CsMat<f64>) -> f64 {
+        let n_features = item_vector.len();
+
+        // Step 1: Compute total edge energy sum
+        let mut edge_energy_sum = 0.0;
+        for i in 0..spectrum.rows() {
+            if i >= n_features {
+                break;
+            }
+            let Some(row) = spectrum.outer_view(i) else {
+                continue;
+            };
+            let xi = item_vector[i];
+            for (j, &lij) in row.iter() {
+                if j >= n_features || j == i {
+                    continue;
+                }
+                let w = (-lij).max(0.0); // Off-diagonal weight
+                if w > 0.0 {
+                    let d = xi - item_vector[j];
+                    edge_energy_sum += w * d * d;
+                }
+            }
+        }
+
+        if edge_energy_sum <= 1e-12 {
+            return 0.0;
+        }
+
+        // Step 2: Compute G as sum of squared normalized edge shares
+        let mut g_sq_sum = 0.0;
+        for i in 0..spectrum.rows() {
+            if i >= n_features {
+                break;
+            }
+            let Some(row) = spectrum.outer_view(i) else {
+                continue;
+            };
+            let xi = item_vector[i];
+            for (j, &lij) in row.iter() {
+                if j >= n_features || j == i {
+                    continue;
+                }
+                let w = (-lij).max(0.0);
+                if w > 0.0 {
+                    let d = xi - item_vector[j];
+                    let contrib = w * d * d;
+                    let share = contrib / edge_energy_sum;
+                    g_sq_sum += share * share;
+                }
+            }
+        }
+
+        g_sq_sum.clamp(0.0, 1.0)
+    }
+
+    /// Dense per-pair lookup loop — the pre-#200 implementation, kept as
+    /// the fallback for CSC and non-canonical storage.
+    fn dense_lookup_dispersion(item_vector: &[f64], spectrum: &CsMat<f64>) -> f64 {
         let n_features = item_vector.len();
 
         // Step 1: Compute total edge energy sum

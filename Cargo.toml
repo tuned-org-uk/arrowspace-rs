@@ -76,3 +76,7 @@ harness = false
 [[bench]]
 name = "twonn_bench"
 harness = false
+
+[[bench]]
+name = "dispersion_bench"
+harness = false

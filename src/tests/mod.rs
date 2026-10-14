@@ -8,6 +8,7 @@ mod test_filter_bank;
 mod test_helpers;
 // mod test_dimensional;
 mod test_clustering;
+mod test_dispersion_sparse;
 mod test_eigenmaps;
 mod test_energy_builder;
 mod test_energy_search;
