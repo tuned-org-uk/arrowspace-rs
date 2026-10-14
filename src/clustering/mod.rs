@@ -162,27 +162,13 @@ pub trait ClusteringHeuristic {
         let ratios: Vec<f64> = sample_indices
             .par_iter()
             .filter_map(|&i| {
-                let row_i = rows.get_row(i);
-                let mut dists: Vec<(usize, f64)> = (0..n)
-                    .filter(|&j| j != i)
-                    .map(|j| {
-                        let d2: f64 = row_i
-                            .iterator(0)
-                            .zip(rows.get_row(j).iterator(0))
-                            .map(|(a, b)| (*a - *b).powi(2))
-                            .sum();
-                        (j, d2.sqrt())
-                    })
-                    .collect();
-
-                dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-
-                if dists.len() >= 2 {
-                    let d1 = dists[0].1;
-                    let d2 = dists[1].1;
-                    if d1 > 1e-12 {
-                        return Some(d2 / d1);
-                    }
+                // Streaming two-minimum selection (#199): same candidate
+                // order, same arithmetic, no O(n) distance vector, no
+                // O(n log n) sort. NaN distances panic inside the helper
+                // exactly like the sort's `partial_cmp().unwrap()` did.
+                let (d1, d2) = two_smallest_distances(rows, i, n)?;
+                if d1 > 1e-12 {
+                    return Some(d2 / d1);
                 }
                 None
             })
@@ -958,4 +944,50 @@ pub(crate) fn nearest_centroid(row: &[f64], centroids: &[Vec<f64>]) -> (usize, f
         }
     }
     (best_idx, best_dist2)
+}
+
+/// Exact two smallest non-self distances from row `i` to the other rows,
+/// selected by streaming (#199).
+///
+/// Replaces the pre-#199 per-sample `Vec<(usize, f64)>` materialisation plus
+/// full sort: O(n) time, O(1) scratch. The numerical contract is unchanged —
+/// candidates are visited in ascending `j`, the squared distance keeps the
+/// sequential Float64 feature fold (`powi(2)` then `sum`), `sqrt` is applied
+/// per candidate, exact duplicates count as separate neighbours, and a NaN
+/// distance panics exactly like the sort-based `partial_cmp().unwrap()` did.
+/// Returns `None` when fewer than two candidates exist.
+pub(crate) fn two_smallest_distances(
+    rows: &DenseMatrix<f64>,
+    i: usize,
+    n: usize,
+) -> Option<(f64, f64)> {
+    let row_i = rows.get_row(i);
+    let mut m1 = f64::INFINITY;
+    let mut m2 = f64::INFINITY;
+    let mut seen = 0usize;
+    for j in 0..n {
+        if j == i {
+            continue;
+        }
+        let d2: f64 = row_i
+            .iterator(0)
+            .zip(rows.get_row(j).iterator(0))
+            .map(|(a, b)| (*a - *b).powi(2))
+            .sum();
+        let d = d2.sqrt();
+        if d.is_nan() {
+            // The sort-based reference panicked on any NaN distance via
+            // `partial_cmp().unwrap()`; silently skipping it here would
+            // produce a valid-looking dimension (#199).
+            panic!("Two-NN distance from row {i} to row {j} is NaN");
+        }
+        seen += 1;
+        if d < m1 {
+            m2 = m1;
+            m1 = d;
+        } else if d < m2 {
+            m2 = d;
+        }
+    }
+    if seen >= 2 { Some((m1, m2)) } else { None }
 }

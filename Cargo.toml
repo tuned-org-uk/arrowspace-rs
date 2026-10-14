@@ -72,3 +72,7 @@ required-features = ["filter_banks"]
 [[bench]]
 name = "index_compute_bench"
 harness = false
+
+[[bench]]
+name = "twonn_bench"
+harness = false

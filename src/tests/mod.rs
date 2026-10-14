@@ -22,6 +22,7 @@ mod test_reduction;
 mod test_sequencing;
 mod test_smartcore_percolation;
 mod test_taumode;
+mod test_twonn_streaming;
 
 use std::sync::Once;
 
