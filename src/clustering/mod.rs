@@ -162,27 +162,13 @@ pub trait ClusteringHeuristic {
         let ratios: Vec<f64> = sample_indices
             .par_iter()
             .filter_map(|&i| {
-                let row_i = rows.get_row(i);
-                let mut dists: Vec<(usize, f64)> = (0..n)
-                    .filter(|&j| j != i)
-                    .map(|j| {
-                        let d2: f64 = row_i
-                            .iterator(0)
-                            .zip(rows.get_row(j).iterator(0))
-                            .map(|(a, b)| (*a - *b).powi(2))
-                            .sum();
-                        (j, d2.sqrt())
-                    })
-                    .collect();
-
-                dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-
-                if dists.len() >= 2 {
-                    let d1 = dists[0].1;
-                    let d2 = dists[1].1;
-                    if d1 > 1e-12 {
-                        return Some(d2 / d1);
-                    }
+                // Streaming two-minimum selection (#199): same candidate
+                // order, same arithmetic, no O(n) distance vector, no
+                // O(n log n) sort. NaN distances panic inside the helper
+                // exactly like the sort's `partial_cmp().unwrap()` did.
+                let (d1, d2) = two_smallest_distances(rows, i, n)?;
+                if d1 > 1e-12 {
+                    return Some(d2 / d1);
                 }
                 None
             })
@@ -609,35 +595,44 @@ pub(crate) fn run_incremental_clustering_with_sampling(
         // ============================================================
         // PHASE 1: Snapshot and decision
         // ============================================================
-        let cent_snap = {
-            let c = centroids.lock().unwrap();
-            c.clone()
-        };
+        // Deterministic driver (#197): rows are processed one at a time,
+        // so no other closure run can mutate the centroid table between
+        // this scan and the Phase 3 lock. Scan under the lock and keep
+        // the result: no per-row full-table clone, and Phase 3 can reuse
+        // the scan instead of re-scanning. The parallel driver keeps the
+        // clone — centroids may grow on another thread mid-scan.
+        let (snap_best_idx, snap_best_dist_sq, snap_len) =
+            if arrowspacebuilder.deterministic_clustering {
+                let c = centroids.lock().unwrap();
+                if c.is_empty() {
+                    (0, f64::INFINITY, 0)
+                } else {
+                    let (idx, dist) = nearest_centroid(row, &c);
+                    (idx, dist, c.len())
+                }
+            } else {
+                let cent_snap = {
+                    let c = centroids.lock().unwrap();
+                    c.clone()
+                };
+                let best = if cent_snap.is_empty() {
+                    (0, f64::INFINITY)
+                } else {
+                    nearest_centroid(row, &cent_snap)
+                };
+                (best.0, best.1, cent_snap.len())
+            };
 
         trace!(
             "Row {}: Snapshot phase - n_centroids_snapshot={}",
-            row_idx,
-            cent_snap.len()
+            row_idx, snap_len
         );
-
-        // Distance from snapshot (decision basis)
-        let (_snap_best_idx, snap_best_dist_sq) = if cent_snap.is_empty() {
-            trace!("Row {}: Snapshot empty, setting dist²=INFINITY", row_idx);
-            (0, f64::INFINITY)
-        } else {
-            let (idx, dist) = nearest_centroid(row, &cent_snap);
-            trace!(
-                "Row {}: Snapshot nearest - idx={}, dist²={:.6}",
-                row_idx, idx, dist
-            );
-            (idx, dist)
-        };
 
         // Sampling (if enabled)
         if arrowspacebuilder.sampling.is_some() {
             trace!("Row {}: Checking sampling filter", row_idx);
             let mut smp = sampler.lock().unwrap();
-            if !smp.should_keep(row, snap_best_dist_sq, cent_snap.len(), max_clusters) {
+            if !smp.should_keep(row, snap_best_dist_sq, snap_len, max_clusters) {
                 trace!("Row {}: REJECTED by sampling filter", row_idx);
                 return;
             }
@@ -662,22 +657,17 @@ pub(crate) fn run_incremental_clustering_with_sampling(
         // Assert: centroids count should be >= snapshot count (monotonically increasing)
         #[cfg(test)]
         assert!(
-            c.len() >= cent_snap.len(),
+            c.len() >= snap_len,
             "Row {}: Centroid count went backwards! snapshot={}, current={}",
             row_idx,
-            cent_snap.len(),
+            snap_len,
             c.len()
         );
 
         // First centroid special case
         if c.is_empty() {
             trace!("Row {}: Creating FIRST centroid", row_idx);
-            assert_eq!(
-                cent_snap.len(),
-                0,
-                "Row {}: Snapshot should be empty",
-                row_idx
-            );
+            assert_eq!(snap_len, 0, "Row {}: Snapshot should be empty", row_idx);
             assert_eq!(
                 snap_best_dist_sq,
                 f64::INFINITY,
@@ -757,8 +747,24 @@ pub(crate) fn run_incremental_clustering_with_sampling(
                 row_idx, snap_best_dist_sq, radius
             );
 
-            // Recompute with current centroids for assignment
-            let (best_idx, current_dist_sq) = nearest_centroid(row, &c);
+            // Recompute with current centroids for assignment. The
+            // deterministic driver reuses the Phase 1 scan: serial
+            // execution guarantees the table is unchanged, so the re-scan
+            // would return the identical pair (#197).
+            #[cfg(test)]
+            if arrowspacebuilder.deterministic_clustering {
+                assert_eq!(
+                    c.len(),
+                    snap_len,
+                    "Row {}: serial driver saw centroid growth since Phase 1",
+                    row_idx
+                );
+            }
+            let (best_idx, current_dist_sq) = if arrowspacebuilder.deterministic_clustering {
+                (snap_best_idx, snap_best_dist_sq)
+            } else {
+                nearest_centroid(row, &c)
+            };
 
             trace!(
                 "Row {}: Recomputed nearest with current - idx={}, dist²={:.6} (was {:.6} in snapshot)",
@@ -800,8 +806,23 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             // Soft outlier policy: after we hit max_clusters, allow a relaxed assignment
             // for points that are "not too far", instead of dropping everything outright.
 
-            // 1) Recompute distance against current centroids under the lock
-            let (best_idx, current_dist_sq) = nearest_centroid(row, &c);
+            // 1) Recompute distance against current centroids under the
+            //    lock — or reuse the Phase 1 scan on the deterministic
+            //    driver, same justification as the assign branch (#197).
+            #[cfg(test)]
+            if arrowspacebuilder.deterministic_clustering {
+                assert_eq!(
+                    c.len(),
+                    snap_len,
+                    "Row {}: serial driver saw centroid growth since Phase 1",
+                    row_idx
+                );
+            }
+            let (best_idx, current_dist_sq) = if arrowspacebuilder.deterministic_clustering {
+                (snap_best_idx, snap_best_dist_sq)
+            } else {
+                nearest_centroid(row, &c)
+            };
 
             // 2) Use a relaxed radius once saturated to keep more outliers
             let relax_factor = 1.5; // tune: 1.2–2.0
@@ -958,4 +979,50 @@ pub(crate) fn nearest_centroid(row: &[f64], centroids: &[Vec<f64>]) -> (usize, f
         }
     }
     (best_idx, best_dist2)
+}
+
+/// Exact two smallest non-self distances from row `i` to the other rows,
+/// selected by streaming (#199).
+///
+/// Replaces the pre-#199 per-sample `Vec<(usize, f64)>` materialisation plus
+/// full sort: O(n) time, O(1) scratch. The numerical contract is unchanged —
+/// candidates are visited in ascending `j`, the squared distance keeps the
+/// sequential Float64 feature fold (`powi(2)` then `sum`), `sqrt` is applied
+/// per candidate, exact duplicates count as separate neighbours, and a NaN
+/// distance panics exactly like the sort-based `partial_cmp().unwrap()` did.
+/// Returns `None` when fewer than two candidates exist.
+pub(crate) fn two_smallest_distances(
+    rows: &DenseMatrix<f64>,
+    i: usize,
+    n: usize,
+) -> Option<(f64, f64)> {
+    let row_i = rows.get_row(i);
+    let mut m1 = f64::INFINITY;
+    let mut m2 = f64::INFINITY;
+    let mut seen = 0usize;
+    for j in 0..n {
+        if j == i {
+            continue;
+        }
+        let d2: f64 = row_i
+            .iterator(0)
+            .zip(rows.get_row(j).iterator(0))
+            .map(|(a, b)| (*a - *b).powi(2))
+            .sum();
+        let d = d2.sqrt();
+        if d.is_nan() {
+            // The sort-based reference panicked on any NaN distance via
+            // `partial_cmp().unwrap()`; silently skipping it here would
+            // produce a valid-looking dimension (#199).
+            panic!("Two-NN distance from row {i} to row {j} is NaN");
+        }
+        seen += 1;
+        if d < m1 {
+            m2 = m1;
+            m1 = d;
+        } else if d < m2 {
+            m2 = d;
+        }
+    }
+    if seen >= 2 { Some((m1, m2)) } else { None }
 }

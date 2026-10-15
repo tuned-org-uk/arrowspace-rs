@@ -15,6 +15,7 @@ use crate::{
 };
 
 use log::debug;
+use rand::{RngExt, SeedableRng};
 use serial_test::serial;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
@@ -150,14 +151,17 @@ fn test_intrinsic_dimension_plane() {
 
 #[test]
 fn test_intrinsic_dimension_full_space() {
+    // Seeded fixture (3407): `rand::random()` made this test — and therefore
+    // the whole suite — nondeterministic, which hides real regressions.
+    let mut rng = rand::rngs::StdRng::seed_from_u64(3407);
     let mut rows = Vec::new();
     for _ in 0..200 {
         rows.push(vec![
-            rand::random(),
-            rand::random(),
-            rand::random(),
-            rand::random(),
-            rand::random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
         ]);
     }
 
@@ -532,17 +536,19 @@ fn test_optimal_k_heuristic_spherical_clusters() {
 
 #[test]
 fn test_optimal_k_heuristic_high_dimensional_random() {
+    // Seeded fixture (3407): see test_intrinsic_dimension_full_space.
+    let mut rng = rand::rngs::StdRng::seed_from_u64(3407);
     let mut rows = Vec::new();
     for _ in 0..200 {
         rows.push(vec![
-            rand::random(),
-            rand::random(),
-            rand::random(),
-            rand::random(),
-            rand::random(),
-            rand::random(),
-            rand::random(),
-            rand::random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
         ]);
     }
 
@@ -1119,7 +1125,11 @@ fn test_dense_mesh_topology() {
         .with_cluster_max_clusters(target_k)
         .with_cluster_radius(tight_radius)
         .with_dims_reduction(true, Some(0.2)) // High-fidelity projection
-        .with_synthesis(TauMode::Median);
+        .with_synthesis(TauMode::Median)
+        // Seeded: an unseeded build self-seeds from OS entropy on every
+        // run (builder.rs), which made the near-zero-lambda count below
+        // flicker across the < 5 boundary (~20% failure rate).
+        .with_seed(3407);
 
     let (aspace, _gl) = builder.build(rows.clone());
 

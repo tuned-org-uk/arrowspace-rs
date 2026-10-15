@@ -8,10 +8,12 @@ mod test_filter_bank;
 mod test_helpers;
 // mod test_dimensional;
 mod test_clustering;
+mod test_dispersion_sparse;
 mod test_eigenmaps;
 mod test_energy_builder;
 mod test_energy_search;
 mod test_graph_factory;
+mod test_incremental_determinism;
 mod test_lambda_determinism;
 mod test_laplacian;
 mod test_laplacian_scaling;
@@ -19,9 +21,12 @@ mod test_laplacian_unnormalised;
 mod test_motives;
 mod test_querying_proj;
 mod test_reduction;
+mod test_sampling_seeded;
 mod test_sequencing;
 mod test_smartcore_percolation;
+mod test_tau_contract;
 mod test_taumode;
+mod test_twonn_streaming;
 
 use std::sync::Once;
 
