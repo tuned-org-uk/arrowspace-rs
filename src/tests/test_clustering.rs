@@ -1125,7 +1125,11 @@ fn test_dense_mesh_topology() {
         .with_cluster_max_clusters(target_k)
         .with_cluster_radius(tight_radius)
         .with_dims_reduction(true, Some(0.2)) // High-fidelity projection
-        .with_synthesis(TauMode::Median);
+        .with_synthesis(TauMode::Median)
+        // Seeded: an unseeded build self-seeds from OS entropy on every
+        // run (builder.rs), which made the near-zero-lambda count below
+        // flicker across the < 5 boundary (~20% failure rate).
+        .with_seed(3407);
 
     let (aspace, _gl) = builder.build(rows.clone());
 
